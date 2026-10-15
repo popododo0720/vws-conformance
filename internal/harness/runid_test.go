@@ -27,6 +27,22 @@ func TestRunIDPrefixOnNames(t *testing.T) {
 	}
 }
 
+func TestFromEnvRejectsForeignRunID(t *testing.T) {
+	t.Setenv("VWS_CONF_RUN_ID", "prod-bucket")
+	_, err := FromEnv()
+	if err == nil {
+		t.Fatal("accepted prod-bucket")
+	}
+	t.Setenv("VWS_CONF_RUN_ID", "conf-20261015T120000Z-abc123")
+	cfg, err := FromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RunID != "conf-20261015T120000Z-abc123" {
+		t.Fatalf("%s", cfg.RunID)
+	}
+}
+
 func TestDefaultParallelIsOne(t *testing.T) {
 	n, err := ParseParallel("")
 	if err != nil || n != 1 {
