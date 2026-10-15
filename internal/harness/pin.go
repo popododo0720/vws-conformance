@@ -2,16 +2,18 @@ package harness
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
-	"io"
 	"net"
+	"net/http"
+	"net/http/httputil"
 	"net/url"
-	"time"
+	"strings"
 )
 
 type Pinned struct {
 	URL    string
-	ln     net.Listener
+	srv    *http.Server
 	cancel context.CancelFunc
 }
 
@@ -20,7 +22,7 @@ func (p *Pinned) Close() error {
 		return nil
 	}
 	p.cancel()
-	return p.ln.Close()
+	return p.srv.Close()
 }
 
 var pinDial = func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -36,32 +38,55 @@ func PinEndpoint(ctx context.Context, raw string, allowed, cidrs []string) (*Pin
 	if err != nil {
 		return nil, err
 	}
-	if err := ResolveEndpointCIDR(ctx, raw, allowed, cidrs); err != nil {
+	if err := CheckEndpointCIDR(raw, allowed, cidrs); err != nil {
 		return nil, err
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	pinned, err := approvedIPs(ctx, host, cidrs)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	p := &Pinned{URL: "http://" + ln.Addr().String(), ln: ln, cancel: cancel}
-	go func() {
-		for {
-			conn, err := ln.Accept()
+	transport := &http.Transport{
+		Proxy: nil,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			now, err := approvedIPs(ctx, host, cidrs)
 			if err != nil {
-				return
+				return nil, err
 			}
-			go proxyLatest(ctx, conn, host, port)
-		}
-	}()
-	return p, nil
+			if !sameIPs(now, pinned) {
+				return nil, fmt.Errorf("endpoint host %q resolution changed", host)
+			}
+			return pinDial(ctx, network, net.JoinHostPort(canonicalIP(pinned[0]).String(), port))
+		},
+	}
+	if u.Scheme == "https" {
+		transport.TLSClientConfig = &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}
+	}
+	proxy := &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(&url.URL{Scheme: u.Scheme, Host: net.JoinHostPort(host, port)})
+			pr.Out.Host = u.Host
+		},
+		Transport: transport,
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	srv := &http.Server{Handler: proxy}
+	go func() { _ = srv.Serve(ln) }()
+	return &Pinned{URL: "http://" + ln.Addr().String(), srv: srv, cancel: cancel}, nil
 }
 
 func splitEndpoint(u *url.URL) (string, string, error) {
-	if u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return "", "", fmt.Errorf("endpoint %q is not an http(s) URL", u.String())
 	}
-	host := u.Hostname()
+	host, err := CanonicalHost(u.Hostname())
+	if err != nil || host == "" {
+		return "", "", fmt.Errorf("endpoint host %q is refused", u.Hostname())
+	}
 	port := u.Port()
 	if port == "" {
 		if u.Scheme == "https" {
@@ -70,36 +95,58 @@ func splitEndpoint(u *url.URL) (string, string, error) {
 			port = "80"
 		}
 	}
-	canon, err := CanonicalHost(host)
-	if err != nil {
-		return "", "", err
-	}
-	return canon, port, nil
+	return host, port, nil
 }
 
-func proxyLatest(ctx context.Context, client net.Conn, host, port string) {
-	defer client.Close()
-	ips, err := lookupHost(ctx, host)
-	if err != nil || len(ips) == 0 {
-		return
+func approvedIPs(ctx context.Context, host string, cidrs []string) ([]net.IP, error) {
+	if ip := net.ParseIP(host); ip != nil {
+		if !addressPermitted(ip, cidrs) {
+			return nil, fmt.Errorf("endpoint host %q is refused", host)
+		}
+		return []net.IP{canonicalIP(ip)}, nil
 	}
-	up, err := pinDial(ctx, "tcp", net.JoinHostPort(ips[0].String(), port))
-	if err != nil {
-		return
+	return refuseResolved(ctx, host, cidrs)
+}
+
+func sameIPs(a, b []net.IP) bool {
+	if len(a) != len(b) {
+		return false
 	}
-	defer up.Close()
-	done := make(chan struct{}, 2)
-	go func() { _, _ = io.Copy(up, client); done <- struct{}{} }()
-	go func() { _, _ = io.Copy(client, up); done <- struct{}{} }()
-	timer := time.NewTimer(OpTimeout)
-	defer timer.Stop()
-	select {
-	case <-done:
-	case <-ctx.Done():
-	case <-timer.C:
+	seen := map[string]int{}
+	for _, ip := range a {
+		seen[canonicalIP(ip).String()]++
 	}
+	for _, ip := range b {
+		k := canonicalIP(ip).String()
+		seen[k]--
+		if seen[k] < 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func ChildEnv(base []string) []string {
-	return append([]string{}, base...)
+	drop := map[string]bool{
+		"HTTP_PROXY": true, "HTTPS_PROXY": true, "ALL_PROXY": true, "NO_PROXY": true,
+		"http_proxy": true, "https_proxy": true, "all_proxy": true, "no_proxy": true,
+		"AWS_PROFILE": true, "AWS_DEFAULT_PROFILE": true,
+		"AWS_ENDPOINT_URL": true, "AWS_ENDPOINT_URL_S3": true,
+		"AWS_SESSION_TOKEN": true, "AWS_SECURITY_TOKEN": true,
+		"AWS_ACCESS_KEY_ID": true, "AWS_SECRET_ACCESS_KEY": true,
+		"AWS_SHARED_CREDENTIALS_FILE": true, "AWS_CONFIG_FILE": true,
+	}
+	var out []string
+	for _, e := range base {
+		k, _, ok := strings.Cut(e, "=")
+		if ok && drop[k] {
+			continue
+		}
+		out = append(out, e)
+	}
+	return append(out,
+		"AWS_SHARED_CREDENTIALS_FILE=/dev/null",
+		"AWS_CONFIG_FILE=/dev/null",
+		"AWS_EC2_METADATA_DISABLED=true",
+	)
 }

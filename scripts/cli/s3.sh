@@ -8,24 +8,16 @@ fi
 : "${VWS_CONF_S3_ENDPOINT:?}"
 : "${VWS_CONF_ACCESS_KEY_ID:?}"
 : "${VWS_CONF_SECRET_ACCESS_KEY:?}"
-go run ./cmd/conf-run check-endpoint
+unset HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy
+unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_ENDPOINT_URL AWS_ENDPOINT_URL_S3
 if ! command -v aws >/dev/null 2>&1; then
+  go run ./cmd/conf-run check-endpoint
   echo "skip: aws cli is not installed"
   exit 0
 fi
-unset AWS_PROFILE AWS_DEFAULT_PROFILE AWS_SESSION_TOKEN AWS_SECURITY_TOKEN
-export AWS_SHARED_CREDENTIALS_FILE=/dev/null
-export AWS_CONFIG_FILE=/dev/null
-export AWS_ACCESS_KEY_ID="$VWS_CONF_ACCESS_KEY_ID"
-export AWS_SECRET_ACCESS_KEY="$VWS_CONF_SECRET_ACCESS_KEY"
-export AWS_DEFAULT_REGION=vws-1
-export AWS_EC2_METADATA_DISABLED=true
-if [ -n "${VWS_CONF_SESSION_TOKEN:-}" ]; then
-  export AWS_SESSION_TOKEN="$VWS_CONF_SESSION_TOKEN"
-fi
-aws s3api list-buckets --endpoint-url "$VWS_CONF_S3_ENDPOINT" >/dev/null
+go run ./cmd/conf-run cli s3api list-buckets >/dev/null
 set +e
-aws s3api head-bucket --endpoint-url "$VWS_CONF_S3_ENDPOINT" --bucket "no-such-bucket-conformance" >/dev/null 2>/tmp/conf-cli-err
+go run ./cmd/conf-run cli s3api head-bucket --bucket "no-such-bucket-conformance" >/dev/null 2>/tmp/conf-cli-err
 code=$?
 set -e
 if [ "$code" -eq 0 ]; then

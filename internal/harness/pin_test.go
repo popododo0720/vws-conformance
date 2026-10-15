@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -43,14 +46,104 @@ func TestPinRefusesChangedResolution(t *testing.T) {
 	if resp != nil {
 		resp.Body.Close()
 	}
-	_ = err
+	if err == nil && (resp == nil || resp.StatusCode < 500) {
+		t.Fatal("changed resolution was proxied")
+	}
 	for _, addr := range dialed {
 		if strings.Contains(addr, "203.0.113.10") {
 			t.Fatalf("dialed %s", addr)
 		}
 	}
-	if len(dialed) == 0 {
-		t.Fatal("pinned address was not dialed")
+}
+
+func TestPinDialsApprovedAddress(t *testing.T) {
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	_, port, err := net.SplitHostPort(srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	prevLookup := lookupHost
+	lookupHost = func(ctx context.Context, host string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("127.0.0.1")}, nil
+	}
+	t.Cleanup(func() { lookupHost = prevLookup })
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	p, err := PinEndpoint(ctx, "http://lab.internal:"+port, []string{"lab.internal"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	resp, err := http.Get(p.URL + "/probe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || hits != 1 {
+		t.Fatalf("status %d hits %d", resp.StatusCode, hits)
+	}
+}
+
+func TestRealCLIUsesPinnedOrigin(t *testing.T) {
+	awsPath, err := exec.LookPath("aws")
+	if err != nil {
+		awsPath = "/home/ubuntu/.local/bin/aws"
+	}
+	if _, err := os.Stat(awsPath); err != nil {
+		t.Fatal("aws cli is required")
+	}
+	hits := 0
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><ListAllMyBucketsResult><Owner><ID>x</ID><DisplayName>x</DisplayName></Owner><Buckets></Buckets></ListAllMyBucketsResult>`))
+	}))
+	defer origin.Close()
+	proxyHits := 0
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxyHits++
+		http.Error(w, "proxy", http.StatusBadGateway)
+	}))
+	defer proxy.Close()
+	_, port, err := net.SplitHostPort(origin.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	prevLookup := lookupHost
+	lookupHost = func(ctx context.Context, host string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("127.0.0.1")}, nil
+	}
+	t.Cleanup(func() { lookupHost = prevLookup })
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	p, err := PinEndpoint(ctx, "http://lab.internal:"+port, []string{"lab.internal"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	if !strings.HasPrefix(p.URL, "http://127.0.0.1:") {
+		t.Fatalf("pin url %s", p.URL)
+	}
+	cmd := exec.CommandContext(ctx, awsPath, "s3api", "list-buckets", "--endpoint-url", p.URL)
+	cmd.Env = append(ChildEnv([]string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + os.Getenv("HOME"),
+		"HTTP_PROXY=" + proxy.URL,
+		"HTTPS_PROXY=" + proxy.URL,
+		"ALL_PROXY=" + proxy.URL,
+		"AWS_PROFILE=default",
+	}), "AWS_ACCESS_KEY_ID=AKIDEXAMPLE", "AWS_SECRET_ACCESS_KEY=secret", "AWS_DEFAULT_REGION=vws-1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if hits != 1 || proxyHits != 0 {
+		t.Fatalf("origin %d proxy %d", hits, proxyHits)
 	}
 }
 

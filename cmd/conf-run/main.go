@@ -17,6 +17,9 @@ func execute() int {
 	if flag.Arg(0) == "check-endpoint" {
 		return engine.CheckCLI()
 	}
+	if flag.Arg(0) == "cli" {
+		return engine.RunCLI(flag.Args()[1:])
+	}
 	return harness.Main(engineMain{})
 }
 
