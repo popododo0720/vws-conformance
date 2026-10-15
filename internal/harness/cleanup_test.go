@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -28,6 +29,63 @@ func TestCleanupRunsAfterPanic(t *testing.T) {
 	if !ran {
 		t.Fatal("cleanup did not run")
 	}
+}
+
+func TestRunMainCleanup(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		ran := false
+		SetProcessCleanup(func() { ran = true })
+		code := RunMain(staticRun(0), blockedSignals(), func(int) {})
+		if code != 0 || !ran {
+			t.Fatalf("code %d ran %v", code, ran)
+		}
+	})
+	t.Run("failure", func(t *testing.T) {
+		ran := false
+		SetProcessCleanup(func() { ran = true })
+		code := RunMain(staticRun(2), blockedSignals(), func(int) {})
+		if code != 2 || !ran {
+			t.Fatalf("code %d ran %v", code, ran)
+		}
+	})
+	t.Run("SIGTERM", func(t *testing.T) {
+		ran := make(chan struct{})
+		SetProcessCleanup(func() { close(ran) })
+		sig := make(chan osSignal, 1)
+		exitCode := make(chan int, 1)
+		entered := make(chan struct{})
+		go RunMain(waitRun(entered), sig, func(code int) { exitCode <- code })
+		<-entered
+		sig <- syscall.SIGTERM
+		select {
+		case <-ran:
+		case <-time.After(2 * time.Second):
+			t.Fatal("cleanup did not run")
+		}
+		select {
+		case code := <-exitCode:
+			if code != 1 {
+				t.Fatalf("exit %d", code)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("process did not exit")
+		}
+	})
+}
+
+type staticRun int
+
+func (s staticRun) Run() int { return int(s) }
+
+func blockedSignals() <-chan osSignal {
+	return make(chan osSignal)
+}
+
+type waitRun chan struct{}
+
+func (w waitRun) Run() int {
+	close(w)
+	select {}
 }
 
 func TestSignalRunsCleanup(t *testing.T) {

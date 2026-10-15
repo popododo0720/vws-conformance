@@ -76,6 +76,14 @@ func runProcessCleanup() {
 	}
 }
 
+func RunMain(m interface{ Run() int }, sig <-chan os.Signal, exit func(int)) int {
+	go func() {
+		<-sig
+		exit(1)
+	}()
+	return m.Run()
+}
+
 func Main(m interface{ Run() int }) int {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
