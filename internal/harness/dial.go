@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"time"
 )
 
 var lookupHost = func(ctx context.Context, host string) ([]net.IP, error) {
@@ -51,7 +50,7 @@ func DialAllowed(ctx context.Context, network, addr string, allowed []string) (n
 	} else if ips, err = refuseResolved(ctx, canon, allowed); err != nil {
 		return nil, err
 	}
-	dialer := &net.Dialer{Timeout: 30 * time.Second}
+	dialer := &net.Dialer{Timeout: OpTimeout}
 	var last error
 	for _, ip := range ips {
 		conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
@@ -89,7 +88,7 @@ func NewHTTPClient(allowed []string) *http.Client {
 		return DialAllowed(ctx, network, addr, allowed)
 	}
 	return &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: OpTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

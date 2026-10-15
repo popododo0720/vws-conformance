@@ -75,7 +75,9 @@ func (rt *Runtime) Identify(ctx context.Context) (string, error) {
 	if rt.Clients.STS == nil {
 		return "", fmt.Errorf("IAM endpoint is unset")
 	}
-	out, err := rt.Clients.STS.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+	out, err := withDeadline(ctx, func(ctx context.Context) (*sts.GetCallerIdentityOutput, error) {
+		return rt.Clients.STS.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+	})
 	if err != nil {
 		return "", fmt.Errorf("GetCallerIdentity: %w", err)
 	}
@@ -89,9 +91,11 @@ func (rt *Runtime) EnsureNet(ctx context.Context) (string, string, error) {
 	if rt.Clients.EC2 == nil {
 		return "", "", fmt.Errorf("EC2 endpoint is unset")
 	}
-	vpcOut, err := rt.Clients.EC2.CreateVpc(ctx, &ec2.CreateVpcInput{
-		CidrBlock:         aws.String("10.0.0.0/16"),
-		TagSpecifications: rt.TagSpec(ec2types.ResourceTypeVpc),
+	vpcOut, err := withDeadline(ctx, func(ctx context.Context) (*ec2.CreateVpcOutput, error) {
+		return rt.Clients.EC2.CreateVpc(ctx, &ec2.CreateVpcInput{
+			CidrBlock:         aws.String("10.0.0.0/16"),
+			TagSpecifications: rt.TagSpec(ec2types.ResourceTypeVpc),
+		})
 	})
 	if err != nil {
 		return "", "", fmt.Errorf("create vpc: %w", err)
@@ -101,14 +105,18 @@ func (rt *Runtime) EnsureNet(ctx context.Context) (string, string, error) {
 		return "", "", err
 	}
 	rt.Cleanup(func(ctx context.Context) error {
-		_, err := rt.Clients.EC2.DeleteVpc(ctx, &ec2.DeleteVpcInput{VpcId: aws.String(vpcID)})
+		_, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteVpcOutput, error) {
+			return rt.Clients.EC2.DeleteVpc(ctx, &ec2.DeleteVpcInput{VpcId: aws.String(vpcID)})
+		})
 		return ignoreMissing(err)
 	})
-	subOut, err := rt.Clients.EC2.CreateSubnet(ctx, &ec2.CreateSubnetInput{
-		VpcId:             aws.String(vpcID),
-		CidrBlock:         aws.String("10.0.1.0/24"),
-		AvailabilityZone:  aws.String("vws-1a"),
-		TagSpecifications: rt.TagSpec(ec2types.ResourceTypeSubnet),
+	subOut, err := withDeadline(ctx, func(ctx context.Context) (*ec2.CreateSubnetOutput, error) {
+		return rt.Clients.EC2.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+			VpcId:             aws.String(vpcID),
+			CidrBlock:         aws.String("10.0.1.0/24"),
+			AvailabilityZone:  aws.String("vws-1a"),
+			TagSpecifications: rt.TagSpec(ec2types.ResourceTypeSubnet),
+		})
 	})
 	if err != nil {
 		return "", "", fmt.Errorf("create subnet: %w", err)
@@ -118,7 +126,9 @@ func (rt *Runtime) EnsureNet(ctx context.Context) (string, string, error) {
 		return "", "", err
 	}
 	rt.Cleanup(func(ctx context.Context) error {
-		_, err := rt.Clients.EC2.DeleteSubnet(ctx, &ec2.DeleteSubnetInput{SubnetId: aws.String(subID)})
+		_, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteSubnetOutput, error) {
+			return rt.Clients.EC2.DeleteSubnet(ctx, &ec2.DeleteSubnetInput{SubnetId: aws.String(subID)})
+		})
 		return ignoreMissing(err)
 	})
 	rt.net = netIDs{vpc: vpcID, subnet: subID}
@@ -183,7 +193,9 @@ func readLedger(dir string) ([]sweep.Resource, error) {
 func emptyAndDelete(ctx context.Context, c *s3.Client, name string) error {
 	var token *string
 	for {
-		page, err := c.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(name), ContinuationToken: token})
+		page, err := withDeadline(ctx, func(ctx context.Context) (*s3.ListObjectsV2Output, error) {
+			return c.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(name), ContinuationToken: token})
+		})
 		if err != nil {
 			if strings.Contains(err.Error(), "NoSuchBucket") {
 				return nil
@@ -191,7 +203,9 @@ func emptyAndDelete(ctx context.Context, c *s3.Client, name string) error {
 			return fmt.Errorf("list %s: %w", name, err)
 		}
 		for _, obj := range page.Contents {
-			_, err := c.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(name), Key: obj.Key})
+			_, err := withDeadline(ctx, func(ctx context.Context) (*s3.DeleteObjectOutput, error) {
+				return c.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(name), Key: obj.Key})
+			})
 			if err != nil {
 				return fmt.Errorf("delete object: %w", err)
 			}
@@ -201,7 +215,9 @@ func emptyAndDelete(ctx context.Context, c *s3.Client, name string) error {
 		}
 		token = page.NextContinuationToken
 	}
-	_, err := c.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(name)})
+	_, err := withDeadline(ctx, func(ctx context.Context) (*s3.DeleteBucketOutput, error) {
+		return c.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(name)})
+	})
 	return ignoreMissing(err)
 }
 
@@ -227,7 +243,9 @@ type ec2View struct {
 func (rt *Runtime) inventory(ctx context.Context, rows []sweep.Resource) ([]sweepItem, error) {
 	var items []sweepItem
 	if rt.Clients != nil && rt.Clients.S3 != nil {
-		out, err := rt.Clients.S3.ListBuckets(ctx, &s3.ListBucketsInput{})
+		out, err := withDeadline(ctx, func(ctx context.Context) (*s3.ListBucketsOutput, error) {
+			return rt.Clients.S3.ListBuckets(ctx, &s3.ListBucketsInput{})
+		})
 		if err != nil {
 			return nil, fmt.Errorf("list buckets: %w", err)
 		}
@@ -250,49 +268,67 @@ func (rt *Runtime) inventory(ctx context.Context, rows []sweep.Resource) ([]swee
 
 func describeEC2(ctx context.Context, c *ec2.Client) (ec2View, error) {
 	var view ec2View
-	inst, err := c.DescribeInstances(ctx, &ec2.DescribeInstancesInput{})
+	inst, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeInstancesOutput, error) {
+		return c.DescribeInstances(ctx, &ec2.DescribeInstancesInput{})
+	})
 	if err != nil {
 		return view, fmt.Errorf("describe instances: %w", err)
 	}
 	for _, res := range inst.Reservations {
 		view.instances = append(view.instances, res.Instances...)
 	}
-	vols, err := c.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{})
+	vols, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeVolumesOutput, error) {
+		return c.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{})
+	})
 	if err != nil {
 		return view, fmt.Errorf("describe volumes: %w", err)
 	}
 	view.volumes = vols.Volumes
-	snaps, err := c.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{OwnerIds: []string{"self"}})
+	snaps, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeSnapshotsOutput, error) {
+		return c.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{OwnerIds: []string{"self"}})
+	})
 	if err != nil {
 		return view, fmt.Errorf("describe snapshots: %w", err)
 	}
 	view.snapshots = snaps.Snapshots
-	addrs, err := c.DescribeAddresses(ctx, &ec2.DescribeAddressesInput{})
+	addrs, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeAddressesOutput, error) {
+		return c.DescribeAddresses(ctx, &ec2.DescribeAddressesInput{})
+	})
 	if err != nil {
 		return view, fmt.Errorf("describe addresses: %w", err)
 	}
 	view.addresses = addrs.Addresses
-	keys, err := c.DescribeKeyPairs(ctx, &ec2.DescribeKeyPairsInput{})
+	keys, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeKeyPairsOutput, error) {
+		return c.DescribeKeyPairs(ctx, &ec2.DescribeKeyPairsInput{})
+	})
 	if err != nil {
 		return view, fmt.Errorf("describe key pairs: %w", err)
 	}
 	view.keys = keys.KeyPairs
-	groups, err := c.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{})
+	groups, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeSecurityGroupsOutput, error) {
+		return c.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{})
+	})
 	if err != nil {
 		return view, fmt.Errorf("describe security groups: %w", err)
 	}
 	view.groups = groups.SecurityGroups
-	subs, err := c.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{})
+	subs, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeSubnetsOutput, error) {
+		return c.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{})
+	})
 	if err != nil {
 		return view, fmt.Errorf("describe subnets: %w", err)
 	}
 	view.subnets = subs.Subnets
-	vpcs, err := c.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{})
+	vpcs, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeVpcsOutput, error) {
+		return c.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{})
+	})
 	if err != nil {
 		return view, fmt.Errorf("describe vpcs: %w", err)
 	}
 	view.vpcs = vpcs.Vpcs
-	gws, err := c.DescribeInternetGateways(ctx, &ec2.DescribeInternetGatewaysInput{})
+	gws, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeInternetGatewaysOutput, error) {
+		return c.DescribeInternetGateways(ctx, &ec2.DescribeInternetGatewaysInput{})
+	})
 	if err != nil {
 		return view, fmt.Errorf("describe internet gateways: %w", err)
 	}
@@ -431,7 +467,9 @@ func deleteEC2(ctx context.Context, c *ec2.Client, items []sweepItem) error {
 		if len(ids) < n {
 			n = len(ids)
 		}
-		_, err := c.TerminateInstances(ctx, &ec2.TerminateInstancesInput{InstanceIds: ids[:n]})
+		_, err := withDeadline(ctx, func(ctx context.Context) (*ec2.TerminateInstancesOutput, error) {
+			return c.TerminateInstances(ctx, &ec2.TerminateInstancesInput{InstanceIds: ids[:n]})
+		})
 		if err != nil && !strings.Contains(err.Error(), "NotFound") {
 			return fmt.Errorf("terminate: %w", err)
 		}
@@ -441,48 +479,68 @@ func deleteEC2(ctx context.Context, c *ec2.Client, items []sweepItem) error {
 		var err error
 		switch item.kind {
 		case "volume":
-			_, err = c.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(item.id)})
+			_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteVolumeOutput, error) {
+				return c.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(item.id)})
+			})
 			if err != nil && !strings.Contains(err.Error(), "NotFound") && !strings.Contains(err.Error(), "IncorrectState") {
 				return fmt.Errorf("delete volume %s: %w", item.id, err)
 			}
 		case "snapshot":
-			_, err = c.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: aws.String(item.id)})
+			_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteSnapshotOutput, error) {
+				return c.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: aws.String(item.id)})
+			})
 			if err != nil && !strings.Contains(err.Error(), "NotFound") {
 				return fmt.Errorf("delete snapshot: %w", err)
 			}
 		case "address":
 			if item.assoc != "" {
-				_, _ = c.DisassociateAddress(ctx, &ec2.DisassociateAddressInput{AssociationId: aws.String(item.assoc)})
+				_, _ = withDeadline(ctx, func(ctx context.Context) (*ec2.DisassociateAddressOutput, error) {
+					return c.DisassociateAddress(ctx, &ec2.DisassociateAddressInput{AssociationId: aws.String(item.assoc)})
+				})
 			}
-			_, err = c.ReleaseAddress(ctx, &ec2.ReleaseAddressInput{AllocationId: aws.String(item.id)})
+			_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.ReleaseAddressOutput, error) {
+				return c.ReleaseAddress(ctx, &ec2.ReleaseAddressInput{AllocationId: aws.String(item.id)})
+			})
 			if err != nil && !strings.Contains(err.Error(), "NotFound") {
 				return fmt.Errorf("release address: %w", err)
 			}
 		case "key-pair":
-			_, err = c.DeleteKeyPair(ctx, &ec2.DeleteKeyPairInput{KeyName: aws.String(item.id)})
+			_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteKeyPairOutput, error) {
+				return c.DeleteKeyPair(ctx, &ec2.DeleteKeyPairInput{KeyName: aws.String(item.id)})
+			})
 			if err != nil && !strings.Contains(err.Error(), "NotFound") {
 				return fmt.Errorf("delete key pair: %w", err)
 			}
 		case "security-group":
-			_, err = c.DeleteSecurityGroup(ctx, &ec2.DeleteSecurityGroupInput{GroupId: aws.String(item.id)})
+			_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteSecurityGroupOutput, error) {
+				return c.DeleteSecurityGroup(ctx, &ec2.DeleteSecurityGroupInput{GroupId: aws.String(item.id)})
+			})
 			if err != nil && !strings.Contains(err.Error(), "NotFound") {
 				return fmt.Errorf("delete security group: %w", err)
 			}
 		case "internet-gateway":
 			for _, vpc := range item.vpcs {
-				_, _ = c.DetachInternetGateway(ctx, &ec2.DetachInternetGatewayInput{InternetGatewayId: aws.String(item.id), VpcId: aws.String(vpc)})
+				_, _ = withDeadline(ctx, func(ctx context.Context) (*ec2.DetachInternetGatewayOutput, error) {
+					return c.DetachInternetGateway(ctx, &ec2.DetachInternetGatewayInput{InternetGatewayId: aws.String(item.id), VpcId: aws.String(vpc)})
+				})
 			}
-			_, err = c.DeleteInternetGateway(ctx, &ec2.DeleteInternetGatewayInput{InternetGatewayId: aws.String(item.id)})
+			_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteInternetGatewayOutput, error) {
+				return c.DeleteInternetGateway(ctx, &ec2.DeleteInternetGatewayInput{InternetGatewayId: aws.String(item.id)})
+			})
 			if err != nil && !strings.Contains(err.Error(), "NotFound") {
 				return fmt.Errorf("delete internet gateway: %w", err)
 			}
 		case "subnet":
-			_, err = c.DeleteSubnet(ctx, &ec2.DeleteSubnetInput{SubnetId: aws.String(item.id)})
+			_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteSubnetOutput, error) {
+				return c.DeleteSubnet(ctx, &ec2.DeleteSubnetInput{SubnetId: aws.String(item.id)})
+			})
 			if err != nil && !strings.Contains(err.Error(), "NotFound") && !strings.Contains(err.Error(), "Dependency") {
 				return fmt.Errorf("delete subnet: %w", err)
 			}
 		case "vpc":
-			_, err = c.DeleteVpc(ctx, &ec2.DeleteVpcInput{VpcId: aws.String(item.id)})
+			_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteVpcOutput, error) {
+				return c.DeleteVpc(ctx, &ec2.DeleteVpcInput{VpcId: aws.String(item.id)})
+			})
 			if err != nil && !strings.Contains(err.Error(), "NotFound") && !strings.Contains(err.Error(), "Dependency") {
 				return fmt.Errorf("delete vpc: %w", err)
 			}

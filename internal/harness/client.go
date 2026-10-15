@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"sync"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
@@ -186,7 +185,7 @@ func (rt *Runtime) Cleanup(fn func(context.Context) error) { rt.Clean.Add(fn) }
 func (rt *Runtime) Call(ctx context.Context, fn func(context.Context) error) (cases.Outcome, error) {
 	cap := &Capture{}
 	ctx = withCapture(ctx, cap)
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, OpTimeout)
 	defer cancel()
 	err := fn(ctx)
 	o := cases.Outcome{Fields: map[string]string{}, HTTP: cap.Status, Raw: cap.snapshot(rt.secret)}
