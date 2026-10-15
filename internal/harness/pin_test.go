@@ -11,6 +11,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 )
 
 func TestPinRefusesChangedResolution(t *testing.T) {
@@ -144,6 +147,125 @@ func TestRealCLIUsesPinnedOrigin(t *testing.T) {
 	}
 	if hits != 1 || proxyHits != 0 {
 		t.Fatalf("origin %d proxy %d", hits, proxyHits)
+	}
+}
+
+func TestChildEnvDropsContainerCredentials(t *testing.T) {
+	env := ChildEnv([]string{
+		"PATH=/usr/bin",
+		"AWS_CONTAINER_CREDENTIALS_FULL_URI=http://169.254.170.2/creds",
+		"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI=/creds",
+		"AWS_CONTAINER_AUTHORIZATION_TOKEN=tok",
+		"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE=/tmp/tok",
+		"AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/web",
+		"AWS_ROLE_ARN=arn:aws:iam::123456789012:role/x",
+		"AWS_ROLE_SESSION_NAME=conf",
+		"AWS_PROFILE=default",
+	})
+	kept := map[string]bool{"PATH=/usr/bin": false}
+	for _, e := range env {
+		if _, ok := kept[e]; ok {
+			kept[e] = true
+		}
+		switch {
+		case strings.HasPrefix(e, "AWS_CONTAINER_CREDENTIALS_FULL_URI="),
+			strings.HasPrefix(e, "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI="),
+			strings.HasPrefix(e, "AWS_CONTAINER_AUTHORIZATION_TOKEN="),
+			strings.HasPrefix(e, "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE="),
+			strings.HasPrefix(e, "AWS_WEB_IDENTITY_TOKEN_FILE="),
+			strings.HasPrefix(e, "AWS_ROLE_ARN="),
+			strings.HasPrefix(e, "AWS_ROLE_SESSION_NAME="),
+			strings.HasPrefix(e, "AWS_PROFILE="):
+			t.Fatalf("kept %s", e)
+		}
+	}
+	if !kept["PATH=/usr/bin"] {
+		t.Fatal("PATH was dropped")
+	}
+}
+
+func TestChildEnvDisablesRemoteParam(t *testing.T) {
+	env := ChildEnv([]string{"PATH=/bin", "AWS_CONFIG_FILE=/tmp/real-config"})
+	var path string
+	for _, e := range env {
+		if strings.HasPrefix(e, "AWS_CONFIG_FILE=") {
+			path = strings.TrimPrefix(e, "AWS_CONFIG_FILE=")
+		}
+	}
+	if path == "" || path == "/tmp/real-config" {
+		t.Fatalf("config file %q", path)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "cli_follow_urlparam = false") {
+		t.Fatalf("config %q is %q", path, b)
+	}
+}
+
+func TestPinKeepsSignedHost(t *testing.T) {
+	const access = "AKIDEXAMPLE"
+	const secret = "secret"
+	const region = "vws-1"
+	var gotHost, gotAuth, gotDate, gotHash, gotPath string
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHost = r.Host
+		gotAuth = r.Header.Get("Authorization")
+		gotDate = r.Header.Get("X-Amz-Date")
+		gotHash = r.Header.Get("X-Amz-Content-Sha256")
+		gotPath = r.URL.RequestURI()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer origin.Close()
+	_, port, err := net.SplitHostPort(origin.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	prevLookup := lookupHost
+	lookupHost = func(ctx context.Context, host string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("127.0.0.1")}, nil
+	}
+	t.Cleanup(func() { lookupHost = prevLookup })
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	p, err := PinEndpoint(ctx, "http://lab.internal:"+port, []string{"lab.internal"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.URL+"/probe", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds := aws.Credentials{AccessKeyID: access, SecretAccessKey: secret}
+	err = v4.NewSigner().SignHTTP(ctx, creds, req, PayloadHash(nil), "s3", region, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || gotAuth == "" || gotDate == "" {
+		t.Fatalf("status %d auth %q date %q", resp.StatusCode, gotAuth, gotDate)
+	}
+	when, err := time.Parse("20060102T150405Z", gotDate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := http.NewRequest(http.MethodGet, "http://"+gotHost+gotPath, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = v4.NewSigner().SignHTTP(ctx, creds, again, gotHash, "s3", region, when)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Header.Get("Authorization") != gotAuth {
+		t.Fatalf("host %q authorization mismatch\norigin %s\nagain  %s",
+			gotHost, gotAuth, again.Header.Get("Authorization"))
 	}
 }
 

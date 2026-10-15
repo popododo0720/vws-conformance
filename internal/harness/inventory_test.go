@@ -38,6 +38,27 @@ func TestEC2InventoryIncludesDryRunKinds(t *testing.T) {
 	}
 }
 
+func TestBareConfPrefixIsNotOwned(t *testing.T) {
+	view := ec2View{
+		groups: []ec2types.SecurityGroup{{GroupId: aws.String("sg-bare"), GroupName: aws.String("conf-sg")}},
+		vpcs: []ec2types.Vpc{{
+			VpcId: aws.String("vpc-name"),
+			Tags:  []ec2types.Tag{{Key: aws.String("Name"), Value: aws.String("conf-net")}},
+		}},
+		keys:      []ec2types.KeyPairInfo{{KeyName: aws.String("conf-key")}},
+		snapshots: []ec2types.Snapshot{{SnapshotId: aws.String("snap-1"), Description: aws.String("conf-logs")}},
+		volumes:   []ec2types.Volume{{VolumeId: aws.String("vol-x")}},
+	}
+	rows := []sweep.Resource{{Kind: "volume", ID: "vol-x", LedgerRunID: "conf-logs"}}
+	var selected []string
+	for _, item := range ec2Items(view, rows) {
+		selected = append(selected, item.kind+" "+item.id)
+	}
+	if len(selected) != 0 {
+		t.Fatalf("selected %v", selected)
+	}
+}
+
 func TestTerminatedInstanceIsNotALeftover(t *testing.T) {
 	run := "conf-20261015T120000Z-abc123"
 	tag := []ec2types.Tag{{Key: aws.String("vws:conformance-run"), Value: aws.String(run)}}
