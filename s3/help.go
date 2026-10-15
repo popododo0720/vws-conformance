@@ -14,6 +14,10 @@ import (
 
 func bytesReader(s string) *bytes.Reader { return bytes.NewReader([]byte(s)) }
 
+func bucketName(rt *harness.Runtime, id string) string {
+	return strings.ToLower(rt.Name(id))
+}
+
 func ignoreNoSuch(err error) error {
 	if err == nil || strings.Contains(err.Error(), "NoSuch") || strings.Contains(err.Error(), "NotFound") {
 		return nil

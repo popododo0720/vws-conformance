@@ -39,9 +39,9 @@ func runObjects(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.O
 		return cases.Outcome{}, fmt.Errorf("s3 client is unset")
 	}
 	api := rt.Clients.S3
-	name := rt.Name("obj")
+	name := bucketName(rt, c.ID)
 	switch c.ID {
-	case "S3-OBJ-001", "S3-OBJ-002", "S3-OBJ-003", "S3-OBJ-004", "S3-OBJ-005", "S3-OBJ-101", "S3-OBJ-103", "S3-OBJ-104":
+	case "S3-OBJ-001", "S3-OBJ-002", "S3-OBJ-003", "S3-OBJ-004", "S3-OBJ-005", "S3-OBJ-101", "S3-OBJ-102", "S3-OBJ-103", "S3-OBJ-104", "S3-OBJ-105", "S3-OBJ-106":
 		if err := createFresh(ctx, rt, api, name); err != nil {
 			return cases.Outcome{}, err
 		}
@@ -105,12 +105,9 @@ func runObjects(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.O
 			return err
 		})
 	case "S3-OBJ-102":
-		if err := createFresh(ctx, rt, api, rt.Name("dig")); err != nil {
-			return cases.Outcome{}, err
-		}
 		return rt.Call(ctx, func(ctx context.Context) error {
 			_, err := api.PutObject(ctx, &s3.PutObjectInput{
-				Bucket: aws.String(rt.Name("dig")), Key: aws.String("k"), Body: bytesReader(string(body)),
+				Bucket: aws.String(name), Key: aws.String("k"), Body: bytesReader(string(body)),
 				ContentMD5: aws.String(func() string { s := md5.Sum([]byte("not-the-body")); return base64.StdEncoding.EncodeToString(s[:]) }()),
 			})
 			return err
@@ -132,24 +129,18 @@ func runObjects(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.O
 			return err
 		})
 	case "S3-OBJ-105":
-		if err := createFresh(ctx, rt, api, rt.Name("del")); err != nil {
-			return cases.Outcome{}, err
-		}
 		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(rt.Name("del")), Key: aws.String("never-stored")})
+			_, err := api.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(name), Key: aws.String("never-stored")})
 			return err
 		})
 	case "S3-OBJ-106":
-		if err := createFresh(ctx, rt, api, name); err != nil {
-			return cases.Outcome{}, err
-		}
 		return rt.Call(ctx, func(ctx context.Context) error {
 			_, err := api.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(name), Key: aws.String("missing")})
 			return err
 		})
 	case "S3-OBJ-107":
 		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(rt.Name("missing")), Key: aws.String("k")})
+			_, err := api.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(name), Key: aws.String("k")})
 			return err
 		})
 	default:

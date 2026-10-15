@@ -50,7 +50,7 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		return cases.Outcome{}, fmt.Errorf("s3 client is unset")
 	}
 	api := rt.Clients.S3
-	name := rt.Name("gap")
+	name := bucketName(rt, c.ID)
 	if err := createFresh(ctx, rt, api, name); err != nil {
 		return cases.Outcome{}, err
 	}

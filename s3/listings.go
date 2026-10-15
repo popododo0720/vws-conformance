@@ -33,7 +33,7 @@ func runListings(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.
 		return cases.Outcome{}, fmt.Errorf("s3 client is unset")
 	}
 	api := rt.Clients.S3
-	name := rt.Name("list")
+	name := bucketName(rt, c.ID)
 	if c.ID != "S3-LO-101" && c.ID != "S3-LO-102" {
 		if err := createFresh(ctx, rt, api, name); err != nil {
 			return cases.Outcome{}, err
@@ -102,12 +102,12 @@ func runListings(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.
 		return o, nil
 	case "S3-LO-101":
 		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(rt.Name("missing"))})
+			_, err := api.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(name)})
 			return err
 		})
 	case "S3-LO-102":
 		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.ListObjects(ctx, &s3.ListObjectsInput{Bucket: aws.String(rt.Name("missing"))})
+			_, err := api.ListObjects(ctx, &s3.ListObjectsInput{Bucket: aws.String(name)})
 			return err
 		})
 	default:
