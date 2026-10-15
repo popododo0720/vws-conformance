@@ -18,7 +18,7 @@ There is no nightly job and no self-hosted runner. Pull requests run the fake co
 | `VWS_CONF_ALLOWED_HOSTS` | Comma-separated hosts. AWS endpoint names are refused even if listed. A public IP is allowed only when that IP is listed. Link-local addresses are refused. |
 | `VWS_CONF_ALLOWED_ACCOUNTS` | Comma-separated account ids. |
 | `VWS_CONF_TARGET` | `local-fake`, `local-grpc`, or `vws-test`. |
-| `VWS_CONF_RUN_ID` | Optional. Empty mints `conf-YYYYMMDDThhmmssZ-xxxxxx`. |
+| `VWS_CONF_RUN_ID` | Optional. Empty mints `conf-YYYYMMDDThhmmssZ-xxxxxx`. A set value must match that pattern. |
 | `VWS_CONF_OUT` | Report directory. Default is `out/` at the module root. |
 | `VWS_CONF_PARALLEL` | Case concurrency. Default is 1. |
 | `VWS_CONF_CONSOLE_API_VERSION` | Recorded in the report. |
@@ -74,7 +74,7 @@ The text is a dry-run issue. dr eggbot files it. `status=error` is a harness bug
 
 ## Cleanup
 
-Names and tags carry the run id. Cleanup runs on success, failure, panic, and SIGINT/SIGTERM. The next run sweeps leftover `conf-` resources and nothing else.
+Names and tags carry the run id. `cmd/conf-run` runs cleanup on success, failure, panic, and SIGINT/SIGTERM. The next run sweeps leftover `conf-` resources and nothing else.
 
 ```
 go run ./cmd/conf-sweep --dry-run

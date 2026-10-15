@@ -70,6 +70,7 @@ func SetProcessCleanup(fn func()) {
 func runProcessCleanup() {
 	process.mu.Lock()
 	fn := process.fn
+	process.fn = nil
 	process.mu.Unlock()
 	if fn != nil {
 		fn()
@@ -79,18 +80,8 @@ func runProcessCleanup() {
 func RunMain(m interface{ Run() int }, sig <-chan os.Signal, exit func(int)) int {
 	go func() {
 		<-sig
-		exit(1)
-	}()
-	return m.Run()
-}
-
-func Main(m interface{ Run() int }) int {
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sig
 		runProcessCleanup()
-		os.Exit(1)
+		exit(1)
 	}()
 	defer func() {
 		if recover() != nil {
@@ -101,4 +92,11 @@ func Main(m interface{ Run() int }) int {
 	code := m.Run()
 	runProcessCleanup()
 	return code
+}
+
+func Main(m interface{ Run() int }) int {
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sig)
+	return RunMain(m, sig, os.Exit)
 }

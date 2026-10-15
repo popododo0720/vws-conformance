@@ -4,7 +4,7 @@ The suite is a table of cases. Each case names one AWS operation, one expected H
 
 Clients are unmodified aws-sdk-go-v2. The only overrides are the base endpoint, region `vws-1`, and S3 path style. Capture middleware records the request and response. It does not change them.
 
-Every run id matches `conf-YYYYMMDDThhmmssZ-xxxxxx`. Resource names and the `vws:conformance-run` tag use that id. Cleanup is registered LIFO, `TestMain` runs it on the way out, and SIGINT/SIGTERM run the same function. A panic in a case is recovered and still recorded. The process cleanup also runs.
+Every run id matches `conf-YYYYMMDDThhmmssZ-xxxxxx`. A value set in `VWS_CONF_RUN_ID` is rejected before clients load when it does not match. Resource names and the `vws:conformance-run` tag use that id. Cleanup is registered LIFO. `cmd/conf-run` enters through `harness.Main`, which runs cleanup after success, failure, panic, and SIGINT/SIGTERM. A panic in a case is recovered and still recorded.
 
 Before mutations, `CheckEndpoints` refuses AWS endpoint names and any host that is not on the allow list. Names are compared after trailing dots, case, and IDNA are folded. The HTTP client dials the resolved address directly, and only when every address is loopback, private, or an allowlisted public IP. Link-local addresses are refused. `GetCallerIdentity` then checks the account. The pre-run sweep deletes only resources that carry the `conf-` prefix.
 

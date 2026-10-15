@@ -5,12 +5,21 @@ import (
 	"os"
 
 	"github.com/popododo0720/vws-conformance/internal/engine"
+	"github.com/popododo0720/vws-conformance/internal/harness"
 )
 
 func main() {
 	flag.Parse()
-	if flag.Arg(0) == "check-endpoint" {
-		os.Exit(engine.CheckCLI())
-	}
-	os.Exit(engine.Main())
+	os.Exit(execute())
 }
+
+func execute() int {
+	if flag.Arg(0) == "check-endpoint" {
+		return engine.CheckCLI()
+	}
+	return harness.Main(engineMain{})
+}
+
+type engineMain struct{}
+
+func (engineMain) Run() int { return engine.Main() }
