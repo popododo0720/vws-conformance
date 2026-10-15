@@ -459,6 +459,9 @@ func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool) []sweepItem {
 		items = append(items, it)
 	}
 	for _, in := range view.instances {
+		if in.State != nil && in.State.Name == ec2types.InstanceStateNameTerminated {
+			continue
+		}
 		id := aws.ToString(in.InstanceId)
 		if tagged(in.Tags) || ledgerHas(rows, "instance", id) {
 			add(sweepItem{kind: "instance", id: id})
