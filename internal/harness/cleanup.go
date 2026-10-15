@@ -58,39 +58,42 @@ func OnSignal(sig <-chan os.Signal, cleanup func()) <-chan struct{} {
 
 var process struct {
 	mu sync.Mutex
-	fn func()
+	fn func() error
 }
 
-func SetProcessCleanup(fn func()) {
+func SetProcessCleanup(fn func() error) {
 	process.mu.Lock()
 	process.fn = fn
 	process.mu.Unlock()
 }
 
-func runProcessCleanup() {
+func runProcessCleanup() error {
 	process.mu.Lock()
 	fn := process.fn
 	process.fn = nil
 	process.mu.Unlock()
-	if fn != nil {
-		fn()
+	if fn == nil {
+		return nil
 	}
+	return fn()
 }
 
 func RunMain(m interface{ Run() int }, sig <-chan os.Signal, exit func(int)) int {
 	go func() {
 		<-sig
-		runProcessCleanup()
+		_ = runProcessCleanup()
 		exit(1)
 	}()
 	defer func() {
 		if recover() != nil {
-			runProcessCleanup()
+			_ = runProcessCleanup()
 			panic("recovered")
 		}
 	}()
 	code := m.Run()
-	runProcessCleanup()
+	if err := runProcessCleanup(); err != nil {
+		return 1
+	}
 	return code
 }
 

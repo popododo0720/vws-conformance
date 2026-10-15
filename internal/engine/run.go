@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -144,11 +145,20 @@ func runtime(ctx context.Context, cfg harness.Config) (*harness.Runtime, error) 
 			gate.err = fmt.Errorf("pre-run sweep: %w", err)
 			return
 		}
-		harness.SetProcessCleanup(func() {
+		harness.SetProcessCleanup(func() error {
 			cctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
-			_ = rt.Clean.Run(cctx)
-			_ = rt.Sweep(cctx)
+			var errs []error
+			if err := rt.Clean.Run(cctx); err != nil {
+				errs = append(errs, err)
+			}
+			if err := rt.Sweep(cctx); err != nil {
+				errs = append(errs, err)
+			}
+			if len(errs) == 0 {
+				return nil
+			}
+			return noteCleanup(errors.Join(errs...))
 		})
 		gate.rt = rt
 	})
@@ -190,17 +200,6 @@ func runGroups(ctx context.Context, cfg harness.Config, onlyService, onlyGroup s
 	rep := report.New(cfg.RunID, report.Target{
 		Name: cfg.Target, Region: cfg.Region, ConsoleAPIVersion: cfg.ConsoleAPIVersion,
 	}, tools())
-	defer func() {
-		if rec := recover(); rec != nil {
-			cctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			if rt.Clients != nil {
-				_ = rt.Clean.Run(cctx)
-				_ = rt.Sweep(cctx)
-			}
-			panic(rec)
-		}
-	}()
 	sem := make(chan struct{}, cfg.Parallel)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -227,7 +226,40 @@ func runGroups(ctx context.Context, cfg harness.Config, onlyService, onlyGroup s
 	if err := writeReport(cfg, rep, file); err != nil {
 		return rep, err
 	}
+	publishReport(rep, cfg, file)
 	return rep, nil
+}
+
+func publishReport(rep *report.Report, cfg harness.Config, file string) {
+	published.mu.Lock()
+	published.rep = rep
+	published.cfg = cfg
+	published.file = file
+	published.mu.Unlock()
+}
+
+func noteCleanup(err error) error {
+	if err == nil {
+		return nil
+	}
+	published.mu.Lock()
+	defer published.mu.Unlock()
+	if published.rep != nil {
+		published.rep.Add(report.Result{
+			ID: "HARNESS-CLEANUP", Service: "harness", Operation: "Cleanup", Kind: "harness", Suite: "go-sdk",
+			Status: "error", DocURL: cases.DocEC2("DeleteVpc"), Reason: err.Error(),
+		})
+		published.rep.Finish()
+		_ = writeReport(published.cfg, published.rep, published.file)
+	}
+	return err
+}
+
+var published struct {
+	mu   sync.Mutex
+	rep  *report.Report
+	cfg  harness.Config
+	file string
 }
 
 func runOne(ctx context.Context, rt *harness.Runtime, g bind.Group, c cases.Case) (res report.Result) {

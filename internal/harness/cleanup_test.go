@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"errors"
 	"syscall"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func TestCleanupRunsAfterPanic(t *testing.T) {
 func TestRunMainCleanup(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		ran := false
-		SetProcessCleanup(func() { ran = true })
+		SetProcessCleanup(func() error { ran = true; return nil })
 		code := RunMain(staticRun(0), blockedSignals(), func(int) {})
 		if code != 0 || !ran {
 			t.Fatalf("code %d ran %v", code, ran)
@@ -42,7 +43,7 @@ func TestRunMainCleanup(t *testing.T) {
 	})
 	t.Run("failure", func(t *testing.T) {
 		ran := false
-		SetProcessCleanup(func() { ran = true })
+		SetProcessCleanup(func() error { ran = true; return nil })
 		code := RunMain(staticRun(2), blockedSignals(), func(int) {})
 		if code != 2 || !ran {
 			t.Fatalf("code %d ran %v", code, ran)
@@ -50,7 +51,7 @@ func TestRunMainCleanup(t *testing.T) {
 	})
 	t.Run("SIGTERM", func(t *testing.T) {
 		ran := make(chan struct{})
-		SetProcessCleanup(func() { close(ran) })
+		SetProcessCleanup(func() error { close(ran); return nil })
 		sig := make(chan osSignal, 1)
 		exitCode := make(chan int, 1)
 		entered := make(chan struct{})
@@ -69,6 +70,13 @@ func TestRunMainCleanup(t *testing.T) {
 			}
 		case <-time.After(2 * time.Second):
 			t.Fatal("process did not exit")
+		}
+	})
+	t.Run("cleanup error", func(t *testing.T) {
+		SetProcessCleanup(func() error { return errors.New("sweep failed") })
+		code := RunMain(staticRun(0), blockedSignals(), func(int) {})
+		if code != 1 {
+			t.Fatalf("code %d", code)
 		}
 	})
 }

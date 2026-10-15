@@ -44,9 +44,9 @@
         "required": ["id", "service", "operation", "kind", "suite", "status", "doc_url", "duration_ms"],
         "properties": {
           "id": {"type": "string"},
-          "service": {"enum": ["ec2", "s3", "iam", "sts", "auth", "vpc", "ebs"]},
+          "service": {"enum": ["ec2", "s3", "iam", "sts", "auth", "vpc", "ebs", "harness"]},
           "operation": {"type": "string"},
-          "kind": {"enum": ["happy", "error", "pagination", "idempotency", "tags", "filter", "auth", "gap"]},
+          "kind": {"enum": ["happy", "error", "pagination", "idempotency", "tags", "filter", "auth", "gap", "harness"]},
           "suite": {"enum": ["go-sdk", "cli", "raw-http"]},
           "status": {"enum": ["pass", "fail", "skip", "error"]},
           "doc_url": {"type": "string", "pattern": "^https://docs\\.aws\\.amazon\\.com/"},
