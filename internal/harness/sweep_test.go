@@ -49,6 +49,44 @@ func TestSweepReportsVolumeThatStaysInUse(t *testing.T) {
 	}
 }
 
+func TestSweepDetachesAnAttachedVolume(t *testing.T) {
+	var detached atomic.Bool
+	var deletes atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		action := ec2Action(r)
+		switch action {
+		case "DetachVolume":
+			detached.Store(true)
+			writeEC2(w, 200, `<?xml version="1.0" encoding="UTF-8"?>`+
+				`<DetachVolumeResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">`+
+				`<requestId>r</requestId><volumeId>vol-1</volumeId><status>detaching</status>`+
+				`</DetachVolumeResponse>`)
+		case "DeleteVolume":
+			deletes.Add(1)
+			if !detached.Load() {
+				writeEC2(w, 400, ec2Err("IncorrectState", "volume is in use"))
+				return
+			}
+			writeEC2(w, 200, `<?xml version="1.0" encoding="UTF-8"?>`+
+				`<DeleteVolumeResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">`+
+				`<requestId>r</requestId><return>true</return></DeleteVolumeResponse>`)
+		default:
+			status, body := ec2Describe(action, !detached.Load())
+			writeEC2(w, status, body)
+		}
+	}))
+	defer srv.Close()
+	rt := runtimeOn(t, srv.URL, "vol-1")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := rt.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !detached.Load() || deletes.Load() < 1 {
+		t.Fatalf("detached %v deletes %d", detached.Load(), deletes.Load())
+	}
+}
+
 func TestSweepSucceedsWhenVolumeDisappears(t *testing.T) {
 	var gone atomic.Bool
 	var deletes atomic.Int32
