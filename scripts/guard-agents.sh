@@ -765,6 +765,29 @@ GH
     "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
   expect_pass "the vws-verify identity on the same account (known gap)" env GUARD_VERIFY_EXCLUDE=verifier GUARD_VERIFY_IDENTITY=verifier \
     GUARD_VERIFY_LABELER=verifier "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  # Empty allow-list, Result, and a workflow that dropped its steps.
+  grep -v -E '^[[:space:]]*(- )?Result:' "$ev" >"$tmp/outsider.md"
+  sed -i '/^Head: /a Result: PASS' "$tmp/outsider.md"
+  sed -i 's/^@@comment-by: .*/@@comment-by: outsider/' "$tmp/outsider.md"
+  expect_fail "an empty actor list" env GUARD_VERIFY_ACTORS= GUARD_VERIFY_LABELER=outsider \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$tmp/outsider.md"
+  expect_fail "a whitespace actor list" env GUARD_VERIFY_ACTORS=' , ' GUARD_VERIFY_LABELER=outsider \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$tmp/outsider.md"
+  grep -v -E '^[[:space:]]*(- )?Result:' "$ev" >"$tmp/noresult.md"
+  expect_fail "a verdict with no Result line" env GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$tmp/noresult.md"
+  grep -v -E '^[[:space:]]*(- )?Result:' "$ev" >"$tmp/resultfail.md"
+  sed -i '/^Head: /a Result: FAIL' "$tmp/resultfail.md"
+  expect_fail "Result: FAIL" env GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$tmp/resultfail.md"
+  grep -v -E '^[[:space:]]*(- )?Result:' "$ev" >"$tmp/resultpass.md"
+  sed -i '/^Head: /a Result: PASS' "$tmp/resultpass.md"
+  expect_pass "Result: PASS and a nonempty actor list" env GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$tmp/resultpass.md"
+  printf 'name: repo-guard\njobs:\n  verify-gate:\n    steps:\n      - run: exit 0\n' >"$tmp/weak.yml"
+  expect_fail "a workflow that drops the verify-gate steps" \
+    env GUARD_WORKFLOW_FILE="$tmp/weak.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
   echo "selftest passed"
 }
 
