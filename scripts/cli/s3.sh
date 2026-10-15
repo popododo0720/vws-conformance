@@ -1,6 +1,4 @@
 #!/bin/sh
-# One S3 happy path and one S3 error path through the AWS CLI.
-# Run from the module root. The caller exports VWS_CONF_*. set +x is required.
 set -eu
 set +x
 if [ -n "${AWS_PROFILE:-}" ] || [ -n "${AWS_DEFAULT_PROFILE:-}" ]; then
