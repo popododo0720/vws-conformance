@@ -17,7 +17,7 @@ jobs:
       - name: guard
         run: sh scripts/guard.sh
       - name: unit tests
-        run: go test -race -count=1 -p 1 ./internal/...
+        run: go test -race -count=1 -p 1 ./internal/... ./cmd/...
       - name: fake backend
         run: |
           git clone --depth 1 https://github.com/popododo0720/vws-console-api.git /tmp/src/vws-console-api
@@ -76,3 +76,10 @@ jobs:
             [ -n "$svc" ] || continue
             go test -p 1 -count=1 -timeout 180s "./$svc" -args -service "$svc" -group "$group"
           done < /tmp/groups.txt
+      - name: upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-reports
+          path: out/
+          if-no-files-found: ignore
