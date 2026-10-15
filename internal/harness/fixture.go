@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -175,7 +176,57 @@ func (rt *Runtime) Sweep(ctx context.Context) error {
 	if rt.Dry {
 		return reportDry(items)
 	}
-	return rt.deleteItems(ctx, items)
+	return rt.clearOwned(ctx, picked)
+}
+
+var sweepPause = 200 * time.Millisecond
+
+func (rt *Runtime) clearOwned(ctx context.Context, rows []sweep.Resource) error {
+	ctx, cancel := context.WithTimeout(ctx, OpTimeout)
+	defer cancel()
+	var last []sweepItem
+	for {
+		targets, err := rt.inventory(ctx, rows)
+		if err != nil {
+			return sweepGiveUp(ctx, last, err)
+		}
+		live, err := rt.liveInventory(ctx, rows)
+		if err != nil {
+			return sweepGiveUp(ctx, last, err)
+		}
+		if len(live) == 0 {
+			if len(targets) == 0 {
+				return nil
+			}
+			return rt.deleteItems(ctx, targets)
+		}
+		last = live
+		if err := rt.deleteItems(ctx, targets); err != nil {
+			return sweepGiveUp(ctx, last, err)
+		}
+		timer := time.NewTimer(sweepPause)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return leftoverError(last)
+		case <-timer.C:
+		}
+	}
+}
+
+func sweepGiveUp(ctx context.Context, last []sweepItem, err error) error {
+	if len(last) > 0 && ctx.Err() != nil {
+		return leftoverError(last)
+	}
+	return err
+}
+
+func leftoverError(items []sweepItem) error {
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		parts = append(parts, item.kind+" "+item.id)
+	}
+	return fmt.Errorf("sweep left %s", strings.Join(parts, ", "))
 }
 
 func readLedger(dir string) ([]sweep.Resource, error) {
@@ -252,6 +303,14 @@ type ec2View struct {
 }
 
 func (rt *Runtime) inventory(ctx context.Context, rows []sweep.Resource) ([]sweepItem, error) {
+	return rt.collectInventory(ctx, rows, true)
+}
+
+func (rt *Runtime) liveInventory(ctx context.Context, rows []sweep.Resource) ([]sweepItem, error) {
+	return rt.collectInventory(ctx, rows, false)
+}
+
+func (rt *Runtime) collectInventory(ctx context.Context, rows []sweep.Resource, ghosts bool) ([]sweepItem, error) {
 	var items []sweepItem
 	if rt.Clients != nil && rt.Clients.S3 != nil {
 		out, err := withDeadline(ctx, func(ctx context.Context) (*s3.ListBucketsOutput, error) {
@@ -272,7 +331,7 @@ func (rt *Runtime) inventory(ctx context.Context, rows []sweep.Resource) ([]swee
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, ec2Items(view, rows)...)
+		items = append(items, collectEC2(view, rows, ghosts)...)
 	}
 	return items, nil
 }
@@ -350,6 +409,10 @@ func describeEC2(ctx context.Context, c *ec2.Client) (ec2View, error) {
 }
 
 func ec2Items(view ec2View, rows []sweep.Resource) []sweepItem {
+	return collectEC2(view, rows, true)
+}
+
+func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool) []sweepItem {
 	var items []sweepItem
 	seen := map[string]bool{}
 	add := func(it sweepItem) {
@@ -372,9 +435,11 @@ func ec2Items(view ec2View, rows []sweep.Resource) []sweepItem {
 			add(sweepItem{kind: "volume", id: id})
 		}
 	}
-	for _, row := range rows {
-		if row.Kind == "volume" {
-			add(sweepItem{kind: "volume", id: row.ID})
+	if ghosts {
+		for _, row := range rows {
+			if row.Kind == "volume" {
+				add(sweepItem{kind: "volume", id: row.ID})
+			}
 		}
 	}
 	for _, s := range view.snapshots {
@@ -389,9 +454,11 @@ func ec2Items(view ec2View, rows []sweep.Resource) []sweepItem {
 			add(sweepItem{kind: "address", id: id, assoc: aws.ToString(a.AssociationId)})
 		}
 	}
-	for _, row := range rows {
-		if row.Kind == "address" {
-			add(sweepItem{kind: "address", id: row.ID})
+	if ghosts {
+		for _, row := range rows {
+			if row.Kind == "address" {
+				add(sweepItem{kind: "address", id: row.ID})
+			}
 		}
 	}
 	for _, k := range view.keys {

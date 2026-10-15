@@ -138,7 +138,8 @@ func ec2Describe(action string, volume bool) (int, string) {
 	}
 	switch action {
 	case "DescribeInstances":
-		return ok(`<DescribeInstancesResponse ` + ns + `><requestId>r</requestId><reservationSet/></DescribeInstancesResponse>`)
+		body := `<DescribeInstancesResponse ` + ns + `><requestId>r</requestId><reservationSet/></DescribeInstancesResponse>`
+		return ok(body)
 	case "DescribeVolumes":
 		if !volume {
 			return ok(`<DescribeVolumesResponse ` + ns + `><requestId>r</requestId><volumeSet/></DescribeVolumesResponse>`)
@@ -153,7 +154,9 @@ func ec2Describe(action string, volume bool) (int, string) {
 	case "DescribeKeyPairs":
 		return ok(`<DescribeKeyPairsResponse ` + ns + `><requestId>r</requestId><keySet/></DescribeKeyPairsResponse>`)
 	case "DescribeSecurityGroups":
-		return ok(`<DescribeSecurityGroupsResponse ` + ns + `><requestId>r</requestId><securityGroupInfo/></DescribeSecurityGroupsResponse>`)
+		body := `<DescribeSecurityGroupsResponse ` + ns + `>` +
+			`<requestId>r</requestId><securityGroupInfo/></DescribeSecurityGroupsResponse>`
+		return ok(body)
 	case "DescribeSubnets":
 		return ok(`<DescribeSubnetsResponse ` + ns + `><requestId>r</requestId><subnetSet/></DescribeSubnetsResponse>`)
 	case "DescribeVpcs":
