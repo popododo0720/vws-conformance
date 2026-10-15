@@ -12,6 +12,15 @@ import (
 	"github.com/popododo0720/vws-conformance/internal/harness"
 )
 
+func TestBucketPolicyProbeNamesEffectAndPrincipal(t *testing.T) {
+	doc := bucketPolicy()
+	for _, part := range []string{`"Effect"`, `"Principal"`, `"Action"`, `"Resource"`} {
+		if !strings.Contains(doc, part) {
+			t.Fatalf("policy %s lacks %s", doc, part)
+		}
+	}
+}
+
 func TestLifecycleSuccessProbeIncludesAction(t *testing.T) {
 	kept := false
 	for _, c := range Gaps().Cases {

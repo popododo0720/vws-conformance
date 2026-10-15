@@ -239,6 +239,56 @@ func TestSweepKeepsForeignAndActiveResources(t *testing.T) {
 	}
 }
 
+func TestSweepReadsTheSecondDescribePage(t *testing.T) {
+	const run = "conf-20261015T120000Z-abc123"
+	var page atomic.Int32
+	var terminated atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = io.WriteString(w, listBucketsXML(nil))
+			return
+		}
+		vals := ec2Form(r)
+		if vals.Get("Action") == "TerminateInstances" {
+			terminated.Store(true)
+			writeEC2(w, 200, ec2OK("TerminateInstancesResponse", "<instancesSet/>"))
+			return
+		}
+		if vals.Get("Action") == "DescribeInstances" {
+			if vals.Get("NextToken") == "" {
+				page.Add(1)
+				writeEC2(w, 200, ec2OK("DescribeInstancesResponse", "<reservationSet/><nextToken>page-2</nextToken>"))
+				return
+			}
+			if terminated.Load() {
+				writeEC2(w, 200, ec2OK("DescribeInstancesResponse", "<reservationSet/>"))
+				return
+			}
+			item := "<item><instanceId>i-page2</instanceId>" +
+				"<instanceState><code>16</code><name>running</name></instanceState>" +
+				tagXML(run) + "</item>"
+			inner := "<reservationSet><item><reservationId>r-1</reservationId>" +
+				"<ownerId>123456789012</ownerId><instancesSet>" + item +
+				"</instancesSet></item></reservationSet>"
+			writeEC2(w, 200, ec2OK("DescribeInstancesResponse", inner))
+			return
+		}
+		status, body := ec2Describe(vals.Get("Action"), false)
+		writeEC2(w, status, body)
+	}))
+	defer srv.Close()
+	rt := runtimeAt(t, srv.URL, t.TempDir(), run)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := rt.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !terminated.Load() {
+		t.Fatal("instance on page 2 was kept")
+	}
+}
+
 func listBucketsXML(names map[string]bool) string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>`)

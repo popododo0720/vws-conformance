@@ -84,7 +84,7 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 			return err
 		})
 	case "S3-GAP-005":
-		doc := `{"Version":"2012-10-17","Statement":[]}`
+		doc := bucketPolicy()
 		return rt.Call(ctx, func(ctx context.Context) error {
 			_, err := api.PutBucketPolicy(ctx, &s3.PutBucketPolicyInput{Bucket: aws.String(name), Policy: aws.String(doc)})
 			return err
@@ -176,4 +176,8 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	default:
 		return cases.Outcome{}, fmt.Errorf("no runner for %s", c.ID)
 	}
+}
+
+func bucketPolicy() string {
+	return `{"Version":"2012-10-17","Statement":[]}`
 }
