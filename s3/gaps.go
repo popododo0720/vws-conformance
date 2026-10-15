@@ -30,6 +30,11 @@ func Gaps() bind.Group {
 			gap("S3-GAP-008", "GetBucketLocation", 200, ""),
 			gap("S3-GAP-009", "PutBucketCors", 200, ""),
 			gap("S3-GAP-010", "PutBucketLifecycleConfiguration", 200, ""),
+			{
+				ID: "S3-GAP-016", Service: "s3", Group: "gaps", Op: "PutBucketLifecycleConfiguration",
+				Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocS3("PutBucketLifecycleConfiguration"),
+				Expect: cases.Expect{HTTP: 400, Code: "MalformedXML"}, Impl: "gap",
+			},
 			gap("S3-GAP-011", "PutBucketWebsite", 200, ""),
 			gap("S3-GAP-012", "ListObjectVersions", 200, ""),
 			gap("S3-GAP-014", "GetObject", 200, ""),
@@ -106,7 +111,25 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		})
 	case "S3-GAP-010":
 		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.PutBucketLifecycleConfiguration(ctx, &s3.PutBucketLifecycleConfigurationInput{Bucket: aws.String(name), LifecycleConfiguration: &types.BucketLifecycleConfiguration{Rules: []types.LifecycleRule{{Status: types.ExpirationStatusEnabled, Filter: &types.LifecycleRuleFilter{Prefix: aws.String("")}}}}})
+			_, err := api.PutBucketLifecycleConfiguration(ctx, &s3.PutBucketLifecycleConfigurationInput{
+				Bucket: aws.String(name),
+				LifecycleConfiguration: &types.BucketLifecycleConfiguration{Rules: []types.LifecycleRule{{
+					ID: aws.String("expire"), Status: types.ExpirationStatusEnabled,
+					Filter:     &types.LifecycleRuleFilter{Prefix: aws.String("")},
+					Expiration: &types.LifecycleExpiration{Days: aws.Int32(1)},
+				}}},
+			})
+			return err
+		})
+	case "S3-GAP-016":
+		return rt.Call(ctx, func(ctx context.Context) error {
+			_, err := api.PutBucketLifecycleConfiguration(ctx, &s3.PutBucketLifecycleConfigurationInput{
+				Bucket: aws.String(name),
+				LifecycleConfiguration: &types.BucketLifecycleConfiguration{Rules: []types.LifecycleRule{{
+					ID: aws.String("bad"), Status: types.ExpirationStatusEnabled,
+					Filter: &types.LifecycleRuleFilter{Prefix: aws.String("")},
+				}}},
+			})
 			return err
 		})
 	case "S3-GAP-011":
