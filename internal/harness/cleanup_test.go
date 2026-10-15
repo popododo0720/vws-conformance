@@ -72,6 +72,45 @@ func TestRunMainCleanup(t *testing.T) {
 			t.Fatal("process did not exit")
 		}
 	})
+	t.Run("overlap", func(t *testing.T) {
+		started := make(chan struct{})
+		release := make(chan struct{})
+		SetProcessCleanup(func() error {
+			close(started)
+			<-release
+			return nil
+		})
+		sig := make(chan osSignal, 1)
+		entered := make(chan struct{})
+		runlet := &gateRun{entered: entered, release: make(chan struct{})}
+		returned := make(chan int, 1)
+		exited := make(chan int, 1)
+		go func() {
+			returned <- RunMain(runlet, sig, func(code int) { exited <- code })
+		}()
+		<-entered
+		sig <- syscall.SIGTERM
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Fatal("cleanup did not start")
+		}
+		close(runlet.release)
+		select {
+		case code := <-returned:
+			t.Fatalf("RunMain returned %d before cleanup finished", code)
+		case code := <-exited:
+			t.Fatalf("exit %d before cleanup finished", code)
+		case <-time.After(200 * time.Millisecond):
+		}
+		close(release)
+		select {
+		case <-returned:
+		case <-exited:
+		case <-time.After(2 * time.Second):
+			t.Fatal("shutdown did not finish")
+		}
+	})
 	t.Run("cleanup error", func(t *testing.T) {
 		SetProcessCleanup(func() error { return errors.New("sweep failed") })
 		code := RunMain(staticRun(0), blockedSignals(), func(int) {})
@@ -87,6 +126,17 @@ func (s staticRun) Run() int { return int(s) }
 
 func blockedSignals() <-chan osSignal {
 	return make(chan osSignal)
+}
+
+type gateRun struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (g *gateRun) Run() int {
+	close(g.entered)
+	<-g.release
+	return 0
 }
 
 type waitRun chan struct{}
