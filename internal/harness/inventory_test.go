@@ -38,6 +38,33 @@ func TestEC2InventoryIncludesDryRunKinds(t *testing.T) {
 	}
 }
 
+func TestTerminatedInstanceIsNotALeftover(t *testing.T) {
+	run := "conf-20261015T120000Z-abc123"
+	tag := []ec2types.Tag{{Key: aws.String("vws:conformance-run"), Value: aws.String(run)}}
+	view := ec2View{instances: []ec2types.Instance{
+		{
+			InstanceId: aws.String("i-gone"),
+			State:      &ec2types.InstanceState{Name: ec2types.InstanceStateNameTerminated},
+			Tags:       tag,
+		},
+		{
+			InstanceId: aws.String("i-down"),
+			State:      &ec2types.InstanceState{Name: ec2types.InstanceStateNameShuttingDown},
+			Tags:       tag,
+		},
+	}}
+	got := map[string]bool{}
+	for _, item := range ec2Items(view, nil) {
+		got[item.kind+" "+item.id] = true
+	}
+	if got["instance i-gone"] {
+		t.Fatal("terminated instance was a leftover")
+	}
+	if !got["instance i-down"] {
+		t.Fatal("shutting-down instance was ignored")
+	}
+}
+
 func TestIgnoreCleanup(t *testing.T) {
 	for _, msg := range []string{
 		"api error InvalidAllocationID.NotFound: not found",
