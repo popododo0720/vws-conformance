@@ -102,7 +102,7 @@ func loadConfig() (harness.Config, error) {
 		cfg.Full = true
 	}
 	if cfg.RunID == "" {
-		id, err := harness.NewRunID(time.Now())
+		id, err := processRunID()
 		if err != nil {
 			return harness.Config{}, err
 		}
@@ -118,6 +118,19 @@ var gate struct {
 	once sync.Once
 	rt   *harness.Runtime
 	err  error
+}
+
+var minted struct {
+	once sync.Once
+	id   string
+	err  error
+}
+
+func processRunID() (string, error) {
+	minted.once.Do(func() {
+		minted.id, minted.err = harness.NewRunID(time.Now())
+	})
+	return minted.id, minted.err
 }
 
 func runtime(ctx context.Context, cfg harness.Config) (*harness.Runtime, error) {
