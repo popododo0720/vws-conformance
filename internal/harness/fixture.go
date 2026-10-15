@@ -310,12 +310,74 @@ func emptyAndDelete(ctx context.Context, c *s3.Client, name string) error {
 		if !aws.ToBool(page.IsTruncated) {
 			break
 		}
+		next := aws.ToString(page.NextContinuationToken)
+		if next == "" || next == aws.ToString(token) {
+			return fmt.Errorf("repeated pagination token %q", next)
+		}
 		token = page.NextContinuationToken
+	}
+	if err := deleteVersions(ctx, c, name); err != nil {
+		return err
 	}
 	_, err := withDeadline(ctx, func(ctx context.Context) (*s3.DeleteBucketOutput, error) {
 		return c.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(name)})
 	})
 	return ignoreMissing(err)
+}
+
+func deleteVersions(ctx context.Context, c *s3.Client, name string) error {
+	var keyMarker, versionMarker *string
+	seen := map[string]bool{}
+	for {
+		page, err := withDeadline(ctx, func(ctx context.Context) (*s3.ListObjectVersionsOutput, error) {
+			return c.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{
+				Bucket: aws.String(name), KeyMarker: keyMarker, VersionIdMarker: versionMarker,
+			})
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), "NoSuchBucket") || versionListUnsupported(err) {
+				return nil
+			}
+			return fmt.Errorf("list versions %s: %w", name, err)
+		}
+		for _, obj := range page.Versions {
+			if err := deleteOneVersion(ctx, c, name, obj.Key, obj.VersionId); err != nil {
+				return err
+			}
+		}
+		for _, obj := range page.DeleteMarkers {
+			if err := deleteOneVersion(ctx, c, name, obj.Key, obj.VersionId); err != nil {
+				return err
+			}
+		}
+		if !aws.ToBool(page.IsTruncated) {
+			return nil
+		}
+		next := aws.ToString(page.NextKeyMarker) + "\n" + aws.ToString(page.NextVersionIdMarker)
+		if next == "\n" || seen[next] {
+			return fmt.Errorf("repeated pagination token %q", next)
+		}
+		seen[next] = true
+		keyMarker = page.NextKeyMarker
+		versionMarker = page.NextVersionIdMarker
+	}
+}
+
+func deleteOneVersion(ctx context.Context, c *s3.Client, name string, key, version *string) error {
+	_, err := withDeadline(ctx, func(ctx context.Context) (*s3.DeleteObjectOutput, error) {
+		return c.DeleteObject(ctx, &s3.DeleteObjectInput{
+			Bucket: aws.String(name), Key: key, VersionId: version,
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("delete object: %w", err)
+	}
+	return nil
+}
+
+func versionListUnsupported(err error) bool {
+	s := err.Error()
+	return strings.Contains(s, "NotImplemented") || strings.Contains(s, "not served") || strings.Contains(s, "501")
 }
 
 type sweepItem struct {
@@ -373,29 +435,47 @@ func (rt *Runtime) collectInventory(ctx context.Context, rows []sweep.Resource, 
 
 func describeEC2(ctx context.Context, c *ec2.Client) (ec2View, error) {
 	var view ec2View
-	inst, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeInstancesOutput, error) {
-		return c.DescribeInstances(ctx, &ec2.DescribeInstancesInput{})
+	err := eachPage(func(token *string) (*string, error) {
+		inst, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeInstancesOutput, error) {
+			return c.DescribeInstances(ctx, &ec2.DescribeInstancesInput{NextToken: token})
+		})
+		if err != nil {
+			return nil, fmt.Errorf("describe instances: %w", err)
+		}
+		for _, res := range inst.Reservations {
+			view.instances = append(view.instances, res.Instances...)
+		}
+		return inst.NextToken, nil
 	})
 	if err != nil {
-		return view, fmt.Errorf("describe instances: %w", err)
+		return view, err
 	}
-	for _, res := range inst.Reservations {
-		view.instances = append(view.instances, res.Instances...)
-	}
-	vols, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeVolumesOutput, error) {
-		return c.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{})
+	err = eachPage(func(token *string) (*string, error) {
+		vols, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeVolumesOutput, error) {
+			return c.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{NextToken: token})
+		})
+		if err != nil {
+			return nil, fmt.Errorf("describe volumes: %w", err)
+		}
+		view.volumes = append(view.volumes, vols.Volumes...)
+		return vols.NextToken, nil
 	})
 	if err != nil {
-		return view, fmt.Errorf("describe volumes: %w", err)
+		return view, err
 	}
-	view.volumes = vols.Volumes
-	snaps, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeSnapshotsOutput, error) {
-		return c.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{OwnerIds: []string{"self"}})
+	err = eachPage(func(token *string) (*string, error) {
+		snaps, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeSnapshotsOutput, error) {
+			return c.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{OwnerIds: []string{"self"}, NextToken: token})
+		})
+		if err != nil {
+			return nil, fmt.Errorf("describe snapshots: %w", err)
+		}
+		view.snapshots = append(view.snapshots, snaps.Snapshots...)
+		return snaps.NextToken, nil
 	})
 	if err != nil {
-		return view, fmt.Errorf("describe snapshots: %w", err)
+		return view, err
 	}
-	view.snapshots = snaps.Snapshots
 	addrs, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeAddressesOutput, error) {
 		return c.DescribeAddresses(ctx, &ec2.DescribeAddressesInput{})
 	})
@@ -410,37 +490,82 @@ func describeEC2(ctx context.Context, c *ec2.Client) (ec2View, error) {
 		return view, fmt.Errorf("describe key pairs: %w", err)
 	}
 	view.keys = keys.KeyPairs
-	groups, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeSecurityGroupsOutput, error) {
-		return c.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{})
+	err = eachPage(func(token *string) (*string, error) {
+		groups, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeSecurityGroupsOutput, error) {
+			return c.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{NextToken: token})
+		})
+		if err != nil {
+			return nil, fmt.Errorf("describe security groups: %w", err)
+		}
+		view.groups = append(view.groups, groups.SecurityGroups...)
+		return groups.NextToken, nil
 	})
 	if err != nil {
-		return view, fmt.Errorf("describe security groups: %w", err)
+		return view, err
 	}
-	view.groups = groups.SecurityGroups
-	subs, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeSubnetsOutput, error) {
-		return c.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{})
+	err = eachPage(func(token *string) (*string, error) {
+		subs, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeSubnetsOutput, error) {
+			return c.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{NextToken: token})
+		})
+		if err != nil {
+			return nil, fmt.Errorf("describe subnets: %w", err)
+		}
+		view.subnets = append(view.subnets, subs.Subnets...)
+		return subs.NextToken, nil
 	})
 	if err != nil {
-		return view, fmt.Errorf("describe subnets: %w", err)
+		return view, err
 	}
-	view.subnets = subs.Subnets
-	vpcs, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeVpcsOutput, error) {
-		return c.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{})
+	err = eachPage(func(token *string) (*string, error) {
+		vpcs, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeVpcsOutput, error) {
+			return c.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{NextToken: token})
+		})
+		if err != nil {
+			return nil, fmt.Errorf("describe vpcs: %w", err)
+		}
+		view.vpcs = append(view.vpcs, vpcs.Vpcs...)
+		return vpcs.NextToken, nil
 	})
 	if err != nil {
-		return view, fmt.Errorf("describe vpcs: %w", err)
+		return view, err
 	}
-	view.vpcs = vpcs.Vpcs
-	gws, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeInternetGatewaysOutput, error) {
-		return c.DescribeInternetGateways(ctx, &ec2.DescribeInternetGatewaysInput{})
+	err = eachPage(func(token *string) (*string, error) {
+		gws, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeInternetGatewaysOutput, error) {
+			return c.DescribeInternetGateways(ctx, &ec2.DescribeInternetGatewaysInput{NextToken: token})
+		})
+		if unsupportedAction(err) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("describe internet gateways: %w", err)
+		}
+		view.gateways = append(view.gateways, gws.InternetGateways...)
+		return gws.NextToken, nil
 	})
-	if unsupportedAction(err) {
-		gws = &ec2.DescribeInternetGatewaysOutput{}
-	} else if err != nil {
-		return view, fmt.Errorf("describe internet gateways: %w", err)
+	if err != nil {
+		return view, err
 	}
-	view.gateways = gws.InternetGateways
 	return view, nil
+}
+
+func eachPage(fetch func(token *string) (*string, error)) error {
+	seen := map[string]bool{}
+	var token *string
+	for {
+		next, err := fetch(token)
+		if err != nil {
+			return err
+		}
+		n := aws.ToString(next)
+		if n == "" {
+			return nil
+		}
+		if seen[n] {
+			return fmt.Errorf("repeated pagination token %q", n)
+		}
+		seen[n] = true
+		token = aws.String(n)
+	}
 }
 
 func ec2Items(view ec2View, rows []sweep.Resource) []sweepItem {

@@ -24,13 +24,13 @@ func TestMakeVolTagsTheRun(t *testing.T) {
 	var body string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
-		body = string(b)
 		w.Header().Set("Content-Type", "text/xml")
-		_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
-			`<CreateVolumeResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">`+
-			`<requestId>r</requestId><volumeId>vol-1</volumeId><size>1</size>`+
-			`<availabilityZone>vws-1a</availabilityZone><status>available</status>`+
-			`<volumeType>gp2</volumeType></CreateVolumeResponse>`)
+		if strings.Contains(string(b), "DescribeVolumes") {
+			_, _ = io.WriteString(w, describeVolumeXML("available"))
+			return
+		}
+		body = string(b)
+		_, _ = io.WriteString(w, volumeXML("available"))
 	}))
 	defer srv.Close()
 	rt := harness.NewRuntime(harness.Config{

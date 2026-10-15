@@ -23,6 +23,12 @@ func TestCreateFreshDeletesEveryObject(t *testing.T) {
 	deleted := map[string]bool{}
 	bucketGone := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "versions") {
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = io.WriteString(w, `<ListVersionsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`+
+				`<IsTruncated>false</IsTruncated></ListVersionsResult>`)
+			return
+		}
 		if r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "list-type=2") {
 			w.Header().Set("Content-Type", "application/xml")
 			_, _ = io.WriteString(w, listOne("c"))

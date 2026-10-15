@@ -3,6 +3,7 @@ package ec2
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsec2 "github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -278,5 +279,48 @@ func launch(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, subnet
 		_, err := api.TerminateInstances(ctx, &awsec2.TerminateInstancesInput{InstanceIds: []string{id}})
 		return harness.IgnoreCleanup(err)
 	})
+	if err := waitRunning(ctx, api, id); err != nil {
+		return "", err
+	}
 	return id, nil
+}
+
+func waitRunning(ctx context.Context, api *awsec2.Client, id string) error {
+	ctx, cancel := context.WithTimeout(ctx, harness.OpTimeout)
+	defer cancel()
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	var state string
+	for {
+		out, err := api.DescribeInstances(ctx, &awsec2.DescribeInstancesInput{InstanceIds: []string{id}})
+		if err != nil {
+			return fmt.Errorf("describe %s: %w", id, err)
+		}
+		state = instanceState(out)
+		switch types.InstanceStateName(state) {
+		case types.InstanceStateNameRunning, types.InstanceStateNameStopped:
+			return nil
+		case types.InstanceStateNameTerminated, types.InstanceStateNameShuttingDown:
+			return fmt.Errorf("instance %s is %s", id, state)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("instance %s stayed %s: %w", id, state, ctx.Err())
+		case <-tick.C:
+		}
+	}
+}
+
+func instanceState(out *awsec2.DescribeInstancesOutput) string {
+	if out == nil {
+		return ""
+	}
+	for _, res := range out.Reservations {
+		for _, in := range res.Instances {
+			if in.State != nil {
+				return string(in.State.Name)
+			}
+		}
+	}
+	return ""
 }

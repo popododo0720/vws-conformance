@@ -3,6 +3,7 @@ package ebs
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsec2 "github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -170,7 +171,38 @@ func makeVol(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, token
 	}
 	id := aws.ToString(out.VolumeId)
 	trackVol(rt, api, id)
+	if err := waitAvailable(ctx, api, id); err != nil {
+		return "", err
+	}
 	return id, nil
+}
+
+func waitAvailable(ctx context.Context, api *awsec2.Client, id string) error {
+	ctx, cancel := context.WithTimeout(ctx, harness.OpTimeout)
+	defer cancel()
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	var status string
+	for {
+		out, err := api.DescribeVolumes(ctx, &awsec2.DescribeVolumesInput{VolumeIds: []string{id}})
+		if err != nil {
+			return fmt.Errorf("describe %s: %w", id, err)
+		}
+		if len(out.Volumes) > 0 {
+			status = string(out.Volumes[0].State)
+		}
+		switch types.VolumeState(status) {
+		case types.VolumeStateAvailable, types.VolumeStateInUse:
+			return nil
+		case types.VolumeStateError, types.VolumeStateDeleted, types.VolumeStateDeleting:
+			return fmt.Errorf("volume %s is %s", id, status)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("volume %s stayed %s: %w", id, status, ctx.Err())
+		case <-tick.C:
+		}
+	}
 }
 
 func trackVol(rt *harness.Runtime, api *awsec2.Client, id string) {

@@ -40,7 +40,7 @@ func deleteAllObjects(ctx context.Context, api *s3.Client, name string) error {
 			}
 		}
 		if !aws.ToBool(page.IsTruncated) {
-			return nil
+			break
 		}
 		next := aws.ToString(page.NextContinuationToken)
 		if next == "" || seen[next] {
@@ -49,6 +49,58 @@ func deleteAllObjects(ctx context.Context, api *s3.Client, name string) error {
 		seen[next] = true
 		token = aws.String(next)
 	}
+	return deleteVersions(ctx, api, name)
+}
+
+func deleteVersions(ctx context.Context, api *s3.Client, name string) error {
+	var keyMarker, versionMarker *string
+	seen := map[string]bool{}
+	for {
+		page, err := api.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{
+			Bucket: aws.String(name), KeyMarker: keyMarker, VersionIdMarker: versionMarker,
+		})
+		if err != nil {
+			if ignoreNoSuch(err) == nil || versionListUnsupported(err) {
+				return nil
+			}
+			return fmt.Errorf("list versions %s: %w", name, err)
+		}
+		for _, obj := range page.Versions {
+			if err := deleteVersion(ctx, api, name, obj.Key, obj.VersionId); err != nil {
+				return err
+			}
+		}
+		for _, obj := range page.DeleteMarkers {
+			if err := deleteVersion(ctx, api, name, obj.Key, obj.VersionId); err != nil {
+				return err
+			}
+		}
+		if !aws.ToBool(page.IsTruncated) {
+			return nil
+		}
+		next := aws.ToString(page.NextKeyMarker) + "\n" + aws.ToString(page.NextVersionIdMarker)
+		if next == "\n" || seen[next] {
+			return fmt.Errorf("repeated pagination token %q", next)
+		}
+		seen[next] = true
+		keyMarker = page.NextKeyMarker
+		versionMarker = page.NextVersionIdMarker
+	}
+}
+
+func deleteVersion(ctx context.Context, api *s3.Client, name string, key, version *string) error {
+	_, err := api.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(name), Key: key, VersionId: version,
+	})
+	if err != nil {
+		return fmt.Errorf("delete %s: %w", aws.ToString(key), err)
+	}
+	return nil
+}
+
+func versionListUnsupported(err error) bool {
+	s := err.Error()
+	return strings.Contains(s, "NotImplemented") || strings.Contains(s, "not served") || strings.Contains(s, "501")
 }
 
 func ignoreNoSuch(err error) error {

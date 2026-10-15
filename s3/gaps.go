@@ -179,5 +179,6 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 }
 
 func bucketPolicy() string {
-	return `{"Version":"2012-10-17","Statement":[]}`
+	return `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*",` +
+		`"Action":"s3:GetObject","Resource":"arn:aws:s3:::example-bucket/*"}]}`
 }
