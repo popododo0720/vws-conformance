@@ -208,7 +208,7 @@ For each op, every error the AWS reference or error catalog documents that VWS c
 | --- | --- | --- |
 | AUTH-001 | Valid SigV4 header auth, each surface | 200 |
 | AUTH-002 | Signature byte flipped | 403 `SignatureDoesNotMatch` (S3, IAM, STS); EC2 `AuthFailure` |
-| AUTH-003 | X-Amz-Date 6 min old/ahead | S3 `RequestTimeTooSkewed`; Query APIs `SignatureDoesNotMatch` / EC2 `AuthFailure` (record the exact message) |
+| AUTH-003 | X-Amz-Date 16 min old, past the 15 minute S3 window | S3 `RequestTimeTooSkewed`; Query APIs `SignatureDoesNotMatch` / EC2 `AuthFailure` (record the exact message) |
 | AUTH-004 | Credential scope region `us-east-1` instead of `vws-1` | `SignatureDoesNotMatch` / `AuthorizationHeaderMalformed` (S3) |
 | AUTH-005 | Wrong service in scope (sign EC2 call as `s3`) | rejected |
 | AUTH-006 | Unknown access key id | `InvalidClientTokenId` (IAM/STS), `InvalidAccessKeyId` (S3), `AuthFailure` (EC2) |

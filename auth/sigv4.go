@@ -44,6 +44,10 @@ func SigV4() bind.Group {
 	}}
 }
 
+func skewedSigningTime(now time.Time) time.Time {
+	return now.Add(-16 * time.Minute)
+}
+
 func run(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcome, error) {
 	switch c.ID {
 	case "AUTH-001":
@@ -51,7 +55,7 @@ func run(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcome,
 	case "AUTH-002":
 		return signed(ctx, rt, "s3", rt.Cfg.Region, rt.Cfg.AccessKey, rt.Cfg.Secret, time.Now(), true)
 	case "AUTH-003":
-		return signed(ctx, rt, "s3", rt.Cfg.Region, rt.Cfg.AccessKey, rt.Cfg.Secret, time.Now().Add(-6*time.Minute), false)
+		return signed(ctx, rt, "s3", rt.Cfg.Region, rt.Cfg.AccessKey, rt.Cfg.Secret, skewedSigningTime(time.Now()), false)
 	case "AUTH-004":
 		return signed(ctx, rt, "s3", "us-east-1", rt.Cfg.AccessKey, rt.Cfg.Secret, time.Now(), false)
 	case "AUTH-005":
