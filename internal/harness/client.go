@@ -162,12 +162,14 @@ func Load(ctx context.Context, cfg Config) (*Clients, error) {
 }
 
 type Runtime struct {
-	Cfg     Config
-	Clients *Clients
-	Clean   Cleaner
-	Dry     bool
-	secret  string
-	net     netIDs
+	Cfg       Config
+	Clients   *Clients
+	Clean     Cleaner
+	Dry       bool
+	secret    string
+	netMu     sync.Mutex
+	netFlight *netFlight
+	net       netIDs
 }
 
 func NewRuntime(cfg Config, cl *Clients) *Runtime {

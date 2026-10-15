@@ -23,6 +23,12 @@ type netIDs struct {
 	subnet string
 }
 
+type netFlight struct {
+	done        chan struct{}
+	vpc, subnet string
+	err         error
+}
+
 func (rt *Runtime) Tags() []ec2types.Tag {
 	return []ec2types.Tag{
 		{Key: aws.String("Name"), Value: aws.String(NamePrefix(rt.Cfg.RunID))},
@@ -86,9 +92,39 @@ func (rt *Runtime) Identify(ctx context.Context) (string, error) {
 }
 
 func (rt *Runtime) EnsureNet(ctx context.Context) (string, string, error) {
+	rt.netMu.Lock()
 	if rt.net.vpc != "" {
-		return rt.net.vpc, rt.net.subnet, nil
+		vpc, subnet := rt.net.vpc, rt.net.subnet
+		rt.netMu.Unlock()
+		return vpc, subnet, nil
 	}
+	if rt.netFlight != nil {
+		flight := rt.netFlight
+		rt.netMu.Unlock()
+		select {
+		case <-ctx.Done():
+			return "", "", ctx.Err()
+		case <-flight.done:
+			return flight.vpc, flight.subnet, flight.err
+		}
+	}
+	flight := &netFlight{done: make(chan struct{})}
+	rt.netFlight = flight
+	rt.netMu.Unlock()
+
+	vpc, subnet, err := rt.createNet(ctx)
+	rt.netMu.Lock()
+	if err == nil {
+		rt.net = netIDs{vpc: vpc, subnet: subnet}
+	}
+	flight.vpc, flight.subnet, flight.err = vpc, subnet, err
+	rt.netFlight = nil
+	close(flight.done)
+	rt.netMu.Unlock()
+	return vpc, subnet, err
+}
+
+func (rt *Runtime) createNet(ctx context.Context) (string, string, error) {
 	if rt.Clients.EC2 == nil {
 		return "", "", fmt.Errorf("EC2 endpoint is unset")
 	}
@@ -132,7 +168,6 @@ func (rt *Runtime) EnsureNet(ctx context.Context) (string, string, error) {
 		})
 		return IgnoreCleanup(err)
 	})
-	rt.net = netIDs{vpc: vpcID, subnet: subID}
 	return vpcID, subID, nil
 }
 
