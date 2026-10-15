@@ -104,12 +104,23 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 		if err != nil {
 			return cases.Outcome{}, err
 		}
+		var out *awsec2.DescribeInstancesOutput
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.DescribeInstances(ctx, &awsec2.DescribeInstancesInput{InstanceIds: []string{id}})
-			return err
+			var callErr error
+			out, callErr = api.DescribeInstances(ctx, &awsec2.DescribeInstancesInput{InstanceIds: []string{id}})
+			return callErr
 		})
-		o.Fields["id"] = id
-		return o, err
+		if err != nil {
+			return o, err
+		}
+		got, err := describedInstance(out, id, o.HTTP)
+		if err != nil {
+			return o, err
+		}
+		if got != "" {
+			o.Fields["id"] = got
+		}
+		return o, nil
 	case "EC2-DIA-001":
 		id, err := launch(ctx, rt, api, subnet, rt.Token("dia"))
 		if err != nil {
@@ -208,6 +219,30 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 	default:
 		return cases.Outcome{}, fmt.Errorf("no runner for %s", c.ID)
 	}
+}
+
+func describedInstance(out *awsec2.DescribeInstancesOutput, launched string, status int) (string, error) {
+	if status < 200 || status >= 300 {
+		return "", nil
+	}
+	got := ""
+	if out != nil {
+		for _, res := range out.Reservations {
+			for _, inst := range res.Instances {
+				if id := aws.ToString(inst.InstanceId); id != "" {
+					got = id
+					break
+				}
+			}
+			if got != "" {
+				break
+			}
+		}
+	}
+	if got == "" || got != launched {
+		return "", fmt.Errorf("DescribeInstances returned %q, launched %s", got, launched)
+	}
+	return got, nil
 }
 
 func runOne(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, subnet, token string) (cases.Outcome, error) {
