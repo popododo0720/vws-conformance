@@ -107,6 +107,9 @@ func loadConfig() (harness.Config, error) {
 		}
 		cfg.RunID = id
 	}
+	if err := harness.ValidateRunID(cfg.RunID); err != nil {
+		return harness.Config{}, err
+	}
 	return cfg, nil
 }
 

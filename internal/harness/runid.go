@@ -15,6 +15,13 @@ const InstanceType = "t2.nano"
 const VolumeGiB int32 = 1
 const DefaultParallel = 1
 
+func ValidateRunID(id string) error {
+	if !RunIDPattern.MatchString(id) {
+		return fmt.Errorf("run id %q does not match the report pattern", id)
+	}
+	return nil
+}
+
 func NewRunID(now time.Time) (string, error) {
 	var b [4]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -22,8 +29,8 @@ func NewRunID(now time.Time) (string, error) {
 	}
 	n := binary.BigEndian.Uint32(b[:]) & 0xffffff
 	id := fmt.Sprintf("conf-%s-%06x", now.UTC().Format("20060102T150405Z"), n)
-	if !RunIDPattern.MatchString(id) {
-		return "", fmt.Errorf("run id %q does not match the report pattern", id)
+	if err := ValidateRunID(id); err != nil {
+		return "", err
 	}
 	return id, nil
 }

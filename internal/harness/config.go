@@ -59,6 +59,11 @@ func FromEnv() (Config, error) {
 	default:
 		return Config{}, fmt.Errorf("VWS_CONF_TARGET %q is not a known target", c.Target)
 	}
+	if c.RunID != "" {
+		if err := ValidateRunID(c.RunID); err != nil {
+			return Config{}, err
+		}
+	}
 	return c, nil
 }
 
