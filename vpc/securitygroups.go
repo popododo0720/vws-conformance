@@ -50,10 +50,21 @@ func runSG(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcom
 	name := rt.Name(strings.ToLower(c.ID))
 	switch c.ID {
 	case "VPC-SG-001":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.CreateSecurityGroup(ctx, &awsec2.CreateSecurityGroupInput{GroupName: aws.String(name), Description: aws.String("conformance"), VpcId: aws.String(vpcID)})
+		var id string
+		o, err := rt.Call(ctx, func(ctx context.Context) error {
+			out, err := api.CreateSecurityGroup(ctx, &awsec2.CreateSecurityGroupInput{GroupName: aws.String(name), Description: aws.String("conformance"), VpcId: aws.String(vpcID)})
+			if err == nil && out != nil {
+				id = aws.ToString(out.GroupId)
+			}
 			return err
 		})
+		if id != "" {
+			rt.Cleanup(func(ctx context.Context) error {
+				_, err := api.DeleteSecurityGroup(ctx, &awsec2.DeleteSecurityGroupInput{GroupId: aws.String(id)})
+				return ignoreGone(err)
+			})
+		}
+		return o, err
 	case "VPC-SG-002", "VPC-SG-103":
 		id, err := makeSG(ctx, rt, api, vpcID, name)
 		if err != nil {
@@ -108,7 +119,7 @@ func makeSG(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, vpcID,
 	id := aws.ToString(out.GroupId)
 	rt.Cleanup(func(ctx context.Context) error {
 		_, err := api.DeleteSecurityGroup(ctx, &awsec2.DeleteSecurityGroupInput{GroupId: aws.String(id)})
-		return err
+		return ignoreGone(err)
 	})
 	return id, nil
 }

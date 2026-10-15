@@ -128,7 +128,7 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 		_ = rt.Track("instance", inst, rt.Name("volinst"))
 		rt.Cleanup(func(ctx context.Context) error {
 			_, err := api.TerminateInstances(ctx, &awsec2.TerminateInstancesInput{InstanceIds: []string{inst}})
-			return err
+			return harness.IgnoreCleanup(err)
 		})
 		_, _ = api.DescribeInstances(ctx, &awsec2.DescribeInstancesInput{InstanceIds: []string{inst}})
 		vol, err := makeVol(ctx, rt, api, "attach")
@@ -178,6 +178,6 @@ func trackVol(rt *harness.Runtime, api *awsec2.Client, id string) {
 	_ = rt.Track("volume", id, rt.Name("vol"))
 	rt.Cleanup(func(ctx context.Context) error {
 		_, err := api.DeleteVolume(ctx, &awsec2.DeleteVolumeInput{VolumeId: aws.String(id)})
-		return err
+		return harness.IgnoreCleanup(err)
 	})
 }

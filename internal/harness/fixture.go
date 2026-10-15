@@ -108,7 +108,7 @@ func (rt *Runtime) EnsureNet(ctx context.Context) (string, string, error) {
 		_, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteVpcOutput, error) {
 			return rt.Clients.EC2.DeleteVpc(ctx, &ec2.DeleteVpcInput{VpcId: aws.String(vpcID)})
 		})
-		return ignoreMissing(err)
+		return IgnoreCleanup(err)
 	})
 	subOut, err := withDeadline(ctx, func(ctx context.Context) (*ec2.CreateSubnetOutput, error) {
 		return rt.Clients.EC2.CreateSubnet(ctx, &ec2.CreateSubnetInput{
@@ -129,7 +129,7 @@ func (rt *Runtime) EnsureNet(ctx context.Context) (string, string, error) {
 		_, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteSubnetOutput, error) {
 			return rt.Clients.EC2.DeleteSubnet(ctx, &ec2.DeleteSubnetInput{SubnetId: aws.String(subID)})
 		})
-		return ignoreMissing(err)
+		return IgnoreCleanup(err)
 	})
 	rt.net = netIDs{vpc: vpcID, subnet: subID}
 	return vpcID, subID, nil
@@ -141,6 +141,17 @@ func ignoreMissing(err error) error {
 	}
 	s := err.Error()
 	if strings.Contains(s, "NotFound") || strings.Contains(s, "NoSuch") {
+		return nil
+	}
+	return err
+}
+
+func IgnoreCleanup(err error) error {
+	if ignoreMissing(err) == nil {
+		return nil
+	}
+	s := err.Error()
+	if strings.Contains(s, "Dependency") || strings.Contains(s, "IncorrectState") {
 		return nil
 	}
 	return err

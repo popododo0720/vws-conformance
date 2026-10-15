@@ -108,7 +108,7 @@ func runKeys(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 func deleteKey(rt *harness.Runtime, api *awsec2.Client, name string) {
 	rt.Cleanup(func(ctx context.Context) error {
 		_, err := api.DeleteKeyPair(ctx, &awsec2.DeleteKeyPairInput{KeyName: aws.String(name)})
-		return err
+		return harness.IgnoreCleanup(err)
 	})
 }
 

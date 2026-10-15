@@ -38,6 +38,21 @@ func TestEC2InventoryIncludesDryRunKinds(t *testing.T) {
 	}
 }
 
+func TestIgnoreCleanup(t *testing.T) {
+	for _, msg := range []string{
+		"api error InvalidAllocationID.NotFound: not found",
+		"api error DependencyViolation: subnet has dependents",
+		"api error IncorrectState: volume is in use",
+	} {
+		if err := IgnoreCleanup(errors.New(msg)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := IgnoreCleanup(errors.New("api error UnauthorizedOperation: denied")); err == nil {
+		t.Fatal("auth error was ignored")
+	}
+}
+
 func TestUnsupportedAction(t *testing.T) {
 	if !unsupportedAction(errors.New("api error InvalidAction: DescribeInternetGateways")) {
 		t.Fatal("InvalidAction was fatal")

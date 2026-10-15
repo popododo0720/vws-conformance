@@ -108,7 +108,7 @@ func createVpc(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, cid
 		_ = rt.Track("vpc", id, rt.Name(token))
 		rt.Cleanup(func(ctx context.Context) error {
 			_, err := api.DeleteVpc(ctx, &awsec2.DeleteVpcInput{VpcId: aws.String(id)})
-			return err
+			return ignoreGone(err)
 		})
 	}
 	return o, err
@@ -128,7 +128,7 @@ func makeVpc(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, cidr,
 	}
 	rt.Cleanup(func(ctx context.Context) error {
 		_, err := api.DeleteVpc(ctx, &awsec2.DeleteVpcInput{VpcId: aws.String(id)})
-		return err
+		return ignoreGone(err)
 	})
 	return id, nil
 }

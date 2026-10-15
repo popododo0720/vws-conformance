@@ -259,7 +259,7 @@ func runOne(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, subnet
 		_ = rt.Track("instance", id, rt.Name("i"))
 		rt.Cleanup(func(ctx context.Context) error {
 			_, err := api.TerminateInstances(ctx, &awsec2.TerminateInstancesInput{InstanceIds: []string{id}})
-			return err
+			return harness.IgnoreCleanup(err)
 		})
 	}
 	return o, err
@@ -276,7 +276,7 @@ func launch(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, subnet
 	}
 	rt.Cleanup(func(ctx context.Context) error {
 		_, err := api.TerminateInstances(ctx, &awsec2.TerminateInstancesInput{InstanceIds: []string{id}})
-		return err
+		return harness.IgnoreCleanup(err)
 	})
 	return id, nil
 }

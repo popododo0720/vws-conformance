@@ -131,7 +131,7 @@ func alloc(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (cases.
 		_ = rt.Track("address", id, rt.Name("eip"))
 		rt.Cleanup(func(ctx context.Context) error {
 			_, err := api.ReleaseAddress(ctx, &awsec2.ReleaseAddressInput{AllocationId: aws.String(id)})
-			return err
+			return harness.IgnoreCleanup(err)
 		})
 	}
 	return o, err
@@ -148,7 +148,7 @@ func allocID(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (stri
 	}
 	rt.Cleanup(func(ctx context.Context) error {
 		_, err := api.ReleaseAddress(ctx, &awsec2.ReleaseAddressInput{AllocationId: aws.String(id)})
-		return err
+		return harness.IgnoreCleanup(err)
 	})
 	return id, nil
 }
