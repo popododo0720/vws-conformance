@@ -1,6 +1,9 @@
 package harness
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestRejectsAmazonAWSEvenIfListed(t *testing.T) {
 	err := CheckEndpoint("https://s3.us-east-1.amazonaws.com", []string{"s3.us-east-1.amazonaws.com"})
@@ -13,6 +16,43 @@ func TestRejectsAmazonAWSEvenIfListed(t *testing.T) {
 	err = CheckEndpoint("https://amazonaws.com/bucket", []string{"amazonaws.com"})
 	if err == nil || err.Error() != `endpoint host "amazonaws.com" is refused` {
 		t.Fatalf("%v", err)
+	}
+}
+
+func TestRejectsDisguisedAWSHosts(t *testing.T) {
+	cases := []struct{ raw, host string }{
+		{"https://s3.us-east-1.amazonaws.com.", "s3.us-east-1.amazonaws.com."},
+		{"https://S3.US-EAST-1.AMAZONAWS.COM", "S3.US-EAST-1.AMAZONAWS.COM"},
+		{"https://s3.cn-north-1.amazonaws.com.cn", "s3.cn-north-1.amazonaws.com.cn"},
+		{"https://bedrock.us-east-1.api.aws", "bedrock.us-east-1.api.aws"},
+		{"https://foo.aws.dev", "foo.aws.dev"},
+		{"https://bar.on.aws", "bar.on.aws"},
+		{"https://d111111abcdef8.cloudfront.net", "d111111abcdef8.cloudfront.net"},
+		{"https://s3.eu-central-1.amazonaws.eu", "s3.eu-central-1.amazonaws.eu"},
+		{"https://console.awsapps.com", "console.awsapps.com"},
+		{"https://s3.us-iso-east-1.c2s.ic.gov", "s3.us-iso-east-1.c2s.ic.gov"},
+		{"https://s3.us-isob-east-1.sc2s.sgov.gov", "s3.us-isob-east-1.sc2s.sgov.gov"},
+		{"https://s3.us-east-1." + fw("amazonaws") + ".com", "s3.us-east-1." + fw("amazonaws") + ".com"},
+	}
+	for _, tc := range cases {
+		err := CheckEndpoint(tc.raw, []string{tc.host})
+		if err == nil || !strings.Contains(err.Error(), "refused") {
+			t.Fatalf("%s: %v", tc.raw, err)
+		}
+	}
+}
+
+func fw(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		b.WriteRune(r + 0xFEE0)
+	}
+	return b.String()
+}
+
+func TestListedPublicIPIsAllowed(t *testing.T) {
+	if err := CheckEndpoint("http://203.0.113.10:8082", []string{"203.0.113.10"}); err != nil {
+		t.Fatal(err)
 	}
 }
 
