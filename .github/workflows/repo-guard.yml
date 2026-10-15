@@ -44,15 +44,17 @@ jobs:
         run: scripts/guard-agents.sh agents
 
   # verify-gate (#249): red unless the PR has the verify-approved label and a comment with a
-  # "Verified-by: vws-verify" section that names the current head SHA with evidence for every docs/QUALITY.md
-  # item. The PR body never counts. A push changes the head, so an old approval no longer counts.
-  # When the repo variable VWS_VERIFY_ACTORS (comma list of logins) is set, the comment author and whoever last
-  # added the label must be in it. The PR author and the head commit's pusher (GUARD_VERIFY_EXCLUDE) never
-  # approve, unless the login is the vws-verify identity (repo variable VWS_VERIFY_IDENTITY).
-  # Limits (docs/QUALITY.md "Known gaps"): on pull_request GitHub runs this YAML from the PR's merge commit,
-  # so a PR CAN edit this job. Only the guard script is taken from the base commit, which stops a PR from
-  # quietly weakening the script but not from rewriting this YAML. All bots share one account, so the actor
-  # check cannot tell vws-verify from the PR author.
+  # "Verified-by: vws-verify" section that names the current head SHA, says "Result: PASS", and has evidence
+  # for every docs/QUALITY.md item. The PR body never counts. A push changes the head, so an old approval
+  # no longer counts.
+  # GUARD_VERIFY_ACTORS is the repo variable VWS_VERIFY_ACTORS. An empty list fails closed. The comment
+  # author and whoever last added the label must be in it. The PR author and the head commit's pusher
+  # (GUARD_VERIFY_EXCLUDE) never approve, unless the login is the vws-verify identity
+  # (repo variable VWS_VERIFY_IDENTITY).
+  # On pull_request GitHub runs this YAML from the merge commit, so a PR can replace these steps.
+  # The guard script, pinned by its sha256, rejects a workflow that drops the required step text.
+  # pull_request_target is not used. The script comes from the base commit. When that commit has no
+  # scripts/guard-agents.sh, the job uses the PR head copy only if its sha256 matches the script bytes.
   verify-gate:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -102,7 +104,42 @@ jobs:
           committer=$(gh api "repos/${REPO}/commits/${HEAD_SHA}" --jq '.committer.login // ""')
           GUARD_VERIFY_EXCLUDE="${PR_AUTHOR},${pusher},${committer}"
           export GUARD_VERIFY_LABELER GUARD_VERIFY_EXCLUDE
-          scripts/guard-agents.sh verify-gate "$HEAD_SHA" "$LABELS" "$text"
+          # The merge commit holds the workflow file this run executed. Fetch it so the guard can read it.
+          if ! git cat-file -e "${GITHUB_SHA}^{commit}" 2>/dev/null; then
+            git fetch --depth=1 origin "$GITHUB_SHA"
+          fi
+          # bootstrap-guard-start
+          guard=scripts/guard-agents.sh
+          if [[ ! -f $guard ]]; then
+            # The base commit has no guard script. Use the PR head copy only when its sha256 matches.
+            if ! git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null; then
+              git fetch --depth=1 origin "$HEAD_SHA"
+            fi
+            tmpg=$(mktemp -d)
+            if ! git cat-file -e "${HEAD_SHA}:scripts/guard-agents.sh" 2>/dev/null ||
+              ! git cat-file -e "${HEAD_SHA}:scripts/guard-agents.sh.sha256" 2>/dev/null; then
+              rm -rf "$tmpg"
+              echo "verify-gate: base has no scripts/guard-agents.sh and the PR head copy sha256 does not match the script bytes" >&2
+              exit 1
+            fi
+            git show "${HEAD_SHA}:scripts/guard-agents.sh" >"$tmpg/guard-agents.sh"
+            git show "${HEAD_SHA}:scripts/guard-agents.sh.sha256" >"$tmpg/guard-agents.sh.sha256"
+            want=$(awk 'NR == 1 { print $1 }' "$tmpg/guard-agents.sh.sha256")
+            got=$(sha256sum "$tmpg/guard-agents.sh" | cut -d' ' -f1)
+            if [[ ! $want =~ ^[0-9a-f]{64}$ || $got != "$want" ]]; then
+              rm -rf "$tmpg"
+              echo "verify-gate: base has no scripts/guard-agents.sh and the PR head copy sha256 does not match the script bytes" >&2
+              exit 1
+            fi
+            chmod +x "$tmpg/guard-agents.sh"
+            guard=$tmpg/guard-agents.sh
+          fi
+          # bootstrap-guard-end
+          if [[ -f scripts/guard-agents.sh ]]; then
+            scripts/guard-agents.sh verify-gate "$HEAD_SHA" "$LABELS" "$text"
+          else
+            "$guard" verify-gate "$HEAD_SHA" "$LABELS" "$text"
+          fi
 
   # A new push drops the approval label as well; the head check above already fails without it.
   # Only this job may write, and only labels (issues: write). It checks out nothing and runs no PR code.

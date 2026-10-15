@@ -14,10 +14,11 @@
 #   guard-agents.sh verify-gate HEAD LABELS [FILE]
 #                                           the pull request is verify-approved for HEAD: LABELS (comma list) has
 #                                           verify-approved and a comment in the text (FILE or $PR_TEXT) has a
-#                                           "Verified-by: vws-verify" section naming HEAD with evidence for every
-#                                           QUALITY.md item, plus a "Codex review: <full path or URL> blocking=0"
-#                                           line. Each comment starts with a "@@comment-by: LOGIN" line;
-#                                           text outside a comment (such as the PR body) never counts
+#                                           "Verified-by: vws-verify" section naming HEAD, a line "Result: PASS",
+#                                           evidence for every QUALITY.md item, plus a
+#                                           "Codex review: <full path or URL> blocking=0" line. Each comment starts
+#                                           with a "@@comment-by: LOGIN" line; text outside a comment (such as the
+#                                           PR body) never counts. GUARD_VERIFY_ACTORS must be a nonempty login list.
 #   guard-agents.sh english [ALLOWLIST]     no tracked file has Hangul unless a glob in ALLOWLIST (default
 #                                           .github/english-allowlist, lines "<glob> <reason>") covers it
 #   guard-agents.sh selftest                run the guards on bad inputs; every one must fail
@@ -25,9 +26,11 @@
 # Environment: GUARD_MAIN_BRANCH (default main), GUARD_HEADING (default "## Insider-risk guardrails"),
 # GUARD_ITEMS (default 7), GUARD_RULES_HEADING (default: the first of "## Rules" and "## 규칙표" in FILE),
 # GUARD_VERIFY_LABEL (default verify-approved), GUARD_QUALITY_ITEMS (default 9, the QUALITY.md checklist),
-# GUARD_VERIFY_ACTORS (comma list of logins allowed to approve; empty = any author), GUARD_VERIFY_LABELER
+# GUARD_VERIFY_ACTORS (comma list of logins allowed to approve; empty fails closed), GUARD_VERIFY_LABELER
 # (login that last added the label), GUARD_VERIFY_EXCLUDE (PR author and head pusher: never approve),
-# GUARD_VERIFY_IDENTITY (the vws-verify login, exempt from EXCLUDE), GUARD_ARCHTEST_PKG (default ./internal/archtest/...), GITHUB_REPOSITORY and an authenticated gh for push-watch.
+# GUARD_VERIFY_IDENTITY (the vws-verify login, exempt from EXCLUDE), GUARD_WORKFLOW_FILE (workflow to check
+# for the verify-gate steps; default .github/workflows/repo-guard.yml, or the file at GITHUB_SHA in Actions),
+# GUARD_ARCHTEST_PKG (default ./internal/archtest/...), GITHUB_REPOSITORY and an authenticated gh for push-watch.
 set -euo pipefail
 export LC_ALL=C
 
@@ -36,7 +39,18 @@ HEADING=${GUARD_HEADING:-## Insider-risk guardrails}
 ITEMS=${GUARD_ITEMS:-7}
 VERIFY_LABEL=${GUARD_VERIFY_LABEL:-verify-approved}
 QUALITY_ITEMS=${GUARD_QUALITY_ITEMS:-9}
-VERIFY_ACTORS=${GUARD_VERIFY_ACTORS:-}
+# Step text the verify-gate job must still contain. A pull_request run uses the workflow from the merge
+# commit, so a PR can replace the job. This script is the copy pinned by the sha256 file. It rejects a
+# workflow that dropped these steps. A PR that never runs the script is outside this check.
+VERIFY_WORKFLOW_STRINGS=(
+  'github.event.pull_request.base.sha'
+  'scripts/guard-agents.sh verify-gate'
+  'vars.VWS_VERIFY_ACTORS'
+  'cannot tell who pushed the head'
+  '@@comment-by:'
+  'issues/${NUMBER}/labels'
+  'the PR head copy sha256 does not match the script bytes'
+)
 
 die() {
   echo "$*" >&2
@@ -87,22 +101,48 @@ cmd_rules() {
   echo "rules: $(wc -l <<<"$rows") rows, $(awk -F'|' '$3 ~ /^[[:space:]]*Judgment/' <<<"$rows" | wc -l) Judgment"
 }
 
+# Comment lines do not count. A required step that survives only as a comment was removed.
+assert_verify_workflow() {
+  local file=${GUARD_WORKFLOW_FILE:-} blob stripped s
+  if [[ -n $file ]]; then
+    [[ -f $file ]] || die "verify-gate: workflow ${file} does not exist"
+    blob=$(cat "$file")
+  elif [[ -n ${GITHUB_SHA:-} ]]; then
+    blob=$(git show "${GITHUB_SHA}:.github/workflows/repo-guard.yml" 2>/dev/null) ||
+      die "verify-gate: cannot read .github/workflows/repo-guard.yml at ${GITHUB_SHA}"
+    file="${GITHUB_SHA}:.github/workflows/repo-guard.yml"
+  else
+    file=.github/workflows/repo-guard.yml
+    [[ -f $file ]] || die "verify-gate: workflow ${file} does not exist"
+    blob=$(cat "$file")
+  fi
+  stripped=$(grep -v -E '^[[:space:]]*#' <<<"$blob" || true)
+  for s in "${VERIFY_WORKFLOW_STRINGS[@]}"; do
+    grep -q -F -- "$s" <<<"$stripped" ||
+      die "verify-gate: ${file} is missing required step text: ${s}"
+  done
+}
+
 # verify-gate: the approval is bound to one head commit. A push changes the head, so the old section no
 # longer matches and the gate is red until vws-verify judges the new head (the label is also removed on
 # synchronize by the workflow). Evidence per checklist item: a URL, a path, or "N/A: <reason>".
 cmd_verify_gate() {
-  local head=${1:-} labels=${2:-} text=${PR_TEXT:-} section n line
+  local head=${1:-} labels=${2:-} text=${PR_TEXT:-} section n line actors result
+  actors=${GUARD_VERIFY_ACTORS:-}
   [[ $head =~ ^[0-9a-f]{40}$ ]] || die "verify-gate: needs the full head commit SHA"
+  assert_verify_workflow
   if [[ -n ${3:-} ]]; then
     [[ -f $3 ]] || die "verify-gate: ${3} does not exist"
     text=$(cat "$3")
   fi
+  # An empty allow-list used to keep every comment. Outsider approvals fail closed.
+  if [[ -z ${actors//[[:space:],]/} ]]; then
+    die "verify-gate: GUARD_VERIFY_ACTORS is empty; set VWS_VERIFY_ACTORS to the logins allowed to approve"
+  fi
   [[ ",${labels}," == *",${VERIFY_LABEL},"* ]] || die "verify-gate: the pull request has no '${VERIFY_LABEL}' label"
   local labeler=${GUARD_VERIFY_LABELER:-} excluded=${GUARD_VERIFY_EXCLUDE:-} identity=${GUARD_VERIFY_IDENTITY:-}
-  if [[ -n $VERIFY_ACTORS ]]; then
-    [[ -n $labeler && ",${VERIFY_ACTORS}," == *",${labeler},"* ]] ||
-      die "verify-gate: '${VERIFY_LABEL}' was added by '${labeler:-unknown}', not by one of: ${VERIFY_ACTORS}"
-  fi
+  [[ -n $labeler && ",${actors}," == *",${labeler},"* ]] ||
+    die "verify-gate: '${VERIFY_LABEL}' was added by '${labeler:-unknown}', not by one of: ${actors}"
   # No self-approval: the PR author and the head pusher (GUARD_VERIFY_EXCLUDE) can neither label nor
   # approve, unless the login is the vws-verify identity (GUARD_VERIFY_IDENTITY). Same-account gap: when
   # vws-verify and the author share one login, this check cannot tell them apart.
@@ -114,8 +154,8 @@ cmd_verify_gate() {
   # Control characters: a CRLF line ending is dropped; any other control character (a lone \r, \v, ESC...)
   # becomes "?", so "\r@@comment-by:" (which the workflow's "^@@comment-by:" defang misses) never turns into
   # a marker line. Tab and newline stay.
-  text=$(sed 's/\r$//' <<<"$text" | LC_ALL=C tr '\000-\010\013-\037\177' '?' | awk -v actors=",${VERIFY_ACTORS}," -v excl=",${excluded}," -v id="$identity" '
-    /^@@comment-by: / { who = substr($0, 15); keep = (actors == ",," || index(actors, "," who ",") > 0)
+  text=$(sed 's/\r$//' <<<"$text" | LC_ALL=C tr '\000-\010\013-\037\177' '?' | awk -v actors=",${actors}," -v excl=",${excluded}," -v id="$identity" '
+    /^@@comment-by: / { who = substr($0, 15); keep = (index(actors, "," who ",") > 0)
       if (who != id && index(excl, "," who ",") > 0) keep = 0
       if (keep) print "#"; next }
     keep { print }')
@@ -128,6 +168,10 @@ cmd_verify_gate() {
     on { buf = buf $0 "\n"; if ($0 ~ "^[[:space:]]*Head:[[:space:]]*" h "[[:space:]]*$") keep = 1 }
     END { done(); printf "%s", last }')
   [[ -n $section ]] || die "verify-gate: no 'Verified-by: vws-verify' section names the head ${head}; a push after approval needs a new verification"
+  result=$(grep -E '^[[:space:]]*(- )?Result:' <<<"$section" || true)
+  [[ -n $result ]] || die "verify-gate: the Verified-by section for ${head:0:12} has no 'Result: PASS'"
+  [[ $result =~ ^[[:space:]]*(-[[:space:]])?Result:[[:space:]]*PASS[[:space:]]*$ ]] ||
+    die "verify-gate: the Verified-by section for ${head:0:12} must say 'Result: PASS' (got '${result//$'\n'/ }')"
   for ((n = 1; n <= QUALITY_ITEMS; n++)); do
     line=$(grep -m1 -E "^[[:space:]]*(- )?${n}\.[[:space:]]" <<<"$section" || true)
     line=${line#*"${n}."}
@@ -673,10 +717,13 @@ GH
   expect_fail "pr-commits on a range git cannot list" bash -c 'cd "$1" && bash "$2" pr-commits no-such-ref HEAD' _ "$repo" "$OLDPWD_SCRIPT"
   expect_pass "pr-commits on an empty clean range" bash -c 'cd "$1" && bash "$2" pr-commits "$3" HEAD' _ "$repo" "$OLDPWD_SCRIPT" "$c5"
   # verify-gate: label and a section bound to the head with evidence for every item.
+  # Direct calls see these shell variables. Subprocess cases pass their own.
   local h1 h2 ev
   h1=$(printf 'a%.0s' {1..40}); h2=$(printf 'b%.0s' {1..40})
+  GUARD_VERIFY_ACTORS=verifier
+  GUARD_VERIFY_LABELER=verifier
   ev="$tmp/ev.md"
-  { echo "@@comment-by: verifier"; echo "## Verified-by: vws-verify"; echo "Head: ${h1}"
+  { echo "@@comment-by: verifier"; echo "## Verified-by: vws-verify"; echo "Head: ${h1}"; echo "Result: PASS"
     for ((i = 1; i <= QUALITY_ITEMS; i++)); do echo "${i}. https://example.invalid/log/${i}"; done
     echo "Codex review: /workspace/handoff/codex/vws-deploy-1-aaaaaaa.md blocking=0"; } >"$ev"
   expect_pass "label and evidence for the head" cmd_verify_gate "$h1" "bug,${VERIFY_LABEL}" "$ev"
@@ -734,7 +781,7 @@ GH
   grep -v '^@@comment-by:' "$ev" >"$tmp/body.md"
   expect_fail "a section in the PR body, not a comment" cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/body.md"
   # A section split across comments does not count: items 5-9 come from another comment.
-  { head -n 7 "$ev"; echo "@@comment-by: verifier"; tail -n +8 "$ev"; } >"$tmp/split.md"
+  { head -n 8 "$ev"; echo "@@comment-by: verifier"; tail -n +9 "$ev"; } >"$tmp/split.md"
   expect_fail "a section split across two comments" cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/split.md"
   # Allowed actors: the comment author and the labeler must both be in GUARD_VERIFY_ACTORS.
   expect_pass "allowed author and labeler" env GUARD_VERIFY_ACTORS=bot,verifier GUARD_VERIFY_LABELER=verifier \
@@ -758,12 +805,14 @@ GH
   expect_fail "an unknown labeler when actors are set" env GUARD_VERIFY_ACTORS=verifier \
     "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
   # No self-approval: a comment or label by the PR author/pusher never counts, unless it is the vws-verify identity.
-  expect_fail "a verdict comment by the PR author" env GUARD_VERIFY_EXCLUDE=verifier "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  expect_fail "a label added by the pusher" env GUARD_VERIFY_EXCLUDE=author,pusher GUARD_VERIFY_LABELER=pusher \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  expect_pass "a verdict by someone other than the author" env GUARD_VERIFY_EXCLUDE=author,pusher GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  expect_pass "the vws-verify identity on the same account (known gap)" env GUARD_VERIFY_EXCLUDE=verifier GUARD_VERIFY_IDENTITY=verifier \
+  expect_fail "a verdict comment by the PR author" env GUARD_VERIFY_ACTORS=verifier,other GUARD_VERIFY_LABELER=other \
+    GUARD_VERIFY_EXCLUDE=verifier "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  expect_fail "a label added by the pusher" env GUARD_VERIFY_ACTORS=verifier,pusher GUARD_VERIFY_EXCLUDE=author,pusher \
+    GUARD_VERIFY_LABELER=pusher "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  expect_pass "a verdict by someone other than the author" env GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    GUARD_VERIFY_EXCLUDE=author,pusher "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  expect_pass "the vws-verify identity on the same account (known gap)" env GUARD_VERIFY_ACTORS=verifier \
+    GUARD_VERIFY_EXCLUDE=verifier GUARD_VERIFY_IDENTITY=verifier \
     GUARD_VERIFY_LABELER=verifier "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
   # Empty allow-list, Result, and a workflow that dropped its steps.
   grep -v -E '^[[:space:]]*(- )?Result:' "$ev" >"$tmp/outsider.md"
@@ -771,6 +820,9 @@ GH
   sed -i 's/^@@comment-by: .*/@@comment-by: outsider/' "$tmp/outsider.md"
   expect_fail "an empty actor list" env GUARD_VERIFY_ACTORS= GUARD_VERIFY_LABELER=outsider \
     "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$tmp/outsider.md"
+  msg=$( (env GUARD_VERIFY_ACTORS= GUARD_VERIFY_LABELER=outsider "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$tmp/outsider.md") 2>&1 >/dev/null || true)
+  [[ $msg == *"GUARD_VERIFY_ACTORS is empty"* ]] || die "selftest: empty actors gave '${msg}'"
+  echo "ok: empty actors names the allow-list"
   expect_fail "a whitespace actor list" env GUARD_VERIFY_ACTORS=' , ' GUARD_VERIFY_LABELER=outsider \
     "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$tmp/outsider.md"
   grep -v -E '^[[:space:]]*(- )?Result:' "$ev" >"$tmp/noresult.md"
@@ -780,6 +832,9 @@ GH
   sed -i '/^Head: /a Result: FAIL' "$tmp/resultfail.md"
   expect_fail "Result: FAIL" env GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
     "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$tmp/resultfail.md"
+  msg=$( (env GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$tmp/resultfail.md") 2>&1 >/dev/null || true)
+  [[ $msg == *"must say 'Result: PASS'"* ]] || die "selftest: Result FAIL gave '${msg}'"
+  echo "ok: Result FAIL must be Result PASS"
   grep -v -E '^[[:space:]]*(- )?Result:' "$ev" >"$tmp/resultpass.md"
   sed -i '/^Head: /a Result: PASS' "$tmp/resultpass.md"
   expect_pass "Result: PASS and a nonempty actor list" env GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
@@ -788,6 +843,63 @@ GH
   expect_fail "a workflow that drops the verify-gate steps" \
     env GUARD_WORKFLOW_FILE="$tmp/weak.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
     "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  msg=$( (env GUARD_WORKFLOW_FILE="$tmp/weak.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev") 2>&1 >/dev/null || true)
+  [[ $msg == *"missing required step text"* ]] || die "selftest: a weak workflow gave '${msg}'"
+  echo "ok: a weak workflow names the missing step"
+  {
+    echo '# github.event.pull_request.base.sha'
+    echo '# scripts/guard-agents.sh verify-gate'
+    echo '# vars.VWS_VERIFY_ACTORS'
+    echo '# cannot tell who pushed the head'
+    echo '# @@comment-by:'
+    echo '# issues/${NUMBER}/labels'
+    echo '# the PR head copy sha256 does not match the script bytes'
+    echo 'name: repo-guard'
+  } >"$tmp/commented.yml"
+  expect_fail "required steps that survive only as comments" \
+    env GUARD_WORKFLOW_FILE="$tmp/commented.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  # The job's bootstrap block is the only copy of the sha256 fallback. Run that block.
+  local brepo="$tmp/brepo" bbase="$tmp/bbase" bhead block out got
+  block=$(awk '/# bootstrap-guard-start/ { on = 1; next } /# bootstrap-guard-end/ { on = 0 } on { sub(/^[[:space:]]*/, ""); print }' \
+    .github/workflows/repo-guard.yml)
+  [[ $block == *'the PR head copy sha256 does not match the script bytes'* ]] ||
+    die "selftest: repo-guard.yml has no bootstrap block"
+  run_boot() {
+    local dir=$1 sha=$2 script=$3
+    (cd "$dir" && HEAD_SHA=$sha bash -c "$script"$'\n''printf "%s\n" "$guard"')
+  }
+  mkdir -p "$brepo/scripts" "$bbase"
+  git -C "$brepo" init -q -b "$MAIN"
+  git -C "$brepo" config user.email t@example.invalid
+  git -C "$brepo" config user.name t
+  printf '#!/bin/sh\necho head-copy\n' >"$brepo/scripts/guard-agents.sh"
+  (cd "$brepo" && sha256sum scripts/guard-agents.sh | cut -d' ' -f1 >scripts/guard-agents.sh.sha256)
+  git -C "$brepo" add scripts
+  git -C "$brepo" commit -q -m head
+  bhead=$(git -C "$brepo" rev-parse HEAD)
+  git -C "$bbase" init -q -b "$MAIN"
+  git -C "$bbase" remote add origin "$brepo"
+  git -C "$bbase" fetch -q --depth=1 origin "$bhead"
+  out=$(run_boot "$bbase" "$bhead" "$block")
+  got=$(sha256sum "$out" | cut -d' ' -f1)
+  [[ $got == $(cut -d' ' -f1 "$brepo/scripts/guard-agents.sh.sha256") && $(cat "$out") == $'#!/bin/sh\necho head-copy' ]] ||
+    die "selftest: matching head copy was not used"
+  rm -rf "$(dirname "$out")"
+  echo "ok: a head copy whose sha256 matches"
+  echo 'echo edited' >>"$brepo/scripts/guard-agents.sh"
+  git -C "$brepo" add scripts/guard-agents.sh
+  git -C "$brepo" commit -q -m edited
+  bhead=$(git -C "$brepo" rev-parse HEAD)
+  git -C "$bbase" fetch -q --depth=1 origin "$bhead"
+  expect_fail "a head copy whose sha256 does not match" run_boot "$bbase" "$bhead" "$block"
+  mkdir -p "$bbase/scripts"
+  printf '#!/bin/sh\necho base-copy\n' >"$bbase/scripts/guard-agents.sh"
+  out=$(run_boot "$bbase" "$bhead" "$block")
+  [[ $out == scripts/guard-agents.sh && $(cat "$bbase/$out") == $'#!/bin/sh\necho base-copy' ]] ||
+    die "selftest: the base script was not used"
+  echo "ok: the base script is used when it exists"
   echo "selftest passed"
 }
 
