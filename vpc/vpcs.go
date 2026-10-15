@@ -72,8 +72,8 @@ func runVpcs(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		if err != nil {
 			return cases.Outcome{}, err
 		}
-		if _, err := api.CreateSubnet(ctx, &awsec2.CreateSubnetInput{VpcId: aws.String(id), CidrBlock: aws.String("10.11.1.0/24"), AvailabilityZone: aws.String("vws-1a")}); err != nil {
-			return cases.Outcome{}, fmt.Errorf("subnet: %w", err)
+		if _, err := createSubnet(ctx, rt, api, id, "10.11.1.0/24", "vpc4sub"); err != nil {
+			return cases.Outcome{}, err
 		}
 		return rt.Call(ctx, func(ctx context.Context) error {
 			_, err := api.DeleteVpc(ctx, &awsec2.DeleteVpcInput{VpcId: aws.String(id)})

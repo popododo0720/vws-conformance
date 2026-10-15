@@ -3,6 +3,7 @@ package vpc
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsec2 "github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -62,10 +63,26 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 			return err
 		})
 	case "VPC-GAP-006":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.CreateInternetGateway(ctx, &awsec2.CreateInternetGatewayInput{})
+		var id string
+		o, err := rt.Call(ctx, func(ctx context.Context) error {
+			out, err := api.CreateInternetGateway(ctx, &awsec2.CreateInternetGatewayInput{
+				TagSpecifications: rt.TagSpec(types.ResourceTypeInternetGateway),
+			})
+			if err == nil && out != nil && out.InternetGateway != nil {
+				id = aws.ToString(out.InternetGateway.InternetGatewayId)
+			}
 			return err
 		})
+		if id != "" {
+			_ = rt.Own("internet-gateway", id, rt.Name("igw"), func(ctx context.Context) error {
+				_, err := api.DeleteInternetGateway(ctx, &awsec2.DeleteInternetGatewayInput{InternetGatewayId: aws.String(id)})
+				if err == nil || strings.Contains(err.Error(), "NotFound") {
+					return nil
+				}
+				return err
+			})
+		}
+		return o, err
 	case "VPC-GAP-007":
 		return rt.Call(ctx, func(ctx context.Context) error {
 			_, err := api.DescribeRouteTables(ctx, &awsec2.DescribeRouteTablesInput{})

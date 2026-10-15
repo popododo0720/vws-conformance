@@ -3,6 +3,7 @@ package vpc
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsec2 "github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -49,44 +50,82 @@ func runSubs(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	case "VPC-SUB-001":
 		var id, zone string
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
-			out, err := api.CreateSubnet(ctx, &awsec2.CreateSubnetInput{
-				VpcId: aws.String(vpcID), CidrBlock: aws.String("10.12.1.0/24"), AvailabilityZone: aws.String("vws-1a"),
-				TagSpecifications: rt.TagSpec(types.ResourceTypeSubnet),
-			})
+			out, err := api.CreateSubnet(ctx, subnetInput(rt, vpcID, "10.12.1.0/24"))
 			if err == nil && out.Subnet != nil {
 				id = aws.ToString(out.Subnet.SubnetId)
 				zone = aws.ToString(out.Subnet.AvailabilityZone)
 			}
 			return err
 		})
+		if id != "" {
+			_ = ownSubnet(rt, api, id, "sub1")
+		}
 		o.Fields["id"] = id
 		o.Fields["zone"] = zone
 		return o, err
 	case "VPC-SUB-002":
-		out, err := api.CreateSubnet(ctx, &awsec2.CreateSubnetInput{VpcId: aws.String(vpcID), CidrBlock: aws.String("10.12.2.0/24"), AvailabilityZone: aws.String("vws-1a")})
+		id, err := createSubnet(ctx, rt, api, vpcID, "10.12.2.0/24", "sub2")
 		if err != nil {
-			return cases.Outcome{}, fmt.Errorf("create subnet: %w", err)
+			return cases.Outcome{}, err
 		}
-		id := aws.ToString(out.Subnet.SubnetId)
 		return rt.Call(ctx, func(ctx context.Context) error {
 			_, err := api.DescribeSubnets(ctx, &awsec2.DescribeSubnetsInput{SubnetIds: []string{id}})
 			return err
 		})
 	case "VPC-SUB-003":
-		out, err := api.CreateSubnet(ctx, &awsec2.CreateSubnetInput{VpcId: aws.String(vpcID), CidrBlock: aws.String("10.12.3.0/24"), AvailabilityZone: aws.String("vws-1a")})
+		id, err := createSubnet(ctx, rt, api, vpcID, "10.12.3.0/24", "sub3")
 		if err != nil {
-			return cases.Outcome{}, fmt.Errorf("create subnet: %w", err)
+			return cases.Outcome{}, err
 		}
 		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.DeleteSubnet(ctx, &awsec2.DeleteSubnetInput{SubnetId: out.Subnet.SubnetId})
+			_, err := api.DeleteSubnet(ctx, &awsec2.DeleteSubnetInput{SubnetId: aws.String(id)})
 			return err
 		})
 	case "VPC-SUB-101":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.CreateSubnet(ctx, &awsec2.CreateSubnetInput{VpcId: aws.String(vpcID), CidrBlock: aws.String("10.99.0.0/24"), AvailabilityZone: aws.String("vws-1a")})
+		var id string
+		o, err := rt.Call(ctx, func(ctx context.Context) error {
+			out, err := api.CreateSubnet(ctx, subnetInput(rt, vpcID, "10.99.0.0/24"))
+			if err == nil && out != nil && out.Subnet != nil {
+				id = aws.ToString(out.Subnet.SubnetId)
+			}
 			return err
 		})
+		if id != "" {
+			_ = ownSubnet(rt, api, id, "sub101")
+		}
+		return o, err
 	default:
 		return cases.Outcome{}, fmt.Errorf("no runner for %s", c.ID)
 	}
+}
+
+func subnetInput(rt *harness.Runtime, vpcID, cidr string) *awsec2.CreateSubnetInput {
+	return &awsec2.CreateSubnetInput{
+		VpcId:             aws.String(vpcID),
+		CidrBlock:         aws.String(cidr),
+		AvailabilityZone:  aws.String("vws-1a"),
+		TagSpecifications: rt.TagSpec(types.ResourceTypeSubnet),
+	}
+}
+
+func createSubnet(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, vpcID, cidr, token string) (string, error) {
+	out, err := api.CreateSubnet(ctx, subnetInput(rt, vpcID, cidr))
+	if err != nil {
+		return "", fmt.Errorf("create subnet: %w", err)
+	}
+	id := aws.ToString(out.Subnet.SubnetId)
+	if err := ownSubnet(rt, api, id, token); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func ownSubnet(rt *harness.Runtime, api *awsec2.Client, id, token string) error {
+	return rt.Own("subnet", id, rt.Name(token), func(ctx context.Context) error {
+		_, err := api.DeleteSubnet(ctx, &awsec2.DeleteSubnetInput{SubnetId: aws.String(id)})
+		if err == nil || strings.Contains(err.Error(), "NotFound") {
+			return nil
+		}
+		return err
+	})
 }

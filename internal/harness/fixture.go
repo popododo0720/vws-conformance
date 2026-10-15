@@ -43,6 +43,14 @@ func (rt *Runtime) Token(suffix string) string {
 	return s
 }
 
+func (rt *Runtime) Own(kind, id, name string, del func(context.Context) error) error {
+	if err := rt.Track(kind, id, name); err != nil {
+		return err
+	}
+	rt.Cleanup(del)
+	return nil
+}
+
 func (rt *Runtime) Track(kind, id, name string) error {
 	row := sweep.Resource{Kind: kind, ID: id, Name: name, LedgerRunID: rt.Cfg.RunID}
 	if err := os.MkdirAll(rt.Cfg.OutDir, 0o755); err != nil {
