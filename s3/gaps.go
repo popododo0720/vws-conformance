@@ -84,7 +84,7 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 			return err
 		})
 	case "S3-GAP-005":
-		doc := bucketPolicy()
+		doc := bucketPolicy(name)
 		return rt.Call(ctx, func(ctx context.Context) error {
 			_, err := api.PutBucketPolicy(ctx, &s3.PutBucketPolicyInput{Bucket: aws.String(name), Policy: aws.String(doc)})
 			return err
@@ -178,7 +178,7 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	}
 }
 
-func bucketPolicy() string {
+func bucketPolicy(bucket string) string {
 	return `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*",` +
-		`"Action":"s3:GetObject","Resource":"arn:aws:s3:::example-bucket/*"}]}`
+		`"Action":"s3:GetObject","Resource":"arn:aws:s3:::` + bucket + `/*"}]}`
 }

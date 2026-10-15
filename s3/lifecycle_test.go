@@ -52,7 +52,7 @@ func TestPutBucketPolicyUsesTheBucketARN(t *testing.T) {
 }
 
 func TestBucketPolicyProbeNamesEffectAndPrincipal(t *testing.T) {
-	doc := bucketPolicy()
+	doc := bucketPolicy("example-bucket")
 	for _, part := range []string{`"Effect"`, `"Principal"`, `"Action"`, `"Resource"`} {
 		if !strings.Contains(doc, part) {
 			t.Fatalf("policy %s lacks %s", doc, part)

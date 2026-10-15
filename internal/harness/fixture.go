@@ -410,17 +410,23 @@ func (rt *Runtime) liveInventory(ctx context.Context, rows []sweep.Resource) ([]
 func (rt *Runtime) collectInventory(ctx context.Context, rows []sweep.Resource, ghosts bool) ([]sweepItem, error) {
 	var items []sweepItem
 	if rt.Clients != nil && rt.Clients.S3 != nil {
-		out, err := withDeadline(ctx, func(ctx context.Context) (*s3.ListBucketsOutput, error) {
-			return rt.Clients.S3.ListBuckets(ctx, &s3.ListBucketsInput{})
+		err := eachPage(func(token *string) (*string, error) {
+			out, err := withDeadline(ctx, func(ctx context.Context) (*s3.ListBucketsOutput, error) {
+				return rt.Clients.S3.ListBuckets(ctx, &s3.ListBucketsInput{ContinuationToken: token})
+			})
+			if err != nil {
+				return nil, fmt.Errorf("list buckets: %w", err)
+			}
+			for _, b := range out.Buckets {
+				name := aws.ToString(b.Name)
+				if ownedName(name, rt.keepRun) {
+					items = append(items, sweepItem{kind: "bucket", id: name})
+				}
+			}
+			return out.ContinuationToken, nil
 		})
 		if err != nil {
-			return nil, fmt.Errorf("list buckets: %w", err)
-		}
-		for _, b := range out.Buckets {
-			name := aws.ToString(b.Name)
-			if ownedName(name, rt.keepRun) {
-				items = append(items, sweepItem{kind: "bucket", id: name})
-			}
+			return nil, err
 		}
 	}
 	if rt.Clients != nil && rt.Clients.EC2 != nil {

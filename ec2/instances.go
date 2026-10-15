@@ -150,7 +150,9 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 		if _, err := api.StopInstances(ctx, &awsec2.StopInstancesInput{InstanceIds: []string{id}}); err != nil {
 			return cases.Outcome{}, fmt.Errorf("stop: %w", err)
 		}
-		_, _ = api.DescribeInstances(ctx, &awsec2.DescribeInstancesInput{InstanceIds: []string{id}})
+		if err := waitStopped(ctx, api, id); err != nil {
+			return cases.Outcome{}, err
+		}
 		return rt.Call(ctx, func(ctx context.Context) error {
 			_, err := api.StartInstances(ctx, &awsec2.StartInstancesInput{InstanceIds: []string{id}})
 			return err
@@ -286,6 +288,14 @@ func launch(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, subnet
 }
 
 func waitRunning(ctx context.Context, api *awsec2.Client, id string) error {
+	return waitInstance(ctx, api, id, types.InstanceStateNameRunning, types.InstanceStateNameStopped)
+}
+
+func waitStopped(ctx context.Context, api *awsec2.Client, id string) error {
+	return waitInstance(ctx, api, id, types.InstanceStateNameStopped)
+}
+
+func waitInstance(ctx context.Context, api *awsec2.Client, id string, ready ...types.InstanceStateName) error {
 	ctx, cancel := context.WithTimeout(ctx, harness.OpTimeout)
 	defer cancel()
 	tick := time.NewTicker(20 * time.Millisecond)
@@ -297,9 +307,13 @@ func waitRunning(ctx context.Context, api *awsec2.Client, id string) error {
 			return fmt.Errorf("describe %s: %w", id, err)
 		}
 		state = instanceState(out)
-		switch types.InstanceStateName(state) {
-		case types.InstanceStateNameRunning, types.InstanceStateNameStopped:
-			return nil
+		named := types.InstanceStateName(state)
+		for _, want := range ready {
+			if named == want {
+				return nil
+			}
+		}
+		switch named {
 		case types.InstanceStateNameTerminated, types.InstanceStateNameShuttingDown:
 			return fmt.Errorf("instance %s is %s", id, state)
 		}

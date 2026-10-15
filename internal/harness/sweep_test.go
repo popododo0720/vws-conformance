@@ -403,7 +403,12 @@ func TestSweepReadsTheSecondBucketPage(t *testing.T) {
 			names := map[string]bool{"conf-logs": true}
 			next := "page-2"
 			if token == "page-2" {
-				names = map[string]bool{owned: true}
+				names = map[string]bool{}
+				mu.Lock()
+				if !deleted["bucket "+owned] {
+					names[owned] = true
+				}
+				mu.Unlock()
 				next = ""
 			}
 			w.Header().Set("Content-Type", "application/xml")
