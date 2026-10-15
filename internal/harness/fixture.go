@@ -329,7 +329,9 @@ func describeEC2(ctx context.Context, c *ec2.Client) (ec2View, error) {
 	gws, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeInternetGatewaysOutput, error) {
 		return c.DescribeInternetGateways(ctx, &ec2.DescribeInternetGatewaysInput{})
 	})
-	if err != nil {
+	if unsupportedAction(err) {
+		gws = &ec2.DescribeInternetGatewaysOutput{}
+	} else if err != nil {
 		return view, fmt.Errorf("describe internet gateways: %w", err)
 	}
 	view.gateways = gws.InternetGateways
@@ -415,6 +417,10 @@ func ec2Items(view ec2View, rows []sweep.Resource) []sweepItem {
 		}
 	}
 	return items
+}
+
+func unsupportedAction(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "InvalidAction")
 }
 
 func tagged(tags []ec2types.Tag) bool {

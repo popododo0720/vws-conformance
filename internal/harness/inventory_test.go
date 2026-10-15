@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -34,5 +35,17 @@ func TestEC2InventoryIncludesDryRunKinds(t *testing.T) {
 	}
 	if got["subnet subnet-foreign"] {
 		t.Fatal("untagged subnet was selected")
+	}
+}
+
+func TestUnsupportedAction(t *testing.T) {
+	if !unsupportedAction(errors.New("api error InvalidAction: DescribeInternetGateways")) {
+		t.Fatal("InvalidAction was fatal")
+	}
+	if unsupportedAction(errors.New("deadline exceeded")) {
+		t.Fatal("deadline was treated as unsupported")
+	}
+	if unsupportedAction(nil) {
+		t.Fatal("nil error was unsupported")
 	}
 }
