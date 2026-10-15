@@ -239,6 +239,77 @@ func TestSweepKeepsForeignAndActiveResources(t *testing.T) {
 	}
 }
 
+func TestSweepKeepsForeignRunAcrossOutDirs(t *testing.T) {
+	const (
+		mine    = "conf-20261015T120000Z-abc123"
+		foreign = "conf-20261015T150000Z-bbb222"
+	)
+	mineName := "conf-20261015t120000z-abc123"
+	foreignName := "conf-20261015t150000z-bbb222"
+	var mu sync.Mutex
+	buckets := map[string]bool{mineName: true, foreignName: true}
+	volumes := map[string]string{"vol-mine": mine, "vol-foreign": foreign}
+	deleted := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete && r.URL.Path != "/" {
+			name := strings.Trim(r.URL.Path, "/")
+			mu.Lock()
+			delete(buckets, name)
+			deleted["bucket "+name] = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method == http.MethodGet {
+			mu.Lock()
+			body := listBucketsXML(buckets)
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = io.WriteString(w, body)
+			return
+		}
+		vals := ec2Form(r)
+		action := vals.Get("Action")
+		mu.Lock()
+		defer mu.Unlock()
+		switch action {
+		case "DeleteVolume":
+			id := vals.Get("VolumeId")
+			delete(volumes, id)
+			deleted["volume "+id] = true
+			writeEC2(w, 200, ec2OK("DeleteVolumeResponse", "<return>true</return>"))
+		case "DetachVolume":
+			writeEC2(w, 200, ec2OK("DetachVolumeResponse", "<volumeId>"+vals.Get("VolumeId")+"</volumeId>"))
+		default:
+			status, body := ownedDescribe(action, buckets, nil, volumes, nil)
+			writeEC2(w, status, body)
+		}
+	}))
+	defer srv.Close()
+	outA := t.TempDir()
+	outB := t.TempDir()
+	lock := filepath.Join(outA, "active", foreign)
+	if err := os.MkdirAll(filepath.Dir(lock), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lock, []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("VWS_CONF_ACTIVITY_DIR", t.TempDir())
+	rt := runtimeAt(t, srv.URL, outB, mine)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := rt.Sweep(ctx); err != nil {
+		t.Fatalf("sweep: %v deleted %v", err, deleted)
+	}
+	if deleted["volume vol-foreign"] || deleted["bucket "+foreignName] {
+		t.Fatalf("deleted the other run %v", deleted)
+	}
+	if !deleted["volume vol-mine"] || !deleted["bucket "+mineName] {
+		t.Fatalf("kept this run %v", deleted)
+	}
+}
+
 func TestSweepReadsTheSecondDescribePage(t *testing.T) {
 	const run = "conf-20261015T120000Z-abc123"
 	var page atomic.Int32
