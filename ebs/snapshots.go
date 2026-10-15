@@ -1,0 +1,87 @@
+package ebs
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsec2 "github.com/aws/aws-sdk-go-v2/service/ec2"
+
+	"github.com/popododo0720/vws-conformance/internal/bind"
+	"github.com/popododo0720/vws-conformance/internal/cases"
+	"github.com/popododo0720/vws-conformance/internal/expect"
+	"github.com/popododo0720/vws-conformance/internal/harness"
+)
+
+func Snapshots() bind.Group {
+	return bind.Group{Service: "ebs", Name: "snapshots", Run: runSnap, Cases: []cases.Case{
+		{ID: "EBS-SNAP-001", Service: "ebs", Group: "snapshots", Op: "CreateSnapshot", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocEC2("CreateSnapshot"), Expect: cases.Expect{HTTP: 200, Patterns: map[string]string{"id": expect.SnapID}}, Impl: "yes"},
+		{ID: "EBS-SNAP-002", Service: "ebs", Group: "snapshots", Op: "DescribeSnapshots", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocEC2("DescribeSnapshots"), Expect: cases.Expect{HTTP: 200}, Impl: "yes"},
+		{ID: "EBS-SNAP-003", Service: "ebs", Group: "snapshots", Op: "DeleteSnapshot", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocEC2("DeleteSnapshot"), Expect: cases.Expect{HTTP: 200}, Impl: "yes"},
+		{ID: "EBS-SNAP-101", Service: "ebs", Group: "snapshots", Op: "DeleteSnapshot", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidSnapshot.NotFound"}, Impl: "yes"},
+		{ID: "EBS-SNAP-102", Service: "ebs", Group: "snapshots", Op: "DescribeSnapshots", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidSnapshot.NotFound"}, Impl: "yes"},
+		{ID: "EBS-SNAP-103", Service: "ebs", Group: "snapshots", Op: "CreateSnapshot", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidVolume.NotFound"}, Impl: "yes"},
+	}}
+}
+
+func runSnap(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcome, error) {
+	api, err := client(rt)
+	if err != nil {
+		return cases.Outcome{}, err
+	}
+	switch c.ID {
+	case "EBS-SNAP-101":
+		return rt.Call(ctx, func(ctx context.Context) error {
+			_, err := api.DeleteSnapshot(ctx, &awsec2.DeleteSnapshotInput{SnapshotId: aws.String("snap-0123456789abcdef0")})
+			return err
+		})
+	case "EBS-SNAP-102":
+		return rt.Call(ctx, func(ctx context.Context) error {
+			_, err := api.DescribeSnapshots(ctx, &awsec2.DescribeSnapshotsInput{SnapshotIds: []string{"snap-0123456789abcdef0"}})
+			return err
+		})
+	case "EBS-SNAP-103":
+		return rt.Call(ctx, func(ctx context.Context) error {
+			_, err := api.CreateSnapshot(ctx, &awsec2.CreateSnapshotInput{VolumeId: aws.String("vol-0123456789abcdef0"), Description: aws.String(rt.Name("missing"))})
+			return err
+		})
+	}
+	vol, err := makeVol(ctx, rt, api, "snapvol")
+	if err != nil {
+		return cases.Outcome{}, err
+	}
+	_, _ = api.DescribeVolumes(ctx, &awsec2.DescribeVolumesInput{VolumeIds: []string{vol}})
+	desc := rt.Name("snap")
+	switch c.ID {
+	case "EBS-SNAP-001":
+		var id string
+		o, err := rt.Call(ctx, func(ctx context.Context) error {
+			out, err := api.CreateSnapshot(ctx, &awsec2.CreateSnapshotInput{VolumeId: aws.String(vol), Description: aws.String(desc)})
+			if err == nil {
+				id = aws.ToString(out.SnapshotId)
+			}
+			return err
+		})
+		o.Fields["id"] = id
+		return o, err
+	case "EBS-SNAP-002", "EBS-SNAP-003":
+		out, err := api.CreateSnapshot(ctx, &awsec2.CreateSnapshotInput{VolumeId: aws.String(vol), Description: aws.String(desc)})
+		if err != nil {
+			return cases.Outcome{}, fmt.Errorf("snapshot: %w", err)
+		}
+		id := aws.ToString(out.SnapshotId)
+		_ = rt.Track("snapshot", id, desc)
+		if c.ID == "EBS-SNAP-002" {
+			return rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.DescribeSnapshots(ctx, &awsec2.DescribeSnapshotsInput{SnapshotIds: []string{id}, OwnerIds: []string{"self"}})
+				return err
+			})
+		}
+		return rt.Call(ctx, func(ctx context.Context) error {
+			_, err := api.DeleteSnapshot(ctx, &awsec2.DeleteSnapshotInput{SnapshotId: aws.String(id)})
+			return err
+		})
+	default:
+		return cases.Outcome{}, fmt.Errorf("no runner for %s", c.ID)
+	}
+}
