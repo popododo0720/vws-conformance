@@ -147,20 +147,14 @@ func (rt *Runtime) Sweep(ctx context.Context) error {
 			picked = append(picked, r)
 		}
 	}
+	items, err := rt.inventory(ctx, picked)
+	if err != nil {
+		return err
+	}
 	if rt.Dry {
-		return rt.drySweep(ctx, picked)
+		return reportDry(items)
 	}
-	if rt.Clients.S3 != nil {
-		if err := rt.sweepBuckets(ctx); err != nil {
-			return err
-		}
-	}
-	if rt.Clients.EC2 != nil {
-		if err := rt.sweepEC2(ctx, picked); err != nil {
-			return err
-		}
-	}
-	return nil
+	return rt.deleteItems(ctx, items)
 }
 
 func readLedger(dir string) ([]sweep.Resource, error) {
@@ -184,23 +178,6 @@ func readLedger(dir string) ([]sweep.Resource, error) {
 		out = append(out, r)
 	}
 	return out, nil
-}
-
-func (rt *Runtime) sweepBuckets(ctx context.Context) error {
-	out, err := rt.Clients.S3.ListBuckets(ctx, &s3.ListBucketsInput{})
-	if err != nil {
-		return fmt.Errorf("list buckets: %w", err)
-	}
-	for _, b := range out.Buckets {
-		name := aws.ToString(b.Name)
-		if !strings.HasPrefix(name, "conf-") {
-			continue
-		}
-		if err := emptyAndDelete(ctx, rt.Clients.S3, name); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func emptyAndDelete(ctx context.Context, c *s3.Client, name string) error {
@@ -228,118 +205,180 @@ func emptyAndDelete(ctx context.Context, c *s3.Client, name string) error {
 	return ignoreMissing(err)
 }
 
-func (rt *Runtime) sweepEC2(ctx context.Context, rows []sweep.Resource) error {
-	c := rt.Clients.EC2
+type sweepItem struct {
+	kind  string
+	id    string
+	assoc string
+	vpcs  []string
+}
+
+type ec2View struct {
+	instances []ec2types.Instance
+	volumes   []ec2types.Volume
+	snapshots []ec2types.Snapshot
+	addresses []ec2types.Address
+	keys      []ec2types.KeyPairInfo
+	groups    []ec2types.SecurityGroup
+	subnets   []ec2types.Subnet
+	vpcs      []ec2types.Vpc
+	gateways  []ec2types.InternetGateway
+}
+
+func (rt *Runtime) inventory(ctx context.Context, rows []sweep.Resource) ([]sweepItem, error) {
+	var items []sweepItem
+	if rt.Clients != nil && rt.Clients.S3 != nil {
+		out, err := rt.Clients.S3.ListBuckets(ctx, &s3.ListBucketsInput{})
+		if err != nil {
+			return nil, fmt.Errorf("list buckets: %w", err)
+		}
+		for _, b := range out.Buckets {
+			name := aws.ToString(b.Name)
+			if strings.HasPrefix(name, "conf-") {
+				items = append(items, sweepItem{kind: "bucket", id: name})
+			}
+		}
+	}
+	if rt.Clients != nil && rt.Clients.EC2 != nil {
+		view, err := describeEC2(ctx, rt.Clients.EC2)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, ec2Items(view, rows)...)
+	}
+	return items, nil
+}
+
+func describeEC2(ctx context.Context, c *ec2.Client) (ec2View, error) {
+	var view ec2View
 	inst, err := c.DescribeInstances(ctx, &ec2.DescribeInstancesInput{})
 	if err != nil {
-		return fmt.Errorf("describe instances: %w", err)
+		return view, fmt.Errorf("describe instances: %w", err)
 	}
-	var ids []string
 	for _, res := range inst.Reservations {
-		for _, in := range res.Instances {
-			if tagged(in.Tags) || ledgerHas(rows, "instance", aws.ToString(in.InstanceId)) {
-				ids = append(ids, aws.ToString(in.InstanceId))
-			}
-		}
+		view.instances = append(view.instances, res.Instances...)
 	}
-	for len(ids) > 0 {
-		n := 20
-		if len(ids) < n {
-			n = len(ids)
-		}
-		_, err := c.TerminateInstances(ctx, &ec2.TerminateInstancesInput{InstanceIds: ids[:n]})
-		if err != nil && !strings.Contains(err.Error(), "NotFound") {
-			return fmt.Errorf("terminate: %w", err)
-		}
-		ids = ids[n:]
+	vols, err := c.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{})
+	if err != nil {
+		return view, fmt.Errorf("describe volumes: %w", err)
 	}
-	for _, row := range rows {
-		if row.Kind != "volume" {
-			continue
-		}
-		_, err := c.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(row.ID)})
-		if err != nil && !strings.Contains(err.Error(), "NotFound") && !strings.Contains(err.Error(), "IncorrectState") {
-			return fmt.Errorf("delete volume %s: %w", row.ID, err)
-		}
-	}
+	view.volumes = vols.Volumes
 	snaps, err := c.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{OwnerIds: []string{"self"}})
 	if err != nil {
-		return fmt.Errorf("describe snapshots: %w", err)
+		return view, fmt.Errorf("describe snapshots: %w", err)
 	}
-	for _, s := range snaps.Snapshots {
-		if strings.HasPrefix(aws.ToString(s.Description), "conf-") || ledgerHas(rows, "snapshot", aws.ToString(s.SnapshotId)) {
-			_, err := c.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: s.SnapshotId})
-			if err != nil && !strings.Contains(err.Error(), "NotFound") {
-				return fmt.Errorf("delete snapshot: %w", err)
-			}
-		}
-	}
+	view.snapshots = snaps.Snapshots
 	addrs, err := c.DescribeAddresses(ctx, &ec2.DescribeAddressesInput{})
 	if err != nil {
-		return fmt.Errorf("describe addresses: %w", err)
+		return view, fmt.Errorf("describe addresses: %w", err)
 	}
-	for _, a := range addrs.Addresses {
-		id := aws.ToString(a.AllocationId)
-		if !ledgerHas(rows, "address", id) {
-			continue
-		}
-		if a.AssociationId != nil {
-			_, _ = c.DisassociateAddress(ctx, &ec2.DisassociateAddressInput{AssociationId: a.AssociationId})
-		}
-		_, err := c.ReleaseAddress(ctx, &ec2.ReleaseAddressInput{AllocationId: aws.String(id)})
-		if err != nil && !strings.Contains(err.Error(), "NotFound") {
-			return fmt.Errorf("release address: %w", err)
-		}
-	}
+	view.addresses = addrs.Addresses
 	keys, err := c.DescribeKeyPairs(ctx, &ec2.DescribeKeyPairsInput{})
 	if err != nil {
-		return fmt.Errorf("describe key pairs: %w", err)
+		return view, fmt.Errorf("describe key pairs: %w", err)
 	}
-	for _, k := range keys.KeyPairs {
-		if strings.HasPrefix(aws.ToString(k.KeyName), "conf-") {
-			_, err := c.DeleteKeyPair(ctx, &ec2.DeleteKeyPairInput{KeyName: k.KeyName})
-			if err != nil && !strings.Contains(err.Error(), "NotFound") {
-				return fmt.Errorf("delete key pair: %w", err)
-			}
-		}
-	}
+	view.keys = keys.KeyPairs
 	groups, err := c.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{})
 	if err != nil {
-		return fmt.Errorf("describe security groups: %w", err)
+		return view, fmt.Errorf("describe security groups: %w", err)
 	}
-	for _, g := range groups.SecurityGroups {
-		if strings.HasPrefix(aws.ToString(g.GroupName), "conf-") {
-			_, err := c.DeleteSecurityGroup(ctx, &ec2.DeleteSecurityGroupInput{GroupId: g.GroupId})
-			if err != nil && !strings.Contains(err.Error(), "NotFound") {
-				return fmt.Errorf("delete security group: %w", err)
-			}
-		}
-	}
+	view.groups = groups.SecurityGroups
 	subs, err := c.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{})
 	if err != nil {
-		return fmt.Errorf("describe subnets: %w", err)
+		return view, fmt.Errorf("describe subnets: %w", err)
 	}
-	for _, s := range subs.Subnets {
-		if tagged(s.Tags) {
-			_, err := c.DeleteSubnet(ctx, &ec2.DeleteSubnetInput{SubnetId: s.SubnetId})
-			if err != nil && !strings.Contains(err.Error(), "NotFound") && !strings.Contains(err.Error(), "Dependency") {
-				return fmt.Errorf("delete subnet: %w", err)
-			}
-		}
-	}
+	view.subnets = subs.Subnets
 	vpcs, err := c.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{})
 	if err != nil {
-		return fmt.Errorf("describe vpcs: %w", err)
+		return view, fmt.Errorf("describe vpcs: %w", err)
 	}
-	for _, v := range vpcs.Vpcs {
-		if tagged(v.Tags) {
-			_, err := c.DeleteVpc(ctx, &ec2.DeleteVpcInput{VpcId: v.VpcId})
-			if err != nil && !strings.Contains(err.Error(), "NotFound") && !strings.Contains(err.Error(), "Dependency") {
-				return fmt.Errorf("delete vpc: %w", err)
-			}
+	view.vpcs = vpcs.Vpcs
+	gws, err := c.DescribeInternetGateways(ctx, &ec2.DescribeInternetGatewaysInput{})
+	if err != nil {
+		return view, fmt.Errorf("describe internet gateways: %w", err)
+	}
+	view.gateways = gws.InternetGateways
+	return view, nil
+}
+
+func ec2Items(view ec2View, rows []sweep.Resource) []sweepItem {
+	var items []sweepItem
+	seen := map[string]bool{}
+	add := func(it sweepItem) {
+		key := it.kind + " " + it.id
+		if it.id == "" || seen[key] {
+			return
+		}
+		seen[key] = true
+		items = append(items, it)
+	}
+	for _, in := range view.instances {
+		id := aws.ToString(in.InstanceId)
+		if tagged(in.Tags) || ledgerHas(rows, "instance", id) {
+			add(sweepItem{kind: "instance", id: id})
 		}
 	}
-	return nil
+	for _, v := range view.volumes {
+		id := aws.ToString(v.VolumeId)
+		if ledgerHas(rows, "volume", id) {
+			add(sweepItem{kind: "volume", id: id})
+		}
+	}
+	for _, row := range rows {
+		if row.Kind == "volume" {
+			add(sweepItem{kind: "volume", id: row.ID})
+		}
+	}
+	for _, s := range view.snapshots {
+		id := aws.ToString(s.SnapshotId)
+		if strings.HasPrefix(aws.ToString(s.Description), "conf-") || ledgerHas(rows, "snapshot", id) {
+			add(sweepItem{kind: "snapshot", id: id})
+		}
+	}
+	for _, a := range view.addresses {
+		id := aws.ToString(a.AllocationId)
+		if ledgerHas(rows, "address", id) {
+			add(sweepItem{kind: "address", id: id, assoc: aws.ToString(a.AssociationId)})
+		}
+	}
+	for _, row := range rows {
+		if row.Kind == "address" {
+			add(sweepItem{kind: "address", id: row.ID})
+		}
+	}
+	for _, k := range view.keys {
+		name := aws.ToString(k.KeyName)
+		if strings.HasPrefix(name, "conf-") {
+			add(sweepItem{kind: "key-pair", id: name})
+		}
+	}
+	for _, g := range view.groups {
+		if strings.HasPrefix(aws.ToString(g.GroupName), "conf-") {
+			add(sweepItem{kind: "security-group", id: aws.ToString(g.GroupId)})
+		}
+	}
+	for _, s := range view.subnets {
+		if tagged(s.Tags) {
+			add(sweepItem{kind: "subnet", id: aws.ToString(s.SubnetId)})
+		}
+	}
+	for _, g := range view.gateways {
+		if !tagged(g.Tags) {
+			continue
+		}
+		var vpcs []string
+		for _, a := range g.Attachments {
+			if id := aws.ToString(a.VpcId); id != "" {
+				vpcs = append(vpcs, id)
+			}
+		}
+		add(sweepItem{kind: "internet-gateway", id: aws.ToString(g.InternetGatewayId), vpcs: vpcs})
+	}
+	for _, v := range view.vpcs {
+		if tagged(v.Tags) {
+			add(sweepItem{kind: "vpc", id: aws.ToString(v.VpcId)})
+		}
+	}
+	return items
 }
 
 func tagged(tags []ec2types.Tag) bool {
@@ -354,69 +393,101 @@ func tagged(tags []ec2types.Tag) bool {
 	return false
 }
 
-func (rt *Runtime) drySweep(ctx context.Context, rows []sweep.Resource) error {
-	var left []string
-	note := func(kind, id string) { left = append(left, kind+" "+id) }
-	if rt.Clients != nil && rt.Clients.S3 != nil {
-		out, err := rt.Clients.S3.ListBuckets(ctx, &s3.ListBucketsInput{})
-		if err != nil {
-			return fmt.Errorf("list buckets: %w", err)
-		}
-		for _, b := range out.Buckets {
-			name := aws.ToString(b.Name)
-			if strings.HasPrefix(name, "conf-") {
-				note("bucket", name)
-			}
-		}
+func reportDry(items []sweepItem) error {
+	for _, item := range items {
+		fmt.Println("leftover", item.kind, item.id)
 	}
-	if rt.Clients != nil && rt.Clients.EC2 != nil {
-		c := rt.Clients.EC2
-		inst, err := c.DescribeInstances(ctx, &ec2.DescribeInstancesInput{})
-		if err != nil {
-			return fmt.Errorf("describe instances: %w", err)
-		}
-		for _, res := range inst.Reservations {
-			for _, in := range res.Instances {
-				if tagged(in.Tags) || ledgerHas(rows, "instance", aws.ToString(in.InstanceId)) {
-					note("instance", aws.ToString(in.InstanceId))
-				}
-			}
-		}
-		vols, err := c.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{})
-		if err != nil {
-			return fmt.Errorf("describe volumes: %w", err)
-		}
-		for _, v := range vols.Volumes {
-			if ledgerHas(rows, "volume", aws.ToString(v.VolumeId)) {
-				note("volume", aws.ToString(v.VolumeId))
-			}
-		}
-		snaps, err := c.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{OwnerIds: []string{"self"}})
-		if err != nil {
-			return fmt.Errorf("describe snapshots: %w", err)
-		}
-		for _, s := range snaps.Snapshots {
-			if strings.HasPrefix(aws.ToString(s.Description), "conf-") || ledgerHas(rows, "snapshot", aws.ToString(s.SnapshotId)) {
-				note("snapshot", aws.ToString(s.SnapshotId))
-			}
-		}
-		keys, err := c.DescribeKeyPairs(ctx, &ec2.DescribeKeyPairsInput{})
-		if err != nil {
-			return fmt.Errorf("describe key pairs: %w", err)
-		}
-		for _, k := range keys.KeyPairs {
-			if strings.HasPrefix(aws.ToString(k.KeyName), "conf-") {
-				note("key-pair", aws.ToString(k.KeyName))
-			}
-		}
-	}
-	for _, item := range left {
-		fmt.Println("leftover", item)
-	}
-	if len(left) > 0 {
-		return fmt.Errorf("%d leftover resources", len(left))
+	if len(items) > 0 {
+		return fmt.Errorf("%d leftover resources", len(items))
 	}
 	fmt.Println("leftovers 0")
+	return nil
+}
+
+func (rt *Runtime) deleteItems(ctx context.Context, items []sweepItem) error {
+	for _, item := range items {
+		if item.kind != "bucket" || rt.Clients == nil || rt.Clients.S3 == nil {
+			continue
+		}
+		if err := emptyAndDelete(ctx, rt.Clients.S3, item.id); err != nil {
+			return err
+		}
+	}
+	if rt.Clients == nil || rt.Clients.EC2 == nil {
+		return nil
+	}
+	return deleteEC2(ctx, rt.Clients.EC2, items)
+}
+
+func deleteEC2(ctx context.Context, c *ec2.Client, items []sweepItem) error {
+	var ids []string
+	for _, item := range items {
+		if item.kind == "instance" {
+			ids = append(ids, item.id)
+		}
+	}
+	for len(ids) > 0 {
+		n := 20
+		if len(ids) < n {
+			n = len(ids)
+		}
+		_, err := c.TerminateInstances(ctx, &ec2.TerminateInstancesInput{InstanceIds: ids[:n]})
+		if err != nil && !strings.Contains(err.Error(), "NotFound") {
+			return fmt.Errorf("terminate: %w", err)
+		}
+		ids = ids[n:]
+	}
+	for _, item := range items {
+		var err error
+		switch item.kind {
+		case "volume":
+			_, err = c.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(item.id)})
+			if err != nil && !strings.Contains(err.Error(), "NotFound") && !strings.Contains(err.Error(), "IncorrectState") {
+				return fmt.Errorf("delete volume %s: %w", item.id, err)
+			}
+		case "snapshot":
+			_, err = c.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: aws.String(item.id)})
+			if err != nil && !strings.Contains(err.Error(), "NotFound") {
+				return fmt.Errorf("delete snapshot: %w", err)
+			}
+		case "address":
+			if item.assoc != "" {
+				_, _ = c.DisassociateAddress(ctx, &ec2.DisassociateAddressInput{AssociationId: aws.String(item.assoc)})
+			}
+			_, err = c.ReleaseAddress(ctx, &ec2.ReleaseAddressInput{AllocationId: aws.String(item.id)})
+			if err != nil && !strings.Contains(err.Error(), "NotFound") {
+				return fmt.Errorf("release address: %w", err)
+			}
+		case "key-pair":
+			_, err = c.DeleteKeyPair(ctx, &ec2.DeleteKeyPairInput{KeyName: aws.String(item.id)})
+			if err != nil && !strings.Contains(err.Error(), "NotFound") {
+				return fmt.Errorf("delete key pair: %w", err)
+			}
+		case "security-group":
+			_, err = c.DeleteSecurityGroup(ctx, &ec2.DeleteSecurityGroupInput{GroupId: aws.String(item.id)})
+			if err != nil && !strings.Contains(err.Error(), "NotFound") {
+				return fmt.Errorf("delete security group: %w", err)
+			}
+		case "internet-gateway":
+			for _, vpc := range item.vpcs {
+				_, _ = c.DetachInternetGateway(ctx, &ec2.DetachInternetGatewayInput{InternetGatewayId: aws.String(item.id), VpcId: aws.String(vpc)})
+			}
+			_, err = c.DeleteInternetGateway(ctx, &ec2.DeleteInternetGatewayInput{InternetGatewayId: aws.String(item.id)})
+			if err != nil && !strings.Contains(err.Error(), "NotFound") {
+				return fmt.Errorf("delete internet gateway: %w", err)
+			}
+		case "subnet":
+			_, err = c.DeleteSubnet(ctx, &ec2.DeleteSubnetInput{SubnetId: aws.String(item.id)})
+			if err != nil && !strings.Contains(err.Error(), "NotFound") && !strings.Contains(err.Error(), "Dependency") {
+				return fmt.Errorf("delete subnet: %w", err)
+			}
+		case "vpc":
+			_, err = c.DeleteVpc(ctx, &ec2.DeleteVpcInput{VpcId: aws.String(item.id)})
+			if err != nil && !strings.Contains(err.Error(), "NotFound") && !strings.Contains(err.Error(), "Dependency") {
+				return fmt.Errorf("delete vpc: %w", err)
+			}
+		}
+	}
 	return nil
 }
 
