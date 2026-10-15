@@ -15,7 +15,7 @@ There is no nightly job and no self-hosted runner. Pull requests run the fake co
 | `VWS_CONF_EC2_ENDPOINT` | EC2, VPC, and EBS listener. |
 | `VWS_CONF_S3_ENDPOINT` | S3 listener. |
 | `VWS_CONF_IAM_ENDPOINT` | IAM and STS listener. |
-| `VWS_CONF_ALLOWED_HOSTS` | Comma-separated hosts. `amazonaws.com` is refused even if listed. |
+| `VWS_CONF_ALLOWED_HOSTS` | Comma-separated hosts. AWS endpoint names are refused even if listed. A public IP is allowed only when that IP is listed. Link-local addresses are refused. |
 | `VWS_CONF_ALLOWED_ACCOUNTS` | Comma-separated account ids. |
 | `VWS_CONF_TARGET` | `local-fake`, `local-grpc`, or `vws-test`. |
 | `VWS_CONF_RUN_ID` | Optional. Empty mints `conf-YYYYMMDDThhmmssZ-xxxxxx`. |

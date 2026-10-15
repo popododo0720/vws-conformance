@@ -120,10 +120,12 @@ func Load(ctx context.Context, cfg Config) (*Clients, error) {
 		return nil, fmt.Errorf("VWS_CONF_ACCESS_KEY_ID and VWS_CONF_SECRET_ACCESS_KEY are required")
 	}
 	_ = os.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+	httpClient := NewHTTPClient(cfg.AllowedHosts)
 	awsCfg, err := config.LoadDefaultConfig(ctx,
 		config.WithRegion(cfg.Region),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.Secret, cfg.Session)),
 		config.WithEC2IMDSClientEnableState(imds.ClientDisabled),
+		config.WithHTTPClient(httpClient),
 		config.WithRetryer(func() aws.Retryer {
 			return retry.NewStandard(func(o *retry.StandardOptions) { o.MaxAttempts = 2 })
 		}),
@@ -132,7 +134,7 @@ func Load(ctx context.Context, cfg Config) (*Clients, error) {
 	if err != nil {
 		return nil, fmt.Errorf("aws config: %w", err)
 	}
-	cl := &Clients{Raw: &http.Client{Timeout: 30 * time.Second}}
+	cl := &Clients{Raw: httpClient}
 	if cfg.EC2Endpoint != "" {
 		cl.EC2 = ec2.NewFromConfig(awsCfg, func(o *ec2.Options) {
 			o.BaseEndpoint = aws.String(cfg.EC2Endpoint)

@@ -32,6 +32,11 @@ func TestRejectsDisguisedAWSHosts(t *testing.T) {
 		{"https://console.awsapps.com", "console.awsapps.com"},
 		{"https://s3.us-iso-east-1.c2s.ic.gov", "s3.us-iso-east-1.c2s.ic.gov"},
 		{"https://s3.us-isob-east-1.sc2s.sgov.gov", "s3.us-isob-east-1.sc2s.sgov.gov"},
+		{"https://s3.cn-north-1.api.amazonwebservices.com.cn", "s3.cn-north-1.api.amazonwebservices.com.cn"},
+		{"https://ec2.eu-central-1.api.amazonwebservices.eu", "ec2.eu-central-1.api.amazonwebservices.eu"},
+		{"https://s3.eu-isoe-west-1.cloud.adc-e.uk", "s3.eu-isoe-west-1.cloud.adc-e.uk"},
+		{"https://s3.us-isof-south-1.csp.hci.ic.gov", "s3.us-isof-south-1.csp.hci.ic.gov"},
+		{"https://d111111abcdef8.cloudfront.cn", "d111111abcdef8.cloudfront.cn"},
 		{"https://s3.us-east-1." + fw("amazonaws") + ".com", "s3.us-east-1." + fw("amazonaws") + ".com"},
 	}
 	for _, tc := range cases {
@@ -48,6 +53,22 @@ func fw(s string) string {
 		b.WriteRune(r + 0xFEE0)
 	}
 	return b.String()
+}
+
+func TestRejectsLinkLocalEvenIfListed(t *testing.T) {
+	for _, raw := range []string{
+		"http://169.254.169.254/",
+		"http://169.254.169.254./",
+		"http://[fe80::1]/",
+		"http://0.0.0.0/",
+		"http://224.0.0.1/",
+	} {
+		host := raw[len("http://") : len(raw)-1]
+		err := CheckEndpoint(raw, []string{host, "169.254.169.254", "fe80::1", "0.0.0.0", "224.0.0.1"})
+		if err == nil || !strings.Contains(err.Error(), "refused") {
+			t.Fatalf("%s: %v", raw, err)
+		}
+	}
 }
 
 func TestListedPublicIPIsAllowed(t *testing.T) {

@@ -6,6 +6,6 @@ Clients are unmodified aws-sdk-go-v2. The only overrides are the base endpoint, 
 
 Every run id matches `conf-YYYYMMDDThhmmssZ-xxxxxx`. Resource names and the `vws:conformance-run` tag use that id. Cleanup is registered LIFO, `TestMain` runs it on the way out, and SIGINT/SIGTERM run the same function. A panic in a case is recovered and still recorded. The process cleanup also runs.
 
-Before mutations, `CheckEndpoints` refuses `amazonaws.com` and any host that is not on the allow list. `GetCallerIdentity` then checks the account. The pre-run sweep deletes only resources that carry the `conf-` prefix.
+Before mutations, `CheckEndpoints` refuses AWS endpoint names and any host that is not on the allow list. Names are compared after trailing dots, case, and IDNA are folded. The HTTP client dials the resolved address directly, and only when every address is loopback, private, or an allowlisted public IP. Link-local addresses are refused. `GetCallerIdentity` then checks the account. The pre-run sweep deletes only resources that carry the `conf-` prefix.
 
 `go test` without `-service`, `-group`, or `-full` skips live groups. `cmd/conf-run --service s3 --group buckets` runs one group. A pull request runs unit tests plus the groups `internal/touch` selects from the changed paths. A change under `internal/`, `schema/`, `cmd/`, the module files, `scripts/`, or the workflow is a full run. `workflow_dispatch` is a full run. There is no schedule.

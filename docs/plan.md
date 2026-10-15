@@ -476,7 +476,7 @@ Each phase is one PR (Part of the tracking issue), judged by vws-verify with a v
 These decisions override earlier notes in this plan where they conflict.
 
 1. No self-hosted runner and no nightly job. CI runs only the pull-request job against console-api's fake backend. The vws-test run is manual. See README for the command. `conformance-vws-test.yml` is not added.
-2. The suite never calls real AWS. There is no sandbox account, no real-AWS mode, and no real-AWS endpoint. Expected behavior comes from the official AWS docs only. The endpoint allow-list rejects `amazonaws.com` and any host ending in `.amazonaws.com`, even if that host is also listed in `VWS_CONF_ALLOWED_HOSTS`.
+2. The suite never calls real AWS. There is no sandbox account, no real-AWS mode, and no real-AWS endpoint. Expected behavior comes from the official AWS docs only. The endpoint allow-list rejects AWS endpoint names, including `amazonaws.com` and any host ending in `.amazonaws.com`, even if that host is also listed in `VWS_CONF_ALLOWED_HOSTS`. The HTTP client repeats the check at connect time.
 3. Issue #1 scope for this repository: harness, then S3, then EC2/VPC (including the EBS operations on the EC2 listener). IAM and STS cases are written and skipped with the reason `vws-deploy#310` until that change lands.
 
 ## 12. Additional acceptance criteria

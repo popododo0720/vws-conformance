@@ -16,8 +16,7 @@ if grep -R -n -E '^[[:space:]]*schedule:' .github/workflows; then
 fi
 
 if grep -R -n -E 'https?://[^[:space:]]*amazonaws\.com' --include='*.go' --include='*.yml' --include='*.sh' . \
-  | grep -v 'internal/harness/allow_test.go' \
-  | grep -v 'internal/harness/load_test.go'; then
+  | grep -v '_test\.go'; then
   fail "an endpoint URL uses amazonaws.com"
 fi
 

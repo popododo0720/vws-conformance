@@ -1,6 +1,7 @@
 date	decision	reason
 2026-10-15	no self-hosted runner and no nightly job	owner decision. CI is the pull-request job against the fake backend. vws-test is a manual command.
 2026-10-15	no real AWS endpoint	owner decision. Expected behavior comes from the AWS docs. The allow list refuses amazonaws.com.
+2026-10-15	dial only checked addresses	Codex review. Hosts are canonicalized. AWS DNS suffixes are refused. Connect time uses the resolved IP so a later DNS answer cannot retarget the dial.
 2026-10-15	IAM and STS cases stay skipped	vws-deploy#310 has not landed, so console-api is not wired to vws-iam.
 2026-10-15	parity fail does not fail the Go test	changing the expected code to match the fake would hide the gap. status error still fails the test.
 2026-10-15	full suite is opt-in	owner decision. Default go test skips live groups. PR CI runs touched groups, or the full suite for a big change or workflow_dispatch.
