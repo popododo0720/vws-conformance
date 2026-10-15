@@ -8,7 +8,9 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -308,6 +310,76 @@ func TestSweepKeepsForeignRunAcrossOutDirs(t *testing.T) {
 	if !deleted["volume vol-mine"] || !deleted["bucket "+mineName] {
 		t.Fatalf("kept this run %v", deleted)
 	}
+}
+
+func TestSweepUsesSharedActivity(t *testing.T) {
+	const (
+		mine = "conf-20261015T120000Z-abc123"
+		live = "conf-20261015T130000Z-def456"
+		dead = "conf-20261015T140000Z-aaa111"
+	)
+	mineName := "conf-20261015t120000z-abc123"
+	liveName := "conf-20261015t130000z-def456"
+	deadName := "conf-20261015t140000z-aaa111"
+	var mu sync.Mutex
+	buckets := map[string]bool{mineName: true, liveName: true, deadName: true}
+	deleted := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete && r.URL.Path != "/" {
+			name := strings.Trim(r.URL.Path, "/")
+			mu.Lock()
+			delete(buckets, name)
+			deleted["bucket "+name] = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method == http.MethodGet {
+			mu.Lock()
+			body := listBucketsXML(buckets)
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = io.WriteString(w, body)
+			return
+		}
+		vals := ec2Form(r)
+		status, body := ownedDescribe(vals.Get("Action"), buckets, nil, nil, nil)
+		writeEC2(w, status, body)
+	}))
+	defer srv.Close()
+	activity := t.TempDir()
+	t.Setenv("VWS_CONF_ACTIVITY_DIR", activity)
+	if err := os.WriteFile(filepath.Join(activity, live), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(activity, dead), []byte(deadPID(t)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt := runtimeAt(t, srv.URL, t.TempDir(), mine)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := rt.Sweep(ctx); err != nil {
+		t.Fatalf("sweep: %v deleted %v", err, deleted)
+	}
+	if deleted["bucket "+liveName] {
+		t.Fatalf("deleted a live run %v", deleted)
+	}
+	if !deleted["bucket "+deadName] || !deleted["bucket "+mineName] {
+		t.Fatalf("kept a finished run %v", deleted)
+	}
+}
+
+func deadPID(t *testing.T) string {
+	t.Helper()
+	cmd := exec.Command("true")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pid := cmd.Process.Pid
+	if err := cmd.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	return strconv.Itoa(pid)
 }
 
 func TestSweepReadsTheSecondDescribePage(t *testing.T) {
