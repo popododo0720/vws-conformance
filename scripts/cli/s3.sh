@@ -24,8 +24,24 @@ if [ -n "${VWS_CONF_SESSION_TOKEN:-}" ]; then
   export AWS_SESSION_TOKEN="$VWS_CONF_SESSION_TOKEN"
 fi
 aws s3api list-buckets --endpoint-url "$VWS_CONF_S3_ENDPOINT" >/dev/null
-if aws s3api head-bucket --endpoint-url "$VWS_CONF_S3_ENDPOINT" --bucket "no-such-bucket-conformance" >/dev/null 2>/tmp/conf-cli-err; then
+set +e
+aws s3api head-bucket --endpoint-url "$VWS_CONF_S3_ENDPOINT" --bucket "no-such-bucket-conformance" >/dev/null 2>/tmp/conf-cli-err
+code=$?
+set -e
+if [ "$code" -eq 0 ]; then
   echo "head-bucket on a missing bucket succeeded" >&2
   exit 1
 fi
+if [ "$code" -eq 127 ] || [ "$code" -eq 253 ]; then
+  echo "head-bucket invocation failed" >&2
+  exit 1
+fi
+err=$(cat /tmp/conf-cli-err 2>/dev/null || true)
+case "$err" in
+  *404*|*"Not Found"*|*NoSuchBucket*) ;;
+  *)
+    echo "head-bucket did not return 404" >&2
+    exit 1
+    ;;
+esac
 echo "cli s3 happy list-buckets and error head-bucket"
