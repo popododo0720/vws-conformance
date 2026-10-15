@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["schema_version", "run_id", "started_at", "finished_at", "target", "tool_versions", "summary", "results"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "run_id": {"type": "string", "pattern": "^conf-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}$"},
+    "started_at": {"type": "string"},
+    "finished_at": {"type": "string"},
+    "target": {
+      "type": "object",
+      "required": ["name", "region", "console_api_version"],
+      "properties": {
+        "name": {"enum": ["vws-test", "local-fake", "local-grpc"]},
+        "region": {"type": "string"},
+        "console_api_version": {"type": "string"},
+        "service_images": {"type": "object"}
+      }
+    },
+    "tool_versions": {
+      "type": "object",
+      "required": ["go", "aws_sdk_go_v2", "aws_cli"],
+      "properties": {
+        "go": {"type": "string"},
+        "aws_sdk_go_v2": {"type": "string"},
+        "aws_cli": {"type": "string"}
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["pass", "fail", "skip", "error", "total"],
+      "properties": {
+        "pass": {"type": "integer"},
+        "fail": {"type": "integer"},
+        "skip": {"type": "integer"},
+        "error": {"type": "integer"},
+        "total": {"type": "integer"}
+      }
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "service", "operation", "kind", "suite", "status", "doc_url", "duration_ms"],
+        "properties": {
+          "id": {"type": "string"},
+          "service": {"enum": ["ec2", "s3", "iam", "sts", "auth", "vpc", "ebs"]},
+          "operation": {"type": "string"},
+          "kind": {"enum": ["happy", "error", "pagination", "idempotency", "tags", "filter", "auth", "gap"]},
+          "suite": {"enum": ["go-sdk", "cli", "raw-http"]},
+          "status": {"enum": ["pass", "fail", "skip", "error"]},
+          "doc_url": {"type": "string", "pattern": "^https://docs\\.aws\\.amazon\\.com/"},
+          "expected": {"type": "object"},
+          "actual": {"type": "object"},
+          "reason": {"type": "string"},
+          "issue": {"type": "string"},
+          "raw_ref": {"type": "string"},
+          "duration_ms": {"type": "integer"}
+        }
+      }
+    }
+  }
+}
