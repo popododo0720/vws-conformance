@@ -60,22 +60,15 @@ func runListings(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.
 		o.Fields["keys"] = joinKeys(out.Contents)
 		return o, nil
 	case "S3-LO-002":
-		p := s3.NewListObjectsV2Paginator(api, &s3.ListObjectsV2Input{Bucket: aws.String(name), MaxKeys: aws.Int32(1)})
-		var keys []string
-		pages := 0
-		var last int
-		for p.HasMorePages() {
-			page, err := p.NextPage(ctx)
-			if err != nil {
-				return cases.Outcome{}, fmt.Errorf("page: %w", err)
-			}
-			pages++
-			last = 200
-			for _, obj := range page.Contents {
-				keys = append(keys, aws.ToString(obj.Key))
-			}
+		keys, pages, err := listPages(ctx, api, name)
+		if err != nil {
+			return cases.Outcome{}, err
 		}
 		sort.Strings(keys)
+		last := 0
+		if pages > 0 {
+			last = 200
+		}
 		return cases.Outcome{HTTP: last, Fields: map[string]string{"keys": join(keys), "pages": strconv.Itoa(pages)}}, nil
 	case "S3-LO-003":
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
@@ -113,6 +106,39 @@ func runListings(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.
 	default:
 		return cases.Outcome{}, fmt.Errorf("no runner for %s", c.ID)
 	}
+}
+
+func listPages(ctx context.Context, api *s3.Client, name string) ([]string, int, error) {
+	ctx, cancel := context.WithTimeout(ctx, harness.OpTimeout)
+	defer cancel()
+	p := s3.NewListObjectsV2Paginator(api, &s3.ListObjectsV2Input{
+		Bucket: aws.String(name), MaxKeys: aws.Int32(1),
+	})
+	var keys []string
+	pages := 0
+	seen := map[string]bool{}
+	for p.HasMorePages() {
+		if err := ctx.Err(); err != nil {
+			return nil, pages, fmt.Errorf("list pages: %w", err)
+		}
+		page, err := p.NextPage(ctx)
+		if err != nil {
+			return nil, pages, fmt.Errorf("page: %w", err)
+		}
+		pages++
+		for _, obj := range page.Contents {
+			keys = append(keys, aws.ToString(obj.Key))
+		}
+		if !aws.ToBool(page.IsTruncated) {
+			break
+		}
+		token := aws.ToString(page.NextContinuationToken)
+		if token == "" || seen[token] {
+			return nil, pages, fmt.Errorf("repeated pagination token %q", token)
+		}
+		seen[token] = true
+	}
+	return keys, pages, nil
 }
 
 func joinKeys(objs []types.Object) string {
