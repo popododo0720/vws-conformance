@@ -16,12 +16,15 @@ func TestEC2InventoryIncludesDryRunKinds(t *testing.T) {
 	tag := []ec2types.Tag{{Key: aws.String("vws:conformance-run"), Value: aws.String(run)}}
 	view := ec2View{
 		addresses: []ec2types.Address{{AllocationId: aws.String("eipalloc-1"), AssociationId: aws.String("eipassoc-1")}},
-		groups:    []ec2types.SecurityGroup{{GroupId: aws.String("sg-1"), GroupName: aws.String("conf-sg")}},
+		groups: []ec2types.SecurityGroup{{
+			GroupId:   aws.String("sg-1"),
+			GroupName: aws.String("conf-20261015t120000z-abc123"),
+		}},
 		subnets: []ec2types.Subnet{
 			{SubnetId: aws.String("subnet-1"), Tags: tag},
 			{SubnetId: aws.String("subnet-foreign")},
 		},
-		vpcs:     []ec2types.Vpc{{VpcId: aws.String("vpc-1"), Tags: []ec2types.Tag{{Key: aws.String("Name"), Value: aws.String("conf-vpc")}}}},
+		vpcs:     []ec2types.Vpc{{VpcId: aws.String("vpc-1"), Tags: tag}},
 		gateways: []ec2types.InternetGateway{{InternetGatewayId: aws.String("igw-1"), Tags: tag, Attachments: []ec2types.InternetGatewayAttachment{{VpcId: aws.String("vpc-1")}}}},
 	}
 	got := map[string]bool{}

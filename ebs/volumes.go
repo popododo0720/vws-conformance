@@ -47,6 +47,7 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 	case "EBS-VOL-001":
 		in := VolumeRequest("vws-1a", harness.VolumeGiB)
 		in.ClientToken = aws.String(rt.Token("vol1"))
+		in.TagSpecifications = rt.TagSpec(types.ResourceTypeVolume)
 		var id, size string
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
 			out, err := api.CreateVolume(ctx, in)
@@ -162,6 +163,7 @@ func client(rt *harness.Runtime) (*awsec2.Client, error) {
 func makeVol(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, token string) (string, error) {
 	in := VolumeRequest("vws-1a", harness.VolumeGiB)
 	in.ClientToken = aws.String(rt.Token(token))
+	in.TagSpecifications = rt.TagSpec(types.ResourceTypeVolume)
 	out, err := api.CreateVolume(ctx, in)
 	if err != nil {
 		return "", fmt.Errorf("create volume: %w", err)
@@ -175,9 +177,9 @@ func trackVol(rt *harness.Runtime, api *awsec2.Client, id string) {
 	if id == "" {
 		return
 	}
-	_ = rt.Track("volume", id, rt.Name("vol"))
 	rt.Cleanup(func(ctx context.Context) error {
 		_, err := api.DeleteVolume(ctx, &awsec2.DeleteVolumeInput{VolumeId: aws.String(id)})
 		return harness.IgnoreCleanup(err)
 	})
+	_ = rt.Track("volume", id, rt.Name("vol"))
 }

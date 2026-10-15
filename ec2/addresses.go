@@ -120,7 +120,7 @@ func runAddr(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 func alloc(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (cases.Outcome, error) {
 	var id string
 	o, err := rt.Call(ctx, func(ctx context.Context) error {
-		out, err := api.AllocateAddress(ctx, &awsec2.AllocateAddressInput{Domain: types.DomainTypeVpc})
+		out, err := api.AllocateAddress(ctx, addressInput(rt))
 		if err == nil {
 			id = aws.ToString(out.AllocationId)
 		}
@@ -128,27 +128,37 @@ func alloc(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (cases.
 	})
 	o.Fields["id"] = id
 	if id != "" {
-		_ = rt.Track("address", id, rt.Name("eip"))
-		rt.Cleanup(func(ctx context.Context) error {
-			_, err := api.ReleaseAddress(ctx, &awsec2.ReleaseAddressInput{AllocationId: aws.String(id)})
-			return harness.IgnoreCleanup(err)
-		})
+		_ = rememberAddress(rt, api, id)
 	}
 	return o, err
 }
 
 func allocID(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (string, error) {
-	out, err := api.AllocateAddress(ctx, &awsec2.AllocateAddressInput{Domain: types.DomainTypeVpc})
+	out, err := api.AllocateAddress(ctx, addressInput(rt))
 	if err != nil {
 		return "", fmt.Errorf("allocate: %w", err)
 	}
 	id := aws.ToString(out.AllocationId)
-	if err := rt.Track("address", id, rt.Name("eip")); err != nil {
+	if err := rememberAddress(rt, api, id); err != nil {
 		return "", err
+	}
+	return id, nil
+}
+
+func addressInput(rt *harness.Runtime) *awsec2.AllocateAddressInput {
+	return &awsec2.AllocateAddressInput{
+		Domain:            types.DomainTypeVpc,
+		TagSpecifications: rt.TagSpec(types.ResourceTypeElasticIp),
+	}
+}
+
+func rememberAddress(rt *harness.Runtime, api *awsec2.Client, id string) error {
+	if id == "" {
+		return fmt.Errorf("allocate: empty id")
 	}
 	rt.Cleanup(func(ctx context.Context) error {
 		_, err := api.ReleaseAddress(ctx, &awsec2.ReleaseAddressInput{AllocationId: aws.String(id)})
 		return harness.IgnoreCleanup(err)
 	})
-	return id, nil
+	return rt.Track("address", id, rt.Name("eip"))
 }

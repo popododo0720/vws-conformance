@@ -259,13 +259,17 @@ func TestPinKeepsSignedHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = v4.NewSigner().SignHTTP(ctx, creds, again, gotHash, "s3", region, when)
+	hash := gotHash
+	if hash == "" {
+		hash = PayloadHash(nil)
+	}
+	err = v4.NewSigner().SignHTTP(ctx, creds, again, hash, "s3", region, when)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if again.Header.Get("Authorization") != gotAuth {
-		t.Fatalf("host %q authorization mismatch\norigin %s\nagain  %s",
-			gotHost, gotAuth, again.Header.Get("Authorization"))
+		t.Fatalf("host %q path %q\norigin %s\nagain  %s",
+			gotHost, gotPath, gotAuth, again.Header.Get("Authorization"))
 	}
 }
 

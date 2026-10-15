@@ -200,7 +200,7 @@ func (rt *Runtime) Sweep(ctx context.Context) error {
 	}
 	var picked []sweep.Resource
 	for _, r := range rows {
-		if sweep.CarriesPrefix(r) {
+		if rt.keepRun(r.LedgerRunID) {
 			picked = append(picked, r)
 		}
 	}
@@ -356,7 +356,7 @@ func (rt *Runtime) collectInventory(ctx context.Context, rows []sweep.Resource, 
 		}
 		for _, b := range out.Buckets {
 			name := aws.ToString(b.Name)
-			if strings.HasPrefix(name, "conf-") {
+			if ownedName(name, rt.keepRun) {
 				items = append(items, sweepItem{kind: "bucket", id: name})
 			}
 		}
@@ -366,7 +366,7 @@ func (rt *Runtime) collectInventory(ctx context.Context, rows []sweep.Resource, 
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, collectEC2(view, rows, ghosts)...)
+		items = append(items, collectEC2(view, rows, ghosts, rt.keepRun)...)
 	}
 	return items, nil
 }
@@ -444,10 +444,10 @@ func describeEC2(ctx context.Context, c *ec2.Client) (ec2View, error) {
 }
 
 func ec2Items(view ec2View, rows []sweep.Resource) []sweepItem {
-	return collectEC2(view, rows, true)
+	return collectEC2(view, rows, true, validRun)
 }
 
-func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool) []sweepItem {
+func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool, keep func(string) bool) []sweepItem {
 	var items []sweepItem
 	seen := map[string]bool{}
 	add := func(it sweepItem) {
@@ -463,60 +463,61 @@ func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool) []sweepItem {
 			continue
 		}
 		id := aws.ToString(in.InstanceId)
-		if tagged(in.Tags) || ledgerHas(rows, "instance", id) {
+		if ownedTag(in.Tags, keep) || ledgerHas(rows, "instance", id, keep) {
 			add(sweepItem{kind: "instance", id: id})
 		}
 	}
 	for _, v := range view.volumes {
 		id := aws.ToString(v.VolumeId)
-		if ledgerHas(rows, "volume", id) {
+		if ledgerHas(rows, "volume", id, keep) || ownedTag(v.Tags, keep) {
 			add(sweepItem{kind: "volume", id: id})
 		}
 	}
 	if ghosts {
 		for _, row := range rows {
-			if row.Kind == "volume" {
+			if row.Kind == "volume" && keep(row.LedgerRunID) {
 				add(sweepItem{kind: "volume", id: row.ID})
 			}
 		}
 	}
 	for _, s := range view.snapshots {
 		id := aws.ToString(s.SnapshotId)
-		if strings.HasPrefix(aws.ToString(s.Description), "conf-") || ledgerHas(rows, "snapshot", id) {
+		desc := aws.ToString(s.Description)
+		if ownedName(desc, keep) || ledgerHas(rows, "snapshot", id, keep) {
 			add(sweepItem{kind: "snapshot", id: id})
 		}
 	}
 	for _, a := range view.addresses {
 		id := aws.ToString(a.AllocationId)
-		if ledgerHas(rows, "address", id) {
+		if ledgerHas(rows, "address", id, keep) || ownedTag(a.Tags, keep) {
 			add(sweepItem{kind: "address", id: id, assoc: aws.ToString(a.AssociationId)})
 		}
 	}
 	if ghosts {
 		for _, row := range rows {
-			if row.Kind == "address" {
+			if row.Kind == "address" && keep(row.LedgerRunID) {
 				add(sweepItem{kind: "address", id: row.ID})
 			}
 		}
 	}
 	for _, k := range view.keys {
 		name := aws.ToString(k.KeyName)
-		if strings.HasPrefix(name, "conf-") {
+		if ownedName(name, keep) {
 			add(sweepItem{kind: "key-pair", id: name})
 		}
 	}
 	for _, g := range view.groups {
-		if strings.HasPrefix(aws.ToString(g.GroupName), "conf-") {
+		if ownedName(aws.ToString(g.GroupName), keep) {
 			add(sweepItem{kind: "security-group", id: aws.ToString(g.GroupId)})
 		}
 	}
 	for _, s := range view.subnets {
-		if tagged(s.Tags) {
+		if ownedTag(s.Tags, keep) {
 			add(sweepItem{kind: "subnet", id: aws.ToString(s.SubnetId)})
 		}
 	}
 	for _, g := range view.gateways {
-		if !tagged(g.Tags) {
+		if !ownedTag(g.Tags, keep) {
 			continue
 		}
 		var vpcs []string
@@ -528,7 +529,7 @@ func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool) []sweepItem {
 		add(sweepItem{kind: "internet-gateway", id: aws.ToString(g.InternetGatewayId), vpcs: vpcs})
 	}
 	for _, v := range view.vpcs {
-		if tagged(v.Tags) {
+		if ownedTag(v.Tags, keep) {
 			add(sweepItem{kind: "vpc", id: aws.ToString(v.VpcId)})
 		}
 	}
@@ -537,18 +538,6 @@ func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool) []sweepItem {
 
 func unsupportedAction(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "InvalidAction")
-}
-
-func tagged(tags []ec2types.Tag) bool {
-	for _, t := range tags {
-		if aws.ToString(t.Key) == "vws:conformance-run" && strings.HasPrefix(aws.ToString(t.Value), "conf-") {
-			return true
-		}
-		if aws.ToString(t.Key) == "Name" && strings.HasPrefix(aws.ToString(t.Value), "conf-") {
-			return true
-		}
-	}
-	return false
 }
 
 func reportDry(items []sweepItem) error {
@@ -674,9 +663,9 @@ func deleteEC2(ctx context.Context, c *ec2.Client, items []sweepItem) error {
 	return nil
 }
 
-func ledgerHas(rows []sweep.Resource, kind, id string) bool {
+func ledgerHas(rows []sweep.Resource, kind, id string, keep func(string) bool) bool {
 	for _, r := range rows {
-		if r.Kind == kind && r.ID == id && strings.HasPrefix(r.LedgerRunID, "conf-") {
+		if r.Kind == kind && r.ID == id && keep(r.LedgerRunID) {
 			return true
 		}
 	}

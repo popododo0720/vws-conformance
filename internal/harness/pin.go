@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strings"
+	"sync"
 )
 
 type Pinned struct {
@@ -65,7 +67,7 @@ func PinEndpoint(ctx context.Context, raw string, allowed, cidrs []string) (*Pin
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(&url.URL{Scheme: u.Scheme, Host: net.JoinHostPort(host, port)})
-			pr.Out.Host = u.Host
+			pr.Out.Host = pr.In.Host
 		},
 		Transport: transport,
 	}
@@ -135,6 +137,13 @@ func ChildEnv(base []string) []string {
 		"AWS_SESSION_TOKEN": true, "AWS_SECURITY_TOKEN": true,
 		"AWS_ACCESS_KEY_ID": true, "AWS_SECRET_ACCESS_KEY": true,
 		"AWS_SHARED_CREDENTIALS_FILE": true, "AWS_CONFIG_FILE": true,
+		"AWS_CONTAINER_CREDENTIALS_FULL_URI":     true,
+		"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI": true,
+		"AWS_CONTAINER_AUTHORIZATION_TOKEN":      true,
+		"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE": true,
+		"AWS_WEB_IDENTITY_TOKEN_FILE":            true,
+		"AWS_ROLE_ARN":                           true,
+		"AWS_ROLE_SESSION_NAME":                  true,
 	}
 	var out []string
 	for _, e := range base {
@@ -144,9 +153,62 @@ func ChildEnv(base []string) []string {
 		}
 		out = append(out, e)
 	}
+	configLine := "AWS_CONFIG_FILE="
+	if path, err := childConfigFile(); err == nil {
+		configLine = "AWS_CONFIG_FILE=" + path
+	}
 	return append(out,
 		"AWS_SHARED_CREDENTIALS_FILE=/dev/null",
-		"AWS_CONFIG_FILE=/dev/null",
+		configLine,
 		"AWS_EC2_METADATA_DISABLED=true",
 	)
+}
+
+var (
+	cliConfigOnce sync.Once
+	cliConfigPath string
+	cliConfigErr  error
+)
+
+func childConfigFile() (string, error) {
+	cliConfigOnce.Do(func() {
+		f, err := os.CreateTemp("", "vws-aws-config-*")
+		if err != nil {
+			cliConfigErr = err
+			return
+		}
+		_, err = f.WriteString("[default]\ncli_follow_urlparam = false\n")
+		if err == nil {
+			err = f.Close()
+		} else {
+			_ = f.Close()
+		}
+		if err != nil {
+			cliConfigErr = err
+			return
+		}
+		cliConfigPath = f.Name()
+	})
+	return cliConfigPath, cliConfigErr
+}
+
+func CLIConfigReady(env []string) error {
+	var path string
+	for _, e := range env {
+		k, v, ok := strings.Cut(e, "=")
+		if ok && k == "AWS_CONFIG_FILE" {
+			path = v
+		}
+	}
+	if path == "" {
+		return fmt.Errorf("aws config file is unset")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("aws config: %w", err)
+	}
+	if !strings.Contains(string(b), "cli_follow_urlparam = false") {
+		return fmt.Errorf("aws config does not disable remote parameters")
+	}
+	return nil
 }
