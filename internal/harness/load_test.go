@@ -122,6 +122,42 @@ func TestRawClientIgnoresProxy(t *testing.T) {
 	}
 }
 
+func TestLoadStaysOnAllowlistedEndpoint(t *testing.T) {
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`<?xml version="1.0"?><Error><Code>NoSuchBucket</Code><Message>no</Message></Error>`))
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	configPath := dir + "/config"
+	if err := os.WriteFile(configPath, []byte("[default]\nendpoint_url = https://s3.us-east-1.amazonaws.com\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWS_CONFIG_FILE", configPath)
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", dir+"/credentials")
+	t.Setenv("AWS_ENDPOINT_URL", "https://s3.us-east-1.amazonaws.com")
+	t.Setenv("AWS_ENDPOINT_URL_S3", "https://s3.us-east-1.amazonaws.com")
+	cl, err := Load(context.Background(), Config{
+		AccessKey:       "AKIDEXAMPLE",
+		Secret:          "secret",
+		Region:          "vws-1",
+		S3Endpoint:      srv.URL,
+		AllowedHosts:    []string{"127.0.0.1"},
+		AllowedAccounts: []string{"123456789012"},
+		Target:          "local-fake",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = cl.S3.ListBuckets(context.Background(), &s3.ListBucketsInput{})
+	if hits == 0 {
+		t.Fatal("request left the allowlisted endpoint")
+	}
+}
+
 func TestLoadRefusesAWSProfile(t *testing.T) {
 	t.Setenv("AWS_PROFILE", "default")
 	_, err := Load(context.Background(), Config{

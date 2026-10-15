@@ -84,11 +84,15 @@ func refuseResolved(ctx context.Context, host string, allowed []string) ([]net.I
 
 func NewHTTPClient(allowed []string) *http.Client {
 	base := http.DefaultTransport.(*http.Transport).Clone()
+	base.Proxy = nil
 	base.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		return DialAllowed(ctx, network, addr, allowed)
 	}
 	return &http.Client{
-		Timeout:   30 * time.Second,
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 		Transport: base,
 	}
 }

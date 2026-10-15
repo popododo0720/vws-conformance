@@ -119,6 +119,9 @@ func Load(ctx context.Context, cfg Config) (*Clients, error) {
 	if cfg.AccessKey == "" || cfg.Secret == "" {
 		return nil, fmt.Errorf("VWS_CONF_ACCESS_KEY_ID and VWS_CONF_SECRET_ACCESS_KEY are required")
 	}
+	if os.Getenv("AWS_PROFILE") != "" || os.Getenv("AWS_DEFAULT_PROFILE") != "" {
+		return nil, fmt.Errorf("AWS_PROFILE is refused; set VWS_CONF_ACCESS_KEY_ID and VWS_CONF_SECRET_ACCESS_KEY")
+	}
 	_ = os.Setenv("AWS_EC2_METADATA_DISABLED", "true")
 	httpClient := NewHTTPClient(cfg.AllowedHosts)
 	awsCfg, err := config.LoadDefaultConfig(ctx,
@@ -126,6 +129,8 @@ func Load(ctx context.Context, cfg Config) (*Clients, error) {
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.Secret, cfg.Session)),
 		config.WithEC2IMDSClientEnableState(imds.ClientDisabled),
 		config.WithHTTPClient(httpClient),
+		config.WithSharedConfigFiles([]string{}),
+		config.WithSharedCredentialsFiles([]string{}),
 		config.WithRetryer(func() aws.Retryer {
 			return retry.NewStandard(func(o *retry.StandardOptions) { o.MaxAttempts = 2 })
 		}),
