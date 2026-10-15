@@ -601,6 +601,9 @@ func deleteEC2(ctx context.Context, c *ec2.Client, items []sweepItem) error {
 		var err error
 		switch item.kind {
 		case "volume":
+			_, _ = withDeadline(ctx, func(ctx context.Context) (*ec2.DetachVolumeOutput, error) {
+				return c.DetachVolume(ctx, &ec2.DetachVolumeInput{VolumeId: aws.String(item.id)})
+			})
 			_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteVolumeOutput, error) {
 				return c.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(item.id)})
 			})
