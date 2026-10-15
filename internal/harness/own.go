@@ -13,30 +13,39 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 )
 
-const runIDNameLen = 28
+const (
+	runIDNameLen     = 28
+	activityFinished = "0"
+)
 
-func ClaimRun(dir, id string) error {
+func ClaimRun(id string) error {
+	return writeActivity(id, strconv.Itoa(os.Getpid()))
+}
+
+func ReleaseRun(id string) error {
+	return writeActivity(id, activityFinished)
+}
+
+func writeActivity(id, body string) error {
 	if err := ValidateRunID(id); err != nil {
 		return err
 	}
-	path := filepath.Join(dir, "active")
-	if err := os.MkdirAll(path, 0o755); err != nil {
+	dir := activityDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("active run: %w", err)
 	}
-	body := []byte(strconv.Itoa(os.Getpid()) + "\n")
-	err := os.WriteFile(filepath.Join(path, id), body, 0o644)
+	err := os.WriteFile(filepath.Join(dir, id), []byte(body+"\n"), 0o644)
 	if err != nil {
 		return fmt.Errorf("active run: %w", err)
 	}
 	return nil
 }
 
-func ReleaseRun(dir, id string) error {
-	err := os.Remove(filepath.Join(dir, "active", id))
-	if err == nil || os.IsNotExist(err) {
-		return nil
+func activityDir() string {
+	if dir := os.Getenv("VWS_CONF_ACTIVITY_DIR"); dir != "" {
+		return dir
 	}
-	return fmt.Errorf("active run: %w", err)
+	return filepath.Join(os.TempDir(), "vws-conformance-active")
 }
 
 func (rt *Runtime) keepRun(id string) bool {
@@ -46,23 +55,27 @@ func (rt *Runtime) keepRun(id string) bool {
 	if id == rt.Cfg.RunID {
 		return true
 	}
-	return !runActive(rt.Cfg.OutDir, id)
+	return runFinished(id)
 }
 
 func validRun(id string) bool {
 	return ValidateRunID(id) == nil
 }
 
-func runActive(dir, id string) bool {
-	b, err := os.ReadFile(filepath.Join(dir, "active", id))
+func runFinished(id string) bool {
+	b, err := os.ReadFile(filepath.Join(activityDir(), id))
 	if err != nil {
 		return false
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	text := strings.TrimSpace(string(b))
+	if text == activityFinished {
+		return true
+	}
+	pid, err := strconv.Atoi(text)
 	if err != nil || pid <= 0 || pid == os.Getpid() {
 		return false
 	}
-	return processLive(pid)
+	return !processLive(pid)
 }
 
 func processLive(pid int) bool {

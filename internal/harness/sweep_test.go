@@ -123,20 +123,20 @@ func TestSweepKeepsForeignAndActiveResources(t *testing.T) {
 	const (
 		current = "conf-20261015T120000Z-abc123"
 		active  = "conf-20261015T130000Z-def456"
-		dead    = "conf-20261015T140000Z-aaa111"
+		unknown = "conf-20261015T140000Z-aaa111"
 	)
 	curName := "conf-20261015t120000z-abc123"
 	actName := "conf-20261015t130000z-def456"
-	deadName := "conf-20261015t140000z-aaa111"
+	unknownName := "conf-20261015t140000z-aaa111"
 	var mu sync.Mutex
 	buckets := map[string]bool{
-		"conf-logs": true, actName: true, deadName: true, curName: true,
+		"conf-logs": true, actName: true, unknownName: true, curName: true,
 	}
 	groups := map[string]string{
-		"sg-bare": "conf-sg", "sg-active": actName, "sg-dead": deadName,
+		"sg-bare": "conf-sg", "sg-active": actName, "sg-unknown": unknownName,
 	}
 	volumes := map[string]string{
-		"vol-active": active, "vol-dead": dead, "vol-mine": current, "vol-tagged": current,
+		"vol-active": active, "vol-unknown": unknown, "vol-mine": current, "vol-tagged": current,
 	}
 	addresses := map[string]string{
 		"eipalloc-mine": current, "eipalloc-active": active,
@@ -191,17 +191,15 @@ func TestSweepKeepsForeignAndActiveResources(t *testing.T) {
 	}))
 	defer srv.Close()
 	dir := t.TempDir()
-	lockDir := filepath.Join(dir, "active")
-	if err := os.MkdirAll(lockDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(lockDir, active), []byte("1\n"), 0o644); err != nil {
+	activity := t.TempDir()
+	t.Setenv("VWS_CONF_ACTIVITY_DIR", activity)
+	if err := os.WriteFile(filepath.Join(activity, active), []byte("1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	var lines []string
 	for _, row := range []sweep.Resource{
 		{Kind: "volume", ID: "vol-active", LedgerRunID: active},
-		{Kind: "volume", ID: "vol-dead", LedgerRunID: dead},
+		{Kind: "volume", ID: "vol-unknown", LedgerRunID: unknown},
 		{Kind: "volume", ID: "vol-mine", LedgerRunID: current},
 	} {
 		b, err := json.Marshal(row)
@@ -220,14 +218,14 @@ func TestSweepKeepsForeignAndActiveResources(t *testing.T) {
 		t.Fatalf("sweep: %v deleted %v", err, deleted)
 	}
 	wantGone := []string{
-		"bucket " + deadName, "bucket " + curName,
-		"security-group sg-dead", "volume vol-dead", "volume vol-mine", "volume vol-tagged",
+		"bucket " + curName,
+		"volume vol-mine", "volume vol-tagged",
 		"address eipalloc-mine",
 	}
 	wantKept := []string{
-		"bucket conf-logs", "bucket " + actName,
-		"security-group sg-bare", "security-group sg-active",
-		"volume vol-active", "address eipalloc-active",
+		"bucket conf-logs", "bucket " + actName, "bucket " + unknownName,
+		"security-group sg-bare", "security-group sg-active", "security-group sg-unknown",
+		"volume vol-active", "volume vol-unknown", "address eipalloc-active",
 	}
 	for _, id := range wantGone {
 		if !deleted[id] {
@@ -314,15 +312,17 @@ func TestSweepKeepsForeignRunAcrossOutDirs(t *testing.T) {
 
 func TestSweepUsesSharedActivity(t *testing.T) {
 	const (
-		mine = "conf-20261015T120000Z-abc123"
-		live = "conf-20261015T130000Z-def456"
-		dead = "conf-20261015T140000Z-aaa111"
+		mine     = "conf-20261015T120000Z-abc123"
+		live     = "conf-20261015T130000Z-def456"
+		dead     = "conf-20261015T140000Z-aaa111"
+		released = "conf-20261015T160000Z-ccc333"
 	)
 	mineName := "conf-20261015t120000z-abc123"
 	liveName := "conf-20261015t130000z-def456"
 	deadName := "conf-20261015t140000z-aaa111"
+	releasedName := "conf-20261015t160000z-ccc333"
 	var mu sync.Mutex
-	buckets := map[string]bool{mineName: true, liveName: true, deadName: true}
+	buckets := map[string]bool{mineName: true, liveName: true, deadName: true, releasedName: true}
 	deleted := map[string]bool{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete && r.URL.Path != "/" {
@@ -355,6 +355,9 @@ func TestSweepUsesSharedActivity(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(activity, dead), []byte(deadPID(t)+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(activity, released), []byte("0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	rt := runtimeAt(t, srv.URL, t.TempDir(), mine)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -364,7 +367,7 @@ func TestSweepUsesSharedActivity(t *testing.T) {
 	if deleted["bucket "+liveName] {
 		t.Fatalf("deleted a live run %v", deleted)
 	}
-	if !deleted["bucket "+deadName] || !deleted["bucket "+mineName] {
+	if !deleted["bucket "+deadName] || !deleted["bucket "+releasedName] || !deleted["bucket "+mineName] {
 		t.Fatalf("kept a finished run %v", deleted)
 	}
 }

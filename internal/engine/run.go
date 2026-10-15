@@ -145,14 +145,14 @@ func runtime(ctx context.Context, cfg harness.Config) (*harness.Runtime, error) 
 			return
 		}
 		rt := harness.NewRuntime(cfg, cl)
-		if err := harness.ClaimRun(cfg.OutDir, cfg.RunID); err != nil {
+		if err := harness.ClaimRun(cfg.RunID); err != nil {
 			gate.err = err
 			return
 		}
 		claimed := true
 		defer func() {
 			if claimed {
-				_ = harness.ReleaseRun(cfg.OutDir, cfg.RunID)
+				_ = harness.ReleaseRun(cfg.RunID)
 			}
 		}()
 		account, err := rt.Identify(ctx)
@@ -178,7 +178,7 @@ func runtime(ctx context.Context, cfg harness.Config) (*harness.Runtime, error) 
 			if err := rt.Sweep(cctx); err != nil {
 				errs = append(errs, err)
 			}
-			if err := harness.ReleaseRun(rt.Cfg.OutDir, rt.Cfg.RunID); err != nil {
+			if err := harness.ReleaseRun(rt.Cfg.RunID); err != nil {
 				errs = append(errs, err)
 			}
 			if len(errs) == 0 {
