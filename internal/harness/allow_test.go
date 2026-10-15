@@ -91,6 +91,23 @@ func TestListedAWSAddressIsRefused(t *testing.T) {
 	}
 }
 
+func TestConfiguredPrivateCIDR(t *testing.T) {
+	err := CheckEndpoint("http://100.64.1.5:8082", []string{"100.64.1.5"})
+	if err == nil || !strings.Contains(err.Error(), "refused") {
+		t.Fatalf("cgnat without cidr: %v", err)
+	}
+	if err := CheckEndpointCIDR("http://100.64.1.5:8082", []string{"100.64.1.5"}, []string{"100.64.0.0/10"}); err != nil {
+		t.Fatal(err)
+	}
+	err = CheckEndpointCIDR("http://3.4.12.4/", []string{"3.4.12.4"}, []string{"3.4.12.4/32"})
+	if err == nil || !strings.Contains(err.Error(), "refused") {
+		t.Fatalf("aws prefix inside a cidr: %v", err)
+	}
+	if err := CheckEndpoint("http://10.77.0.241:8081", []string{"10.77.0.241"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAllowLoopback(t *testing.T) {
 	if err := CheckEndpoint("http://127.0.0.1:8082", []string{"127.0.0.1"}); err != nil {
 		t.Fatal(err)

@@ -12,21 +12,25 @@ var lookupHost = func(ctx context.Context, host string) ([]net.IP, error) {
 }
 
 func ResolveEndpoint(ctx context.Context, raw string, allowed []string) error {
+	return ResolveEndpointCIDR(ctx, raw, allowed, nil)
+}
+
+func ResolveEndpointCIDR(ctx context.Context, raw string, allowed, cidrs []string) error {
 	host, err := endpointHost(raw)
 	if err != nil {
 		return err
 	}
-	if err := CheckEndpoint(raw, allowed); err != nil {
+	if err := CheckEndpointCIDR(raw, allowed, cidrs); err != nil {
 		return err
 	}
 	if net.ParseIP(host) != nil {
 		return nil
 	}
-	_, err = refuseResolved(ctx, host, allowed)
+	_, err = refuseResolved(ctx, host, cidrs)
 	return err
 }
 
-func DialAllowed(ctx context.Context, network, addr string, allowed []string) (net.Conn, error) {
+func DialAllowed(ctx context.Context, network, addr string, allowed, cidrs []string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, fmt.Errorf("endpoint address %q is refused", addr)
@@ -38,7 +42,7 @@ func DialAllowed(ctx context.Context, network, addr string, allowed []string) (n
 	if awsHost(canon) {
 		return nil, fmt.Errorf("endpoint host %q is refused", canon)
 	}
-	if ip := net.ParseIP(canon); ip != nil && !addressPermitted(ip, allowed) {
+	if ip := net.ParseIP(canon); ip != nil && !addressPermitted(ip, cidrs) {
 		return nil, fmt.Errorf("endpoint host %q is refused", canon)
 	}
 	if !hostListed(canon, allowed) {
@@ -47,7 +51,7 @@ func DialAllowed(ctx context.Context, network, addr string, allowed []string) (n
 	var ips []net.IP
 	if net.ParseIP(canon) != nil {
 		ips = []net.IP{net.ParseIP(canon)}
-	} else if ips, err = refuseResolved(ctx, canon, allowed); err != nil {
+	} else if ips, err = refuseResolved(ctx, canon, cidrs); err != nil {
 		return nil, err
 	}
 	dialer := &net.Dialer{Timeout: OpTimeout}
@@ -65,7 +69,7 @@ func DialAllowed(ctx context.Context, network, addr string, allowed []string) (n
 	return nil, last
 }
 
-func refuseResolved(ctx context.Context, host string, allowed []string) ([]net.IP, error) {
+func refuseResolved(ctx context.Context, host string, cidrs []string) ([]net.IP, error) {
 	ips, err := lookupHost(ctx, host)
 	if err != nil {
 		return nil, fmt.Errorf("endpoint host %q did not resolve: %w", host, err)
@@ -74,18 +78,18 @@ func refuseResolved(ctx context.Context, host string, allowed []string) ([]net.I
 		return nil, fmt.Errorf("endpoint host %q did not resolve", host)
 	}
 	for _, ip := range ips {
-		if !addressPermitted(ip, allowed) {
+		if !addressPermitted(ip, cidrs) {
 			return nil, fmt.Errorf("endpoint host %q resolved to %s which is refused", host, ip)
 		}
 	}
 	return ips, nil
 }
 
-func NewHTTPClient(allowed []string) *http.Client {
+func NewHTTPClient(allowed, cidrs []string) *http.Client {
 	base := http.DefaultTransport.(*http.Transport).Clone()
 	base.Proxy = nil
 	base.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		return DialAllowed(ctx, network, addr, allowed)
+		return DialAllowed(ctx, network, addr, allowed, cidrs)
 	}
 	return &http.Client{
 		Timeout: OpTimeout,

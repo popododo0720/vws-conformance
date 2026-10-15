@@ -29,7 +29,7 @@ func TestDialConnectsToResolvedIP(t *testing.T) {
 		return []net.IP{net.ParseIP("127.0.0.1")}, nil
 	}
 	t.Cleanup(func() { lookupHost = prev })
-	cl := NewHTTPClient([]string{"lab.internal"})
+	cl := NewHTTPClient([]string{"lab.internal"}, nil)
 	resp, err := cl.Get("http://lab.internal:" + port + "/x")
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +56,7 @@ func TestDialRefusesMixedAnswers(t *testing.T) {
 		return []net.IP{net.ParseIP("203.0.113.10"), net.ParseIP("127.0.0.1")}, nil
 	}
 	t.Cleanup(func() { lookupHost = prev })
-	cl := NewHTTPClient([]string{"lab.internal"})
+	cl := NewHTTPClient([]string{"lab.internal"}, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://lab.internal:"+port+"/x", nil)

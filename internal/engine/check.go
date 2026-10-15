@@ -31,7 +31,7 @@ func CheckCLI() int {
 			continue
 		}
 		n++
-		if err := harness.ResolveEndpoint(ctx, ep, cfg.AllowedHosts); err != nil {
+		if err := harness.ResolveEndpointCIDR(ctx, ep, cfg.AllowedHosts, cfg.AllowedCIDRs); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}

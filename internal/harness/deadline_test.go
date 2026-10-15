@@ -41,7 +41,7 @@ func TestWithDeadlineKeepsShorterParent(t *testing.T) {
 }
 
 func TestHTTPClientUsesOpTimeout(t *testing.T) {
-	c := NewHTTPClient([]string{"127.0.0.1"})
+	c := NewHTTPClient([]string{"127.0.0.1"}, nil)
 	if c.Timeout != OpTimeout {
 		t.Fatalf("client timeout %s", c.Timeout)
 	}

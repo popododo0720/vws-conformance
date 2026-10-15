@@ -32,6 +32,10 @@ var awsSuffixes = []string{
 }
 
 func CheckEndpoint(raw string, allowed []string) error {
+	return CheckEndpointCIDR(raw, allowed, nil)
+}
+
+func CheckEndpointCIDR(raw string, allowed, cidrs []string) error {
 	host, err := endpointHost(raw)
 	if err != nil {
 		return err
@@ -39,7 +43,7 @@ func CheckEndpoint(raw string, allowed []string) error {
 	if awsHost(host) {
 		return fmt.Errorf("endpoint host %q is refused", host)
 	}
-	if ip := net.ParseIP(host); ip != nil && !addressPermitted(ip, allowed) {
+	if ip := net.ParseIP(host); ip != nil && !addressPermitted(ip, cidrs) {
 		return fmt.Errorf("endpoint host %q is refused", host)
 	}
 	if !hostListed(host, allowed) {
@@ -105,15 +109,21 @@ func canonicalIP(ip net.IP) net.IP {
 	return ip
 }
 
-func addressPermitted(ip net.IP, allowed []string) bool {
+func addressPermitted(ip net.IP, cidrs []string) bool {
 	ip = canonicalIP(ip)
 	if ip == nil || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
 		return false
 	}
-	if ip.IsLoopback() || ip.IsPrivate() {
+	if awsPublished(ip) {
+		return false
+	}
+	if ip.IsLoopback() {
 		return true
 	}
-	return hostListed(ip.String(), allowed)
+	if v4 := ip.To4(); v4 != nil && v4.IsPrivate() {
+		return true
+	}
+	return cidrContains(ip, cidrs)
 }
 
 func CheckAccount(account string, allowed []string) error {

@@ -18,6 +18,7 @@ type Config struct {
 	S3Endpoint        string
 	IAMEndpoint       string
 	AllowedHosts      []string
+	AllowedCIDRs      []string
 	AllowedAccounts   []string
 	Target            string
 	RunID             string
@@ -40,6 +41,7 @@ func FromEnv() (Config, error) {
 		S3Endpoint:        os.Getenv("VWS_CONF_S3_ENDPOINT"),
 		IAMEndpoint:       os.Getenv("VWS_CONF_IAM_ENDPOINT"),
 		AllowedHosts:      split(os.Getenv("VWS_CONF_ALLOWED_HOSTS")),
+		AllowedCIDRs:      split(os.Getenv("VWS_CONF_ALLOWED_CIDRS")),
 		AllowedAccounts:   split(os.Getenv("VWS_CONF_ALLOWED_ACCOUNTS")),
 		Target:            envDefault("VWS_CONF_TARGET", "local-fake"),
 		RunID:             os.Getenv("VWS_CONF_RUN_ID"),
@@ -63,6 +65,9 @@ func FromEnv() (Config, error) {
 		if err := ValidateRunID(c.RunID); err != nil {
 			return Config{}, err
 		}
+	}
+	if err := validateCIDRs(c.AllowedCIDRs); err != nil {
+		return Config{}, err
 	}
 	return c, nil
 }
@@ -99,7 +104,7 @@ func (c Config) CheckEndpoints() error {
 		if ep == "" {
 			continue
 		}
-		if err := CheckEndpoint(ep, c.AllowedHosts); err != nil {
+		if err := CheckEndpointCIDR(ep, c.AllowedHosts, c.AllowedCIDRs); err != nil {
 			return err
 		}
 	}

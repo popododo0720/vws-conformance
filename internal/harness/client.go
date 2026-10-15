@@ -122,7 +122,7 @@ func Load(ctx context.Context, cfg Config) (*Clients, error) {
 		return nil, fmt.Errorf("AWS_PROFILE is refused; set VWS_CONF_ACCESS_KEY_ID and VWS_CONF_SECRET_ACCESS_KEY")
 	}
 	_ = os.Setenv("AWS_EC2_METADATA_DISABLED", "true")
-	httpClient := NewHTTPClient(cfg.AllowedHosts)
+	httpClient := NewHTTPClient(cfg.AllowedHosts, cfg.AllowedCIDRs)
 	awsCfg, err := config.LoadDefaultConfig(ctx,
 		config.WithRegion(cfg.Region),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.Secret, cfg.Session)),
