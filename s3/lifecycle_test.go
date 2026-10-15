@@ -12,6 +12,45 @@ import (
 	"github.com/popododo0720/vws-conformance/internal/harness"
 )
 
+func TestPutBucketPolicyUsesTheBucketARN(t *testing.T) {
+	var policy, bucket string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.RawQuery, "policy") {
+			b, _ := io.ReadAll(r.Body)
+			policy = string(b)
+			bucket = strings.Trim(r.URL.Path, "/")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	cfg := harness.Config{
+		AccessKey: "AKIDEXAMPLE", Secret: "secret", Region: "vws-1",
+		S3Endpoint: srv.URL, AllowedHosts: []string{"127.0.0.1"},
+		AllowedAccounts: []string{"123456789012"},
+		Target:          "local-fake", RunID: "conf-20261015T120000Z-abc123", OutDir: t.TempDir(),
+	}
+	cl, err := harness.Load(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := harness.NewRuntime(cfg, cl)
+	var chosen cases.Case
+	for _, c := range Gaps().Cases {
+		if c.ID == "S3-GAP-005" {
+			chosen = c
+		}
+	}
+	if _, err := runGaps(context.Background(), rt, chosen); err != nil {
+		t.Fatal(err)
+	}
+	want := "arn:aws:s3:::" + bucket + "/*"
+	if bucket == "" || !strings.Contains(policy, want) {
+		t.Fatalf("policy %s want %s", policy, want)
+	}
+}
+
 func TestBucketPolicyProbeNamesEffectAndPrincipal(t *testing.T) {
 	doc := bucketPolicy()
 	for _, part := range []string{`"Effect"`, `"Principal"`, `"Action"`, `"Resource"`} {

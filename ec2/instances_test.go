@@ -14,6 +14,7 @@ import (
 	awsec2 "github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 
+	"github.com/popododo0720/vws-conformance/internal/cases"
 	"github.com/popododo0720/vws-conformance/internal/harness"
 )
 
@@ -36,6 +37,77 @@ func TestDescribedInstanceUsesResponse(t *testing.T) {
 	if err != nil || got != "" {
 		t.Fatalf("http error became %q %v", got, err)
 	}
+}
+
+func TestStartWaitsUntilStopped(t *testing.T) {
+	var phase atomic.Int32
+	var startedTooSoon atomic.Bool
+	var started atomic.Bool
+	var stopping atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		vals, _ := url.ParseQuery(string(b))
+		w.Header().Set("Content-Type", "text/xml")
+		switch vals.Get("Action") {
+		case "CreateVpc":
+			_, _ = io.WriteString(w, ec2Item("CreateVpcResponse", "<vpc><vpcId>vpc-1</vpcId><state>available</state></vpc>"))
+		case "CreateSubnet":
+			inner := "<subnet><subnetId>subnet-1</subnetId><state>available</state><vpcId>vpc-1</vpcId></subnet>"
+			_, _ = io.WriteString(w, ec2Item("CreateSubnetResponse", inner))
+		case "RunInstances":
+			_, _ = io.WriteString(w, runInstanceXML("i-1"))
+		case "StopInstances":
+			phase.Store(1)
+			_, _ = io.WriteString(w, ec2Item("StopInstancesResponse", "<instancesSet/>"))
+		case "StartInstances":
+			started.Store(true)
+			if phase.Load() != 2 {
+				startedTooSoon.Store(true)
+			}
+			_, _ = io.WriteString(w, ec2Item("StartInstancesResponse", "<instancesSet/>"))
+		case "DescribeInstances":
+			state := "running"
+			if phase.Load() == 1 {
+				if stopping.Add(1) >= 3 {
+					phase.Store(2)
+				}
+				state = "stopping"
+				if phase.Load() == 2 {
+					state = "stopped"
+				}
+			} else if phase.Load() == 2 {
+				state = "stopped"
+			}
+			_, _ = io.WriteString(w, describeInstanceXML("i-1", state))
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+	cfg := harness.Config{
+		AccessKey: "AKIDEXAMPLE", Secret: "secret", Region: "vws-1",
+		EC2Endpoint: srv.URL, AllowedHosts: []string{"127.0.0.1"},
+		AllowedAccounts: []string{"123456789012"},
+		Target:          "local-fake", RunID: "conf-20261015T120000Z-abc123", OutDir: t.TempDir(),
+	}
+	cl, err := harness.Load(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := harness.NewRuntime(cfg, cl)
+	_, err = runInstances(context.Background(), rt, cases.Case{ID: "EC2-START-001"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !started.Load() || startedTooSoon.Load() {
+		t.Fatalf("started %v too soon %v stopping describes %d", started.Load(), startedTooSoon.Load(), stopping.Load())
+	}
+}
+
+func ec2Item(root, inner string) string {
+	return `<?xml version="1.0" encoding="UTF-8"?>` +
+		`<` + root + ` xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">` +
+		`<requestId>r</requestId>` + inner + `</` + root + `>`
 }
 
 func TestLaunchWaitsUntilRunning(t *testing.T) {

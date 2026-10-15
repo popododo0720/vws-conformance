@@ -385,6 +385,55 @@ func deadPID(t *testing.T) string {
 	return strconv.Itoa(pid)
 }
 
+func TestSweepReadsTheSecondBucketPage(t *testing.T) {
+	const run = "conf-20261015T120000Z-abc123"
+	owned := "conf-20261015t120000z-abc123"
+	var mu sync.Mutex
+	deleted := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete && r.URL.Path != "/" {
+			mu.Lock()
+			deleted["bucket "+strings.Trim(r.URL.Path, "/")] = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "") {
+			token := r.URL.Query().Get("continuation-token")
+			names := map[string]bool{"conf-logs": true}
+			next := "page-2"
+			if token == "page-2" {
+				names = map[string]bool{owned: true}
+				next = ""
+			}
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = io.WriteString(w, listBucketsPage(names, next))
+			return
+		}
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = io.WriteString(w, listBucketsXML(nil))
+			return
+		}
+		vals := ec2Form(r)
+		status, body := ec2Describe(vals.Get("Action"), false)
+		writeEC2(w, status, body)
+	}))
+	defer srv.Close()
+	rt := runtimeAt(t, srv.URL, t.TempDir(), run)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := rt.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !deleted["bucket "+owned] {
+		t.Fatal("owned bucket on page 2 was kept")
+	}
+	if deleted["bucket conf-logs"] {
+		t.Fatal("deleted conf-logs")
+	}
+}
+
 func TestSweepReadsTheSecondDescribePage(t *testing.T) {
 	const run = "conf-20261015T120000Z-abc123"
 	var page atomic.Int32
@@ -436,6 +485,10 @@ func TestSweepReadsTheSecondDescribePage(t *testing.T) {
 }
 
 func listBucketsXML(names map[string]bool) string {
+	return listBucketsPage(names, "")
+}
+
+func listBucketsPage(names map[string]bool, token string) string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>`)
 	b.WriteString(`<ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`)
@@ -443,7 +496,11 @@ func listBucketsXML(names map[string]bool) string {
 	for name := range names {
 		b.WriteString(`<Bucket><Name>` + name + `</Name><CreationDate>2020-01-01T00:00:00.000Z</CreationDate></Bucket>`)
 	}
-	b.WriteString(`</Buckets></ListAllMyBucketsResult>`)
+	b.WriteString(`</Buckets>`)
+	if token != "" {
+		b.WriteString(`<ContinuationToken>` + token + `</ContinuationToken>`)
+	}
+	b.WriteString(`</ListAllMyBucketsResult>`)
 	return b.String()
 }
 
