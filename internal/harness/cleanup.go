@@ -57,8 +57,23 @@ func OnSignal(sig <-chan os.Signal, cleanup func()) <-chan struct{} {
 }
 
 var process struct {
-	mu sync.Mutex
-	fn func() error
+	mu      sync.Mutex
+	fn      func() error
+	ctx     context.Context
+	cancel  context.CancelFunc
+	running bool
+	done    chan struct{}
+	err     error
+}
+
+func init() {
+	process.ctx, process.cancel = context.WithCancel(context.Background())
+}
+
+func ShutdownContext() context.Context {
+	process.mu.Lock()
+	defer process.mu.Unlock()
+	return process.ctx
 }
 
 func SetProcessCleanup(fn func() error) {
@@ -69,13 +84,33 @@ func SetProcessCleanup(fn func() error) {
 
 func runProcessCleanup() error {
 	process.mu.Lock()
+	if process.running {
+		done := process.done
+		process.mu.Unlock()
+		<-done
+		process.mu.Lock()
+		err := process.err
+		process.mu.Unlock()
+		return err
+	}
 	fn := process.fn
 	process.fn = nil
-	process.mu.Unlock()
 	if fn == nil {
+		process.mu.Unlock()
 		return nil
 	}
-	return fn()
+	done := make(chan struct{})
+	process.done = done
+	process.running = true
+	process.cancel()
+	process.mu.Unlock()
+	err := fn()
+	process.mu.Lock()
+	process.err = err
+	process.running = false
+	process.mu.Unlock()
+	close(done)
+	return err
 }
 
 func RunMain(m interface{ Run() int }, sig <-chan os.Signal, exit func(int)) int {

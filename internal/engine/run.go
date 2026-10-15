@@ -49,7 +49,7 @@ func TestGroup(t Tester, service, group string) {
 	if !cfg.Selected(service, group) {
 		t.Skip("not selected")
 	}
-	rep, err := runGroups(context.Background(), cfg, service, group)
+	rep, err := runGroups(harness.ShutdownContext(), cfg, service, group)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func Main() int {
 		fmt.Fprintln(os.Stderr, "set --service and --group, or --full")
 		return 2
 	}
-	rep, err := runGroups(context.Background(), cfg, "", "")
+	rep, err := runGroups(harness.ShutdownContext(), cfg, "", "")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
