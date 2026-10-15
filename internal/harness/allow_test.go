@@ -71,9 +71,23 @@ func TestRejectsLinkLocalEvenIfListed(t *testing.T) {
 	}
 }
 
-func TestListedPublicIPIsAllowed(t *testing.T) {
-	if err := CheckEndpoint("http://203.0.113.10:8082", []string{"203.0.113.10"}); err != nil {
-		t.Fatal(err)
+func TestListedPublicIPIsRefused(t *testing.T) {
+	err := CheckEndpoint("http://203.0.113.10:8082", []string{"203.0.113.10"})
+	if err == nil || !strings.Contains(err.Error(), "refused") {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestListedAWSAddressIsRefused(t *testing.T) {
+	for _, raw := range []string{"http://3.4.12.4/", "http://[2406:daba:f000::1]/"} {
+		host := "3.4.12.4"
+		if strings.Contains(raw, "2406") {
+			host = "2406:daba:f000::1"
+		}
+		err := CheckEndpoint(raw, []string{host})
+		if err == nil || !strings.Contains(err.Error(), "refused") {
+			t.Fatalf("%s: %v", raw, err)
+		}
 	}
 }
 
