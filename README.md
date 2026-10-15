@@ -34,6 +34,8 @@ go run ./cmd/conf-run --service s3 --group buckets
 
 Instance launches use `t2.nano`. Volumes are 1 GiB.
 
+`scripts/cli/s3.sh` runs from the module root. It refuses `AWS_PROFILE` and calls `go run ./cmd/conf-run check-endpoint` before `aws`. The check resolves each configured endpoint and does not call the service. The script then exports the `VWS_CONF_*` keys and points the AWS CLI config files at `/dev/null`.
+
 ## Local fake
 
 Build console-api with `-backend fake -iam fake`. Then:

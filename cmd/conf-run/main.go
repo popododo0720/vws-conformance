@@ -9,5 +9,8 @@ import (
 
 func main() {
 	flag.Parse()
+	if flag.Arg(0) == "check-endpoint" {
+		os.Exit(engine.CheckCLI())
+	}
 	os.Exit(engine.Main())
 }
