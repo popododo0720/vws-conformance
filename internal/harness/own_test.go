@@ -14,6 +14,40 @@ import (
 	"time"
 )
 
+func TestAllowMutationVerifiesSelfAndPeers(t *testing.T) {
+	keep := func(id string) bool { return id == "self" || id == "peer" }
+	rows := []struct {
+		name    string
+		created bool
+		owners  []string
+		peers   [][]string
+		want    bool
+	}{
+		{name: "created with no peers", created: true, want: true},
+		{
+			name: "created still checks a foreign peer", created: true, owners: []string{"self"},
+			peers: [][]string{{"other"}}, want: false,
+		},
+		{name: "owned and unattached", owners: []string{"self"}, want: true},
+		{name: "empty owners", want: false},
+		{name: "blank owner", owners: []string{""}, want: false},
+		{name: "owned with a kept peer", owners: []string{"self"}, peers: [][]string{{"peer"}}, want: true},
+		{name: "owned with an empty peer", owners: []string{"self"}, peers: [][]string{{}}, want: false},
+		{name: "owned with a foreign peer", owners: []string{"self"}, peers: [][]string{{"other"}}, want: false},
+		{name: "second peer unverifiable", owners: []string{"self"}, peers: [][]string{{"peer"}, nil}, want: false},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			if got := AllowMutation(row.created, row.owners, row.peers, keep); got != row.want {
+				t.Fatalf("got %v want %v", got, row.want)
+			}
+		})
+	}
+	if AllowMutation(false, []string{"self"}, nil, nil) {
+		t.Fatal("nil keep mutated")
+	}
+}
+
 func TestOwnRegistersDeletion(t *testing.T) {
 	rt := NewRuntime(Config{RunID: "conf-20261015T120000Z-abc123", OutDir: t.TempDir()}, nil)
 	hit := false

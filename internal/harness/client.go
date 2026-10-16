@@ -224,6 +224,13 @@ func (rt *Runtime) Call(ctx context.Context, fn func(context.Context) error) (ca
 	return o, nil
 }
 
+// SetupReady reports that Call returned an HTTP success rather than an API error.
+// Call turns an API error into an outcome with a nil Go error, so a follow-on
+// detach or disassociate has to check the outcome before it replaces that failure.
+func SetupReady(o cases.Outcome, err error) bool {
+	return err == nil && o.Code == "" && o.HTTP >= 200 && o.HTTP < 300
+}
+
 func UnsupportedParameter(err error) bool {
 	var ae smithy.APIError
 	if !errors.As(err, &ae) {

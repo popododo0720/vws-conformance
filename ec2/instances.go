@@ -281,13 +281,16 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 			return callOut, wrapErr("runInstances", callErr)
 		}
 	case "EC2-RUN-110":
-		{
-			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.RunInstances(ctx, LaunchRequest(rt, subnet, ""))
-				return wrapErr("runInstances", err)
-			})
-			return callOut, wrapErr("runInstances", callErr)
+		var launched *awsec2.RunInstancesOutput
+		callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+			var err error
+			launched, err = api.RunInstances(ctx, LaunchRequest(rt, subnet, ""))
+			return wrapErr("runInstances", err)
+		})
+		if err := keepLaunched(rt, api, launched, "run110"); err != nil {
+			return callOut, wrapErr("runInstances", err)
 		}
+		return callOut, wrapErr("runInstances", callErr)
 	case "EC2-RUN-201":
 		token := rt.Token("idem")
 		first, err := api.RunInstances(ctx, LaunchRequest(rt, subnet, token))
@@ -295,8 +298,8 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 			return cases.Outcome{}, fmt.Errorf("first run: %w", err)
 		}
 		id1 := aws.ToString(first.Instances[0].InstanceId)
-		if err := rt.Track("instance", id1, rt.Name("idem")); err != nil {
-			return cases.Outcome{}, wrapErr("runInstances", err)
+		if err := rememberInstance(rt, api, id1, "idem"); err != nil {
+			return cases.Outcome{}, err
 		}
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
 			_, err := api.RunInstances(ctx, LaunchRequest(rt, subnet, token))
@@ -320,17 +323,24 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 	case "EC2-RUN-202":
 		token := rt.Token("mismatch")
 		in := LaunchRequest(rt, subnet, token)
-		if _, err := api.RunInstances(ctx, in); err != nil {
+		first, err := api.RunInstances(ctx, in)
+		if err != nil {
 			return cases.Outcome{}, fmt.Errorf("first run: %w", err)
 		}
-		in.ImageId = aws.String("ami-0000000000000001")
-		{
-			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.RunInstances(ctx, in)
-				return wrapErr("runInstances", err)
-			})
-			return callOut, wrapErr("runInstances", callErr)
+		if err := rememberInstance(rt, api, aws.ToString(first.Instances[0].InstanceId), "i"); err != nil {
+			return cases.Outcome{}, err
 		}
+		in.ImageId = aws.String("ami-0000000000000001")
+		var mismatched *awsec2.RunInstancesOutput
+		callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+			var err error
+			mismatched, err = api.RunInstances(ctx, in)
+			return wrapErr("runInstances", err)
+		})
+		if err := keepLaunched(rt, api, mismatched, "mismatch"); err != nil {
+			return callOut, wrapErr("runInstances", err)
+		}
+		return callOut, wrapErr("runInstances", callErr)
 	case "EC2-DI-201":
 		if _, err := launch(ctx, rt, api, subnet, rt.Token("filt")); err != nil {
 			return cases.Outcome{}, err
@@ -393,6 +403,27 @@ func runOne(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, subnet
 		})
 	}
 	return o, wrapErr("runOne", err)
+}
+
+func keepLaunched(rt *harness.Runtime, api *awsec2.Client, out *awsec2.RunInstancesOutput, suffix string) error {
+	if out == nil || len(out.Instances) == 0 {
+		return nil
+	}
+	return rememberInstance(rt, api, aws.ToString(out.Instances[0].InstanceId), suffix)
+}
+
+func rememberInstance(rt *harness.Runtime, api *awsec2.Client, id, suffix string) error {
+	if id == "" {
+		return fmt.Errorf("run: empty id")
+	}
+	if err := rt.Track("instance", id, rt.Name(suffix)); err != nil {
+		return wrapErr("rememberInstance", err)
+	}
+	rt.Cleanup(func(ctx context.Context) error {
+		_, err := api.TerminateInstances(ctx, &awsec2.TerminateInstancesInput{InstanceIds: []string{id}})
+		return harness.IgnoreCleanup(err)
+	})
+	return nil
 }
 
 func launch(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, subnet, token string) (string, error) {

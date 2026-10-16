@@ -248,7 +248,7 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 			})
 			return wrapErr("runVol", err)
 		})
-		if c.ID == "EBS-VOL-003" || err != nil {
+		if c.ID == "EBS-VOL-003" || !harness.SetupReady(o, err) {
 			return o, wrapErr("runVol", err)
 		}
 		if c.ID == "EBS-VOL-006" {

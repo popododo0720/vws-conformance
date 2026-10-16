@@ -197,7 +197,7 @@ func runAddr(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 			return wrapErr("runAddr", err)
 		})
 		o.Fields["id"] = assoc
-		if c.ID == "EC2-EIP-002" || err != nil {
+		if c.ID == "EC2-EIP-002" || !harness.SetupReady(o, err) || assoc == "" {
 			return o, wrapErr("runAddr", err)
 		}
 		{

@@ -20,21 +20,22 @@ const (
 )
 
 type mutationRow struct {
-	name      string
-	instances string
-	volumes   string
-	addresses string
-	snaps     string
-	keys      string
-	groups    string
-	subnets   string
-	vpcs      string
-	gateways  string
-	bucket    string
-	active    string
-	forbid    []string
-	require   []string
-	wantErr   bool
+	name       string
+	instances  string
+	volumes    string
+	addresses  string
+	snaps      string
+	keys       string
+	groups     string
+	subnets    string
+	vpcs       string
+	gateways   string
+	bucket     string
+	active     string
+	forbid     []string
+	require    []string
+	dependency []string
+	wantErr    bool
 }
 
 func TestMutationStopsWhenOwnershipIsUnverified(t *testing.T) {
@@ -134,9 +135,30 @@ func mutationRows() []mutationRow {
 			forbid:    []string{"TerminateInstances", "DetachVolume", "DeleteVolume"},
 		},
 		{
+			name: "preserved instance does not retry the subnet", wantErr: true,
+			instances:  instItem("i-peer", mutationRun, "running"),
+			volumes:    volItem("vol-foreign", foreignRun, "i-peer", "attached"),
+			subnets:    subnetItem("subnet-peer", mutationRun),
+			dependency: []string{"DeleteSubnet"},
+			forbid:     []string{"TerminateInstances"},
+		},
+		{
 			name:      "instance with no attachment",
 			instances: instItem("i-peer", mutationRun, "running"),
 			require:   []string{"TerminateInstances"},
+		},
+		{
+			name:      "root volume does not block instance termination",
+			instances: instItem("i-peer", mutationRun, "running"),
+			volumes:   volItemTerm("vol-root", "", "i-peer", "attached", "true"),
+			require:   []string{"TerminateInstances"},
+			forbid:    []string{"DeleteVolume", "DetachVolume"},
+		},
+		{
+			name: "untagged data volume blocks instance termination", wantErr: true,
+			instances: instItem("i-peer", mutationRun, "running"),
+			volumes:   volItemTerm("vol-data", "", "i-peer", "attached", "false"),
+			forbid:    []string{"TerminateInstances", "DeleteVolume", "DetachVolume"},
 		},
 		{
 			name:    "snapshot this run owns",
@@ -210,6 +232,11 @@ func runMutationRow(t *testing.T, row mutationRow) {
 		if isMutation(action) {
 			seen[action]++
 		}
+		if listed(row.dependency, action) {
+			mu.Unlock()
+			writeEC2(w, http.StatusBadRequest, ec2Err("DependencyViolation", "still in use"))
+			return
+		}
 		if isTerminal(action) {
 			cleared = true
 		}
@@ -232,6 +259,11 @@ func runMutationRow(t *testing.T, row mutationRow) {
 	if row.wantErr {
 		if err == nil || !strings.Contains(err.Error(), "preserve") {
 			t.Fatalf("err %v actions %v", err, seen)
+		}
+		for action, n := range seen {
+			if n > 1 {
+				t.Fatalf("retried %s %d times, actions %v", action, n, seen)
+			}
 		}
 	} else if err != nil {
 		t.Fatalf("err %v actions %v", err, seen)
@@ -314,6 +346,15 @@ func mutationDescribe(action string, row mutationRow, empty bool) (int, string) 
 	}
 }
 
+func listed(items []string, action string) bool {
+	for _, item := range items {
+		if item == action {
+			return true
+		}
+	}
+	return false
+}
+
 func isMutation(action string) bool {
 	switch action {
 	case "DetachVolume", "DeleteVolume", "DisassociateAddress", "ReleaseAddress",
@@ -333,6 +374,15 @@ func isTerminal(action string) bool {
 	default:
 		return false
 	}
+}
+
+func volItemTerm(id, owner, inst, state, del string) string {
+	item := volItem(id, owner, inst, state)
+	if del == "" {
+		return item
+	}
+	return strings.Replace(item, "</status></item></attachmentSet>",
+		"</status><deleteOnTermination>"+del+"</deleteOnTermination></item></attachmentSet>", 1)
 }
 
 func volItem(id, owner, inst, state string) string {

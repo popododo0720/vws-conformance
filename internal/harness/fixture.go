@@ -342,6 +342,22 @@ func readLedger(dir string) ([]sweep.Resource, error) {
 	return out, nil
 }
 
+func (rt *Runtime) ClaimBucket(ctx context.Context, name string, created bool) error {
+	var owners []string
+	if !created {
+		tags, err := rt.bucketTags(ctx, name)
+		if err != nil {
+			return err
+		}
+		owners = tagOwners(tags)
+	}
+	keep := func(id string) bool { return id == rt.Cfg.RunID }
+	if !AllowMutation(created, owners, nil, keep) {
+		return fmt.Errorf("preserve bucket %s", name)
+	}
+	return nil
+}
+
 func (rt *Runtime) bucketTags(ctx context.Context, name string) ([]ec2types.Tag, error) {
 	out, err := withDeadline(ctx, func(ctx context.Context) (*s3.GetBucketTaggingOutput, error) {
 		return rt.Clients.S3.GetBucketTagging(ctx, &s3.GetBucketTaggingInput{Bucket: aws.String(name)})
@@ -460,6 +476,7 @@ type sweepItem struct {
 	assoc  string
 	vpcs   []string
 	owners []string
+	peers  [][]string
 }
 
 type ec2View struct {
@@ -679,6 +696,27 @@ func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool, keep func(stri
 	var items []sweepItem
 	seen := map[string]int{}
 	blocked := map[string]bool{}
+	instSeen := map[string]bool{}
+	instOwners := map[string][]string{}
+	for _, in := range view.instances {
+		id := aws.ToString(in.InstanceId)
+		if id == "" {
+			continue
+		}
+		instSeen[id] = true
+		instOwners[id] = tagOwners(in.Tags)
+	}
+	vpcSeen := map[string]bool{}
+	vpcOwners := map[string][]string{}
+	for _, v := range view.vpcs {
+		id := aws.ToString(v.VpcId)
+		if id == "" {
+			continue
+		}
+		vpcSeen[id] = true
+		vpcOwners[id] = tagOwners(v.Tags)
+	}
+	instPeers := instanceVolumePeers(view.volumes)
 	add := func(it sweepItem) {
 		key := it.kind + " " + it.id
 		if it.id == "" {
@@ -691,6 +729,9 @@ func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool, keep func(stri
 			}
 			if len(items[i].vpcs) == 0 {
 				items[i].vpcs = it.vpcs
+			}
+			if len(items[i].peers) == 0 {
+				items[i].peers = it.peers
 			}
 			return
 		}
@@ -706,7 +747,11 @@ func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool, keep func(stri
 			continue
 		}
 		if ownedTag(in.Tags, keep) || ledgerHas(rows, "instance", id, keep, scope) {
-			add(sweepItem{kind: "instance", id: id, owners: resourceOwners(in.Tags, rows, "instance", id, scope)})
+			add(sweepItem{
+				kind: "instance", id: id,
+				owners: resourceOwners(in.Tags, rows, "instance", id, scope),
+				peers:  instPeers[id],
+			})
 		}
 	}
 	for _, v := range view.volumes {
@@ -716,7 +761,11 @@ func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool, keep func(stri
 			continue
 		}
 		if ledgerHas(rows, "volume", id, keep, scope) || ownedTag(v.Tags, keep) {
-			add(sweepItem{kind: "volume", id: id, owners: resourceOwners(v.Tags, rows, "volume", id, scope)})
+			add(sweepItem{
+				kind: "volume", id: id,
+				owners: resourceOwners(v.Tags, rows, "volume", id, scope),
+				peers:  volumePeers(v, instSeen, instOwners),
+			})
 		}
 	}
 	if ghosts {
@@ -751,6 +800,7 @@ func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool, keep func(stri
 				id:     id,
 				assoc:  aws.ToString(a.AssociationId),
 				owners: resourceOwners(a.Tags, rows, "address", id, scope),
+				peers:  addressPeers(a, instSeen, instOwners),
 			})
 		}
 	}
@@ -806,6 +856,7 @@ func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool, keep func(stri
 			id:     aws.ToString(g.InternetGatewayId),
 			vpcs:   vpcs,
 			owners: tagOwners(g.Tags),
+			peers:  gatewayPeers(g, vpcSeen, vpcOwners),
 		})
 	}
 	for _, v := range view.vpcs {
@@ -854,19 +905,105 @@ func reportDry(items []sweepItem) error {
 	return nil
 }
 
+func peerGroup(id string, seen map[string]bool, owners map[string][]string) []string {
+	if id == "" || !seen[id] {
+		return []string{}
+	}
+	return append([]string{}, owners[id]...)
+}
+
+func volumePeers(v ec2types.Volume, seen map[string]bool, owners map[string][]string) [][]string {
+	var peers [][]string
+	for _, a := range v.Attachments {
+		if a.State == ec2types.VolumeAttachmentStateDetached {
+			continue
+		}
+		inst := aws.ToString(a.InstanceId)
+		if inst == "" {
+			continue
+		}
+		peers = append(peers, peerGroup(inst, seen, owners))
+	}
+	return peers
+}
+
+func addressPeers(a ec2types.Address, seen map[string]bool, owners map[string][]string) [][]string {
+	inst := aws.ToString(a.InstanceId)
+	if aws.ToString(a.AssociationId) == "" && inst == "" {
+		return nil
+	}
+	return [][]string{peerGroup(inst, seen, owners)}
+}
+
+func gatewayPeers(g ec2types.InternetGateway, seen map[string]bool, owners map[string][]string) [][]string {
+	var peers [][]string
+	for _, a := range g.Attachments {
+		vpc := aws.ToString(a.VpcId)
+		if vpc == "" {
+			continue
+		}
+		peers = append(peers, peerGroup(vpc, seen, owners))
+	}
+	return peers
+}
+
+func instanceVolumePeers(volumes []ec2types.Volume) map[string][][]string {
+	out := map[string][][]string{}
+	for _, v := range volumes {
+		owners := tagOwners(v.Tags)
+		for _, a := range v.Attachments {
+			if a.State == ec2types.VolumeAttachmentStateDetached {
+				continue
+			}
+			inst := aws.ToString(a.InstanceId)
+			if inst == "" {
+				continue
+			}
+			if len(owners) == 0 {
+				// DeleteOnTermination marks the instance's own device. AWS deletes
+				// that volume with the instance, and it has no conformance owner.
+				if aws.ToBool(a.DeleteOnTermination) {
+					continue
+				}
+				out[inst] = append(out[inst], []string{})
+				continue
+			}
+			out[inst] = append(out[inst], append([]string{}, owners...))
+		}
+	}
+	return out
+}
+
 func (rt *Runtime) deleteItems(ctx context.Context, items []sweepItem) error {
+	var safe []sweepItem
+	var held []string
 	for _, item := range items {
+		if AllowMutation(false, item.owners, item.peers, rt.keepRun) {
+			safe = append(safe, item)
+			continue
+		}
+		held = append(held, item.kind+" "+item.id)
+	}
+	var safeErr error
+	for _, item := range safe {
 		if item.kind != "bucket" || rt.Clients == nil || rt.Clients.S3 == nil {
 			continue
 		}
 		if err := emptyAndDelete(ctx, rt.Clients.S3, item.id); err != nil {
-			return err
+			safeErr = err
+			break
 		}
 	}
-	if rt.Clients == nil || rt.Clients.EC2 == nil {
-		return nil
+	if safeErr == nil && rt.Clients != nil && rt.Clients.EC2 != nil {
+		safeErr = deleteEC2(ctx, rt, safe)
 	}
-	return deleteEC2(ctx, rt, items)
+	if len(held) > 0 {
+		if safeErr != nil && !retryableDelete(safeErr) {
+			return safeErr
+		}
+		return fmt.Errorf("preserve %s", strings.Join(held, ", "))
+	}
+	return safeErr
 }
 
 func deleteEC2(ctx context.Context, rt *Runtime, items []sweepItem) error {

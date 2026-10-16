@@ -228,6 +228,35 @@ func runOwners(name string) []string {
 	return []string{id}
 }
 
+// AllowMutation is the cleanup-ownership rule. A resource is created, written,
+// detached, disassociated, or deleted only when this run created it, or its
+// ownership and every attachment peer's ownership are independently verified.
+// Unverifiable means preserve. A nil peer list means there is no attachment.
+// An empty peer group means that attachment's owner could not be verified.
+func AllowMutation(created bool, owners []string, peers [][]string, keep func(string) bool) bool {
+	if !created && !ownersKept(owners, keep) {
+		return false
+	}
+	for _, peer := range peers {
+		if !ownersKept(peer, keep) {
+			return false
+		}
+	}
+	return true
+}
+
+func ownersKept(owners []string, keep func(string) bool) bool {
+	if len(owners) == 0 || keep == nil {
+		return false
+	}
+	for _, id := range owners {
+		if id == "" || !keep(id) {
+			return false
+		}
+	}
+	return true
+}
+
 func tagOwners(tags []ec2types.Tag) []string {
 	var owners []string
 	for _, tag := range tags {

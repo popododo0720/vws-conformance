@@ -49,7 +49,11 @@ func SigV4() bind.Group {
 
 func ownBucket(ctx context.Context, rt *harness.Runtime, name string) error {
 	_, err := rt.Clients.S3.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(name)})
+	created := err == nil
 	if err != nil && !strings.Contains(err.Error(), "BucketAlready") {
+		return fmt.Errorf("bucket: %w", err)
+	}
+	if err := rt.ClaimBucket(ctx, name, created); err != nil {
 		return fmt.Errorf("bucket: %w", err)
 	}
 	rt.Cleanup(func(ctx context.Context) error {

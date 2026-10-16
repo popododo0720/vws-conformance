@@ -111,12 +111,12 @@ func ignoreNoSuch(err error) error {
 }
 
 func createFresh(ctx context.Context, rt *harness.Runtime, api *s3.Client, name string) error {
-	if err := rt.Track("bucket", name, name); err != nil {
-		return wrapErr("createFresh", err)
-	}
 	_, err := api.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(name)})
 	if err != nil {
 		return fmt.Errorf("create bucket %s: %w", name, err)
+	}
+	if !harness.AllowMutation(true, nil, nil, func(string) bool { return false }) {
+		return fmt.Errorf("preserve bucket %s", name)
 	}
 	rt.Cleanup(func(ctx context.Context) error {
 		if err := deleteAllObjects(ctx, api, name); err != nil {
@@ -125,5 +125,8 @@ func createFresh(ctx context.Context, rt *harness.Runtime, api *s3.Client, name 
 		_, err := api.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(name)})
 		return ignoreNoSuch(err)
 	})
+	if err := rt.Track("bucket", name, name); err != nil {
+		return wrapErr("createFresh", err)
+	}
 	return nil
 }
