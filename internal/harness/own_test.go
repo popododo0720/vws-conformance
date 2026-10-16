@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -57,6 +58,26 @@ func TestReleaseRunLeavesALiveHolder(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(body) != "1\n" {
+		t.Fatalf("marker %q", body)
+	}
+}
+
+func TestClaimRunReclaimsADeadHolder(t *testing.T) {
+	const id = "conf-20261015T180000Z-eee555"
+	dir := t.TempDir()
+	t.Setenv("VWS_CONF_ACTIVITY_DIR", dir)
+	path := filepath.Join(dir, id)
+	if err := os.WriteFile(path, []byte(deadPID(t)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ClaimRun(id); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != strconv.Itoa(os.Getpid())+"\n" {
 		t.Fatalf("marker %q", body)
 	}
 }

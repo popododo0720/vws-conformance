@@ -19,10 +19,51 @@ const (
 )
 
 func ClaimRun(id string) error {
-	return writeActivity(id, strconv.Itoa(os.Getpid()))
+	if err := ValidateRunID(id); err != nil {
+		return err
+	}
+	dir := activityDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("active run: %w", err)
+	}
+	path := filepath.Join(dir, id)
+	for range 3 {
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err == nil {
+			_, werr := f.Write([]byte(strconv.Itoa(os.Getpid()) + "\n"))
+			cerr := f.Close()
+			if werr != nil || cerr != nil {
+				_ = os.Remove(path)
+				return fmt.Errorf("active run: %w", errors.Join(werr, cerr))
+			}
+			return nil
+		}
+		if !os.IsExist(err) {
+			return fmt.Errorf("active run: %w", err)
+		}
+		pid, held := readActivityPID(path)
+		if held && pid == os.Getpid() {
+			return nil
+		}
+		if held && processLive(pid) {
+			return fmt.Errorf("active run %s is held by pid %d", id, pid)
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("active run: %w", err)
+		}
+	}
+	return fmt.Errorf("active run %s: claim raced", id)
 }
 
 func ReleaseRun(id string) error {
+	if err := ValidateRunID(id); err != nil {
+		return err
+	}
+	path := filepath.Join(activityDir(), id)
+	pid, held := readActivityPID(path)
+	if held && pid != os.Getpid() && processLive(pid) {
+		return fmt.Errorf("active run %s is held by pid %d", id, pid)
+	}
 	return writeActivity(id, activityFinished)
 }
 
@@ -52,10 +93,33 @@ func (rt *Runtime) keepRun(id string) bool {
 	if ValidateRunID(id) != nil {
 		return false
 	}
+	if liveForeign(id) {
+		return false
+	}
 	if id == rt.Cfg.RunID {
 		return true
 	}
 	return runFinished(id)
+}
+
+func liveForeign(id string) bool {
+	pid, held := readActivityPID(filepath.Join(activityDir(), id))
+	if !held || pid == os.Getpid() {
+		return false
+	}
+	return processLive(pid)
+}
+
+func readActivityPID(path string) (int, bool) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || pid <= 0 {
+		return 0, false
+	}
+	return pid, true
 }
 
 func validRun(id string) bool {
@@ -67,12 +131,11 @@ func runFinished(id string) bool {
 	if err != nil {
 		return false
 	}
-	text := strings.TrimSpace(string(b))
-	if text == activityFinished {
+	if strings.TrimSpace(string(b)) == activityFinished {
 		return true
 	}
-	pid, err := strconv.Atoi(text)
-	if err != nil || pid <= 0 || pid == os.Getpid() {
+	pid, held := readActivityPID(filepath.Join(activityDir(), id))
+	if !held || pid == os.Getpid() {
 		return false
 	}
 	return !processLive(pid)
