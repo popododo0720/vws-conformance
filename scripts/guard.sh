@@ -25,7 +25,37 @@ if grep -R -n -E 'AKIA[0-9A-Z]{16}' --include='*.go' --include='*.yml' --include
   fail "possible access key"
 fi
 
-if grep -R -n -P '[\x{AC00}-\x{D7A3}]' --include='*.go' --include='*.md' --include='*.yml' --include='*.sh' .; then
+allowlist=.github/english-allowlist
+if [ ! -f "$allowlist" ]; then
+  allowlist=/dev/null
+fi
+allowed() {
+  path=$1
+  path=${path#./}
+  while read -r glob _; do
+    case $glob in
+      ''|'#'*) continue ;;
+    esac
+    case $path in
+      $glob) return 0 ;;
+    esac
+  done < "$allowlist"
+  return 1
+}
+hits=$(mktemp)
+trap 'rm -f "$hits"' EXIT
+grep -R -n -P '[\x{AC00}-\x{D7A3}]' --include='*.go' --include='*.md' --include='*.yml' --include='*.sh' . >"$hits" || true
+bad=0
+while IFS= read -r line; do
+  [ -n "$line" ] || continue
+  file=${line%%:*}
+  if allowed "$file"; then
+    continue
+  fi
+  printf '%s\n' "$line"
+  bad=1
+done < "$hits"
+if [ "$bad" -ne 0 ]; then
   fail "non-English text"
 fi
 
