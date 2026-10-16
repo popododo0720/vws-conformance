@@ -40,6 +40,10 @@ func TestTerminateCaseChecksCurrentPeers(t *testing.T) {
 				"<vpc><vpcId>vpc-1</vpcId><state>available</state><cidrBlock>10.0.0.0/16</cidrBlock></vpc>")); writeErr != nil {
 				panic(writeErr)
 			}
+		case "DescribeVpcs":
+			if _, writeErr := io.WriteString(w, ec2Item("DescribeVpcsResponse", ownedVpcSet())); writeErr != nil {
+				panic(writeErr)
+			}
 		case "CreateSubnet":
 			if _, writeErr := io.WriteString(w, ec2Item("CreateSubnetResponse",
 				"<subnet><subnetId>subnet-1</subnetId><vpcId>vpc-1</vpcId><state>available</state>"+

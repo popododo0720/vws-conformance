@@ -120,7 +120,10 @@ func bucketLocation(rt *harness.Runtime) *types.CreateBucketConfiguration {
 }
 
 func createFresh(ctx context.Context, rt *harness.Runtime, api *s3.Client, name string) error {
-	_, err := rt.S3CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(name)})
+	_, err := rt.S3CreateBucket(ctx, &s3.CreateBucketInput{
+		Bucket:                    aws.String(name),
+		CreateBucketConfiguration: bucketLocation(rt),
+	})
 	if err != nil {
 		return fmt.Errorf("create bucket %s: %w", name, err)
 	}

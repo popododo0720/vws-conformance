@@ -148,6 +148,13 @@ func netReply(action string) (int, string) {
 			`<cidrBlock>10.0.0.0/16</cidrBlock><ownerId>123456789012</ownerId>` +
 			`<isDefault>false</isDefault></vpc></CreateVpcResponse>`
 		return 200, body
+	case "DescribeVpcs":
+		body := `<?xml version="1.0" encoding="UTF-8"?><DescribeVpcsResponse ` + ns + `>` +
+			`<requestId>r</requestId><vpcSet><item><vpcId>vpc-1</vpcId><state>available</state>` +
+			`<cidrBlock>10.0.0.0/16</cidrBlock>` +
+			`<tagSet><item><key>vws:conformance-run</key><value>conf-20261015T120000Z-abc123</value></item></tagSet>` +
+			`</item></vpcSet></DescribeVpcsResponse>`
+		return 200, body
 	case "CreateSubnet":
 		body := `<?xml version="1.0" encoding="UTF-8"?><CreateSubnetResponse ` + ns + `>` +
 			`<requestId>r</requestId><subnet><subnetId>subnet-1</subnetId><vpcId>vpc-1</vpcId>` +

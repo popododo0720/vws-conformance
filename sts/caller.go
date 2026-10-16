@@ -73,7 +73,7 @@ func run(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcome,
 	case "STS-AR-101":
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.AssumeRole(ctx, &awssts.AssumeRoleInput{
+				_, err := rt.STSAssumeRole(ctx, &awssts.AssumeRoleInput{
 					RoleArn:         aws.String("arn:aws:iam::123456789012:role/conf"),
 					RoleSessionName: aws.String("s"), DurationSeconds: aws.Int32(60),
 				})

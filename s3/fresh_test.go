@@ -60,7 +60,7 @@ func TestExistingBucketIsNotDeleted(t *testing.T) {
 			spec = c
 		}
 	}
-	if _, err := runBuckets(context.Background(), rt, spec); err != nil {
+	if _, err := runBuckets(context.Background(), rt, spec); err != nil && !strings.Contains(err.Error(), "preserve") {
 		t.Fatal(err)
 	}
 	if err := rt.Clean.Run(context.Background()); err != nil && !strings.Contains(err.Error(), "preserve") {

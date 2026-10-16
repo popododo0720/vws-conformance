@@ -104,7 +104,7 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 		in.TagSpecifications = rt.TagSpec(types.ResourceTypeVolume)
 		var id, size string
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
-			out, err := api.CreateVolume(ctx, in)
+			out, err := rt.EC2CreateVolume(ctx, in)
 			if err == nil {
 				id = aws.ToString(out.VolumeId)
 				size = fmt.Sprint(aws.ToInt32(out.Size))
@@ -143,7 +143,7 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.ModifyVolume(ctx, &awsec2.ModifyVolumeInput{VolumeId: aws.String(id), Size: aws.Int32(2)})
+				_, err := rt.EC2ModifyVolume(ctx, &awsec2.ModifyVolumeInput{VolumeId: aws.String(id), Size: aws.Int32(2)})
 				return wrapErr("runVol", err)
 			})
 			return callOut, wrapErr("runVol", callErr)
@@ -184,7 +184,7 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 				case "EBS-VOL-105":
 					_, err = rt.EC2AttachVolume(ctx, id, inst, "/dev/sdf")
 				case "EBS-VOL-106":
-					_, err = api.ModifyVolume(ctx, &awsec2.ModifyVolumeInput{VolumeId: aws.String(id), Size: aws.Int32(2)})
+					_, err = rt.EC2ModifyVolume(ctx, &awsec2.ModifyVolumeInput{VolumeId: aws.String(id), Size: aws.Int32(2)})
 				case "EBS-VOL-107":
 					err = rt.EC2DetachVolume(ctx, id, "", "")
 				default:
@@ -198,7 +198,7 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 		in := VolumeRequest("vws-1a", 0)
 		var id string
 		callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-			out, err := api.CreateVolume(ctx, in)
+			out, err := rt.EC2CreateVolume(ctx, in)
 			if err == nil && out != nil {
 				id = aws.ToString(out.VolumeId)
 			}
@@ -222,7 +222,7 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 		if c.ID == "EBS-VOL-006" {
 			instToken, volToken = "detach", "detach"
 		}
-		run, err := api.RunInstances(ctx, &awsec2.RunInstancesInput{
+		run, err := rt.EC2RunInstances(ctx, &awsec2.RunInstancesInput{
 			ImageId: aws.String("ami-0123456789abcdef0"), InstanceType: types.InstanceType(harness.InstanceType),
 			MinCount: aws.Int32(1), MaxCount: aws.Int32(1), SubnetId: aws.String(subnet),
 			ClientToken: aws.String(rt.Token(instToken)), TagSpecifications: rt.TagSpec(types.ResourceTypeInstance),
@@ -293,14 +293,15 @@ func client(rt *harness.Runtime) (*awsec2.Client, error) {
 }
 
 func makeVol(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, token string) (string, error) {
+	rt.HoldEC2(api)
 	in := VolumeRequest("vws-1a", harness.VolumeGiB)
 	in.ClientToken = aws.String(rt.Token(token))
 	in.TagSpecifications = rt.TagSpec(types.ResourceTypeVolume)
-	out, err := api.CreateVolume(ctx, in)
+	out, err := rt.EC2CreateVolume(ctx, in)
 	if harness.UnsupportedParameter(err) {
 		bare := *in
 		bare.TagSpecifications = nil
-		out, err = api.CreateVolume(ctx, &bare)
+		out, err = rt.EC2CreateVolume(ctx, &bare)
 	}
 	if err != nil {
 		return "", fmt.Errorf("create volume: %w", err)
@@ -359,7 +360,7 @@ func ownedInstance(ctx context.Context, rt *harness.Runtime, api *awsec2.Client,
 	if err != nil {
 		return "", wrapErr("ownedInstance", err)
 	}
-	run, err := api.RunInstances(ctx, &awsec2.RunInstancesInput{
+	run, err := rt.EC2RunInstances(ctx, &awsec2.RunInstancesInput{
 		ImageId: aws.String("ami-0123456789abcdef0"), InstanceType: types.InstanceType(harness.InstanceType),
 		MinCount: aws.Int32(1), MaxCount: aws.Int32(1), SubnetId: aws.String(subnet),
 		ClientToken: aws.String(rt.Token(token)), TagSpecifications: rt.TagSpec(types.ResourceTypeInstance),

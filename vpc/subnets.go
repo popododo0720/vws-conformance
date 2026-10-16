@@ -89,7 +89,7 @@ func runSubs(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	case "VPC-SUB-001":
 		var id, zone string
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
-			out, err := api.CreateSubnet(ctx, subnetInput(rt, vpcID, "10.12.1.0/24"))
+			out, err := rt.EC2CreateSubnet(ctx, subnetInput(rt, vpcID, "10.12.1.0/24"))
 			if err == nil && out.Subnet != nil {
 				id = aws.ToString(out.Subnet.SubnetId)
 				zone = aws.ToString(out.Subnet.AvailabilityZone)
@@ -131,7 +131,7 @@ func runSubs(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	case "VPC-SUB-101":
 		var id string
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
-			out, err := api.CreateSubnet(ctx, subnetInput(rt, vpcID, "10.99.0.0/24"))
+			out, err := rt.EC2CreateSubnet(ctx, subnetInput(rt, vpcID, "10.99.0.0/24"))
 			if err == nil && out != nil && out.Subnet != nil {
 				id = aws.ToString(out.Subnet.SubnetId)
 			}
@@ -177,7 +177,7 @@ func goneSubnet(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, ci
 func createSubnet(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, vpcID, cidr, token string) (string,
 	error,
 ) {
-	out, err := api.CreateSubnet(ctx, subnetInput(rt, vpcID, cidr))
+	out, err := rt.EC2CreateSubnet(ctx, subnetInput(rt, vpcID, cidr))
 	if err != nil {
 		return "", fmt.Errorf("create subnet: %w", err)
 	}

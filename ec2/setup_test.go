@@ -49,6 +49,10 @@ func TestAssociateFailureIsTheCaseOutcome(t *testing.T) {
 				"<vpc><vpcId>vpc-1</vpcId><state>available</state><cidrBlock>10.0.0.0/16</cidrBlock></vpc>")); writeErr != nil {
 				panic(writeErr)
 			}
+		case "DescribeVpcs":
+			if _, writeErr := io.WriteString(w, ec2Item("DescribeVpcsResponse", ownedVpcSet())); writeErr != nil {
+				panic(writeErr)
+			}
 		case "CreateSubnet":
 			if _, writeErr := io.WriteString(w, ec2Item("CreateSubnetResponse",
 				"<subnet><subnetId>subnet-1</subnetId><vpcId>vpc-1</vpcId><state>available</state>"+
@@ -57,6 +61,12 @@ func TestAssociateFailureIsTheCaseOutcome(t *testing.T) {
 			}
 		case "RunInstances":
 			if _, writeErr := io.WriteString(w, runInstanceXML("i-1")); writeErr != nil {
+				panic(writeErr)
+			}
+		case "DescribeAddresses":
+			if _, writeErr := io.WriteString(w, ec2Item("DescribeAddressesResponse",
+				"<addressesSet><item><allocationId>eipalloc-1</allocationId>"+
+					"<domain>vpc</domain></item></addressesSet>")); writeErr != nil {
 				panic(writeErr)
 			}
 		case "DescribeInstances":
@@ -139,6 +149,10 @@ func TestEmptyAssociationDoesNotPassDisassociate(t *testing.T) {
 				"<vpc><vpcId>vpc-1</vpcId><state>available</state><cidrBlock>10.0.0.0/16</cidrBlock></vpc>")); writeErr != nil {
 				panic(writeErr)
 			}
+		case "DescribeVpcs":
+			if _, writeErr := io.WriteString(w, ec2Item("DescribeVpcsResponse", ownedVpcSet())); writeErr != nil {
+				panic(writeErr)
+			}
 		case "CreateSubnet":
 			if _, writeErr := io.WriteString(w, ec2Item("CreateSubnetResponse",
 				"<subnet><subnetId>subnet-1</subnetId><vpcId>vpc-1</vpcId><state>available</state>"+
@@ -147,6 +161,12 @@ func TestEmptyAssociationDoesNotPassDisassociate(t *testing.T) {
 			}
 		case "RunInstances":
 			if _, writeErr := io.WriteString(w, runInstanceXML("i-1")); writeErr != nil {
+				panic(writeErr)
+			}
+		case "DescribeAddresses":
+			if _, writeErr := io.WriteString(w, ec2Item("DescribeAddressesResponse",
+				"<addressesSet><item><allocationId>eipalloc-1</allocationId>"+
+					"<domain>vpc</domain></item></addressesSet>")); writeErr != nil {
 				panic(writeErr)
 			}
 		case "DescribeInstances":

@@ -83,7 +83,7 @@ func runVpcs(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	case "VPC-VPC-101":
 		var id string
 		callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-			out, err := api.CreateVpc(ctx, &awsec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/33")})
+			out, err := rt.EC2CreateVpc(ctx, &awsec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/33")})
 			if err == nil && out != nil && out.Vpc != nil {
 				id = aws.ToString(out.Vpc.VpcId)
 			}
@@ -157,7 +157,7 @@ func createVpc(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, cid
 ) {
 	var id string
 	o, err := rt.Call(ctx, func(ctx context.Context) error {
-		out, err := api.CreateVpc(ctx, &awsec2.CreateVpcInput{
+		out, err := rt.EC2CreateVpc(ctx, &awsec2.CreateVpcInput{
 			CidrBlock:         aws.String(cidr),
 			TagSpecifications: rt.TagSpec(types.ResourceTypeVpc),
 		})
@@ -193,7 +193,7 @@ func goneVpc(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, cidr,
 }
 
 func makeVpc(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, cidr, token string) (string, error) {
-	out, err := api.CreateVpc(ctx, &awsec2.CreateVpcInput{
+	out, err := rt.EC2CreateVpc(ctx, &awsec2.CreateVpcInput{
 		CidrBlock:         aws.String(cidr),
 		TagSpecifications: rt.TagSpec(types.ResourceTypeVpc),
 	})

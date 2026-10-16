@@ -164,7 +164,7 @@ func runAddr(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	case "EC2-EIP-105":
 		var id string
 		callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-			out, err := api.AllocateAddress(ctx, &awsec2.AllocateAddressInput{Domain: types.DomainType("nope")})
+			out, err := rt.EC2AllocateAddress(ctx, &awsec2.AllocateAddressInput{Domain: types.DomainType("nope")})
 			if err == nil && out != nil {
 				id = aws.ToString(out.AllocationId)
 			}
@@ -222,7 +222,7 @@ func runAddr(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 func alloc(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (cases.Outcome, error) {
 	var id string
 	o, err := rt.Call(ctx, func(ctx context.Context) error {
-		out, err := api.AllocateAddress(ctx, addressInput(rt))
+		out, err := rt.EC2AllocateAddress(ctx, addressInput(rt))
 		if err == nil {
 			id = aws.ToString(out.AllocationId)
 		}
@@ -249,12 +249,13 @@ func goneAlloc(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (st
 }
 
 func allocID(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (string, error) {
+	rt.HoldEC2(api)
 	in := addressInput(rt)
-	out, err := api.AllocateAddress(ctx, in)
+	out, err := rt.EC2AllocateAddress(ctx, in)
 	if harness.UnsupportedParameter(err) {
 		bare := *in
 		bare.TagSpecifications = nil
-		out, err = api.AllocateAddress(ctx, &bare)
+		out, err = rt.EC2AllocateAddress(ctx, &bare)
 	}
 	if err != nil {
 		return "", fmt.Errorf("allocate: %w", err)

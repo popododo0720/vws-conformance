@@ -154,7 +154,7 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 		var launched *awsec2.RunInstancesOutput
 		callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
 			var err error
-			launched, err = api.RunInstances(ctx, &awsec2.RunInstancesInput{MinCount: aws.Int32(1), MaxCount: aws.Int32(1)})
+			launched, err = rt.EC2RunInstances(ctx, &awsec2.RunInstancesInput{MinCount: aws.Int32(1), MaxCount: aws.Int32(1)})
 			return wrapErr("runInstances", err)
 		})
 		if err := keepLaunched(rt, api, launched, "run101"); err != nil {
@@ -290,7 +290,7 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 		var launched *awsec2.RunInstancesOutput
 		callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
 			var err error
-			launched, err = api.RunInstances(ctx, LaunchRequest(rt, subnet, ""))
+			launched, err = rt.EC2RunInstances(ctx, LaunchRequest(rt, subnet, ""))
 			return wrapErr("runInstances", err)
 		})
 		if err := keepLaunched(rt, api, launched, "run110"); err != nil {
@@ -299,7 +299,7 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 		return callOut, wrapErr("runInstances", callErr)
 	case "EC2-RUN-201":
 		token := rt.Token("idem")
-		first, err := api.RunInstances(ctx, LaunchRequest(rt, subnet, token))
+		first, err := rt.EC2RunInstances(ctx, LaunchRequest(rt, subnet, token))
 		if err != nil {
 			return cases.Outcome{}, fmt.Errorf("first run: %w", err)
 		}
@@ -308,13 +308,13 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 			return cases.Outcome{}, err
 		}
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.RunInstances(ctx, LaunchRequest(rt, subnet, token))
+			_, err := rt.EC2RunInstances(ctx, LaunchRequest(rt, subnet, token))
 			return wrapErr("runInstances", err)
 		})
 		if err != nil {
 			return o, wrapErr("runInstances", err)
 		}
-		second, err := api.RunInstances(ctx, LaunchRequest(rt, subnet, token))
+		second, err := rt.EC2RunInstances(ctx, LaunchRequest(rt, subnet, token))
 		if err != nil {
 			return o, wrapErr("runInstances", err)
 		}
@@ -329,7 +329,7 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 	case "EC2-RUN-202":
 		token := rt.Token("mismatch")
 		in := LaunchRequest(rt, subnet, token)
-		first, err := api.RunInstances(ctx, in)
+		first, err := rt.EC2RunInstances(ctx, in)
 		if err != nil {
 			return cases.Outcome{}, fmt.Errorf("first run: %w", err)
 		}
@@ -340,7 +340,7 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 		var mismatched *awsec2.RunInstancesOutput
 		callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
 			var err error
-			mismatched, err = api.RunInstances(ctx, in)
+			mismatched, err = rt.EC2RunInstances(ctx, in)
 			return wrapErr("runInstances", err)
 		})
 		if err := keepLaunched(rt, api, mismatched, "mismatch"); err != nil {
@@ -393,7 +393,7 @@ func runOne(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, subnet
 	var id string
 	var launched types.Instance
 	o, err := rt.Call(ctx, func(ctx context.Context) error {
-		out, err := api.RunInstances(ctx, LaunchRequest(rt, subnet, token))
+		out, err := rt.EC2RunInstances(ctx, LaunchRequest(rt, subnet, token))
 		if err == nil && len(out.Instances) > 0 {
 			launched = out.Instances[0]
 			id = aws.ToString(launched.InstanceId)
@@ -442,7 +442,8 @@ func rememberInstance(rt *harness.Runtime, api *awsec2.Client, inst types.Instan
 }
 
 func launch(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, subnet, token string) (string, error) {
-	out, err := api.RunInstances(ctx, LaunchRequest(rt, subnet, token))
+	rt.HoldEC2(api)
+	out, err := rt.EC2RunInstances(ctx, LaunchRequest(rt, subnet, token))
 	if err != nil {
 		return "", fmt.Errorf("run: %w", err)
 	}

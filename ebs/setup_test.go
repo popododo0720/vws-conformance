@@ -58,6 +58,16 @@ func TestAttachFailureIsTheCaseOutcome(t *testing.T) {
 						`<cidrBlock>10.0.0.0/16</cidrBlock></vpc></CreateVpcResponse>`); writeErr != nil {
 						panic(writeErr)
 					}
+				case "DescribeVpcs":
+					if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+						`<DescribeVpcsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">`+
+						`<requestId>r</requestId><vpcSet><item><vpcId>vpc-1</vpcId><state>available</state>`+
+						`<cidrBlock>10.0.0.0/16</cidrBlock>`+
+						`<tagSet><item><key>vws:conformance-run</key>`+
+						`<value>conf-20261015T120000Z-abc123</value></item></tagSet>`+
+						`</item></vpcSet></DescribeVpcsResponse>`); writeErr != nil {
+						panic(writeErr)
+					}
 				case "CreateSubnet":
 					if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
 						`<CreateSubnetResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">`+

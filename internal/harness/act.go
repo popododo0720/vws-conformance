@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 
 	"github.com/popododo0720/vws-conformance/internal/sweep"
 )
@@ -42,6 +45,12 @@ func (rt *Runtime) isFresh(name string) bool {
 	return ok
 }
 
+func (rt *Runtime) clearFresh(name string) {
+	rt.devMu.Lock()
+	defer rt.devMu.Unlock()
+	delete(rt.fresh, name)
+}
+
 func (rt *Runtime) BucketFresh(name string) bool { return rt.isFresh(name) }
 
 func (rt *Runtime) ours(rows []sweep.Resource, kind, id string) bool {
@@ -50,24 +59,21 @@ func (rt *Runtime) ours(rows []sweep.Resource, kind, id string) bool {
 	return AllowMutation(false, owners, nil, rt.keepRun)
 }
 
-func (rt *Runtime) permitLedger(rows []sweep.Resource, kind, id string, peers [][]string) error {
-	owners := ledgerOwners(rows, kind, id, rt.ledgerScope())
-	owners = mergeOwners(owners, runOwners(id))
-	if !AllowMutation(false, owners, peers, rt.keepRun) {
-		return fmt.Errorf("preserve %s %s", kind, id)
-	}
-	return nil
-}
-
 func (rt *Runtime) decideItem(kind, id string, item sweepItem, gone bool, obsErr error, names ...string) error {
 	rows, err := readLedger(rt.Cfg.OutDir)
 	if err != nil {
 		return fmt.Errorf("preserve %s %s: %w", kind, id, err)
 	}
+	// A page that already returned the resource, or any failed describe, is not
+	// absence. InvalidAction is a failed describe, including after a ledger row.
+	if item.seen || (obsErr != nil && len(item.owners) > 0) {
+		if obsErr == nil {
+			obsErr = fmt.Errorf("partial observation")
+		}
+		return fmt.Errorf("preserve %s %s: %w", kind, id, obsErr)
+	}
 	if obsErr != nil && unsupportedAction(obsErr) {
-		// DescribeInternetGateways is not served by every target. There is no
-		// page to fail, so the ledger is the evidence and a conflict still preserves.
-		return rt.permitLedger(rows, kind, id, item.peers)
+		return fmt.Errorf("preserve %s %s: %w", kind, id, obsErr)
 	}
 	if gone || (obsErr != nil && strings.Contains(obsErr.Error(), "NotFound")) {
 		if rt.ours(rows, kind, id) {
@@ -120,28 +126,27 @@ func (rt *Runtime) permitInstance(ctx context.Context, id string) error {
 }
 
 func (rt *Runtime) permitTerminate(ctx context.Context, id string) error {
-	peers, peerErr := rt.instanceAttachmentPeers(ctx, id)
-	if peerErr != nil && !unsupportedAction(peerErr) && !strings.Contains(peerErr.Error(), "NotFound") {
-		return fmt.Errorf("preserve instance %s: %w", id, peerErr)
-	}
-	if peerErr == nil && !AllowMutation(true, nil, peers, rt.keepRun) {
-		return fmt.Errorf("preserve instance %s", id)
-	}
 	if rt.Clients == nil || rt.Clients.EC2 == nil {
 		return fmt.Errorf("preserve instance %s: ec2 client is unset", id)
 	}
 	matched, tags, err := rt.findInstance(ctx, id)
-	item := sweepItem{owners: tagOwners(tags), peers: peers}
+	if matched > 1 {
+		return fmt.Errorf("preserve instance %s: ambiguous", id)
+	}
 	if err != nil || matched != 1 {
-		if matched > 1 {
-			return fmt.Errorf("preserve instance %s: ambiguous", id)
-		}
 		if err == nil {
 			err = fmt.Errorf("preserve instance %s", id)
 		}
-		return rt.decideItem("instance", id, item, false, err)
+		return rt.decideItem("instance", id, sweepItem{owners: tagOwners(tags)}, false, err)
 	}
-	return rt.decideItem("instance", id, item, false, nil)
+	peers, peerErr := rt.instanceAttachmentPeers(ctx, id)
+	if peerErr != nil {
+		return fmt.Errorf("preserve instance %s: %w", id, peerErr)
+	}
+	if !AllowMutation(true, nil, peers, rt.keepRun) {
+		return fmt.Errorf("preserve instance %s", id)
+	}
+	return rt.decideItem("instance", id, sweepItem{owners: tagOwners(tags), peers: peers}, false, nil)
 }
 
 func (rt *Runtime) permitTagged(ctx context.Context, id string) error {
@@ -548,12 +553,21 @@ func (rt *Runtime) EC2ReleaseAddress(ctx context.Context, id string) error {
 }
 
 func (rt *Runtime) EC2DisassociateAddress(ctx context.Context, allocationID, associationID string) error {
-	if err := rt.proceed(rt.permitAddress(ctx, allocationID)); err != nil {
+	item, gone, obsErr := rt.observeAddress(ctx, sweepItem{id: allocationID})
+	decision := rt.decideItem("address", allocationID, item, gone, obsErr)
+	if err := rt.proceed(decision); err != nil {
 		return err
+	}
+	send := associationID
+	if !errors.Is(decision, errVerifiedAbsent) {
+		if item.assoc == "" || associationID != item.assoc {
+			return fmt.Errorf("preserve address %s", allocationID)
+		}
+		send = item.assoc
 	}
 	_, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DisassociateAddressOutput, error) {
 		return rt.Clients.EC2.DisassociateAddress(ctx, &ec2.DisassociateAddressInput{
-			AssociationId: aws.String(associationID),
+			AssociationId: aws.String(send),
 		})
 	})
 	return err
@@ -715,19 +729,30 @@ func (rt *Runtime) permitBucket(ctx context.Context, name string) error {
 	return nil
 }
 
-// S3CreateBucket always performs the create. Fresh means HeadBucket showed the
-// name was absent before that success. us-east-1 also returns success when the
-// bucket already existed, and that result is not fresh.
+// S3CreateBucket calls CreateBucket only after HeadBucket proved the name is
+// absent, or after the existing bucket's owners passed the gate. A HeadBucket
+// error is not absence. Success on an existing bucket is not fresh.
 func (rt *Runtime) S3CreateBucket(ctx context.Context, in *s3.CreateBucketInput) (*s3.CreateBucketOutput, error) {
-	if rt.Clients == nil || rt.Clients.S3 == nil {
+	if rt.Clients == nil || rt.Clients.S3 == nil || in == nil {
 		return nil, fmt.Errorf("s3 client is unset")
 	}
 	name := aws.ToString(in.Bucket)
 	absent, absentErr := rt.bucketAbsent(ctx, name)
+	if absentErr != nil {
+		return nil, fmt.Errorf("preserve bucket %s: %w", name, absentErr)
+	}
+	if !absent {
+		if err := rt.permitBucket(ctx, name); err != nil {
+			return nil, err
+		}
+		return withDeadline(ctx, func(ctx context.Context) (*s3.CreateBucketOutput, error) {
+			return rt.Clients.S3.CreateBucket(ctx, in)
+		})
+	}
 	out, err := withDeadline(ctx, func(ctx context.Context) (*s3.CreateBucketOutput, error) {
 		return rt.Clients.S3.CreateBucket(ctx, in)
 	})
-	if absentErr == nil && absent && err == nil {
+	if err == nil {
 		rt.noteFresh(name)
 	}
 	return out, err
@@ -740,6 +765,9 @@ func (rt *Runtime) S3DeleteBucket(ctx context.Context, name string) error {
 	_, err := withDeadline(ctx, func(ctx context.Context) (*s3.DeleteBucketOutput, error) {
 		return rt.Clients.S3.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(name)})
 	})
+	if err == nil {
+		rt.clearFresh(name)
+	}
 	return err
 }
 
@@ -758,5 +786,407 @@ func (rt *Runtime) S3DeleteObject(ctx context.Context, in *s3.DeleteObjectInput)
 	}
 	return withDeadline(ctx, func(ctx context.Context) (*s3.DeleteObjectOutput, error) {
 		return rt.Clients.S3.DeleteObject(ctx, in)
+	})
+}
+
+func (rt *Runtime) ec2API() (*ec2.Client, error) {
+	if rt.Clients == nil || rt.Clients.EC2 == nil {
+		return nil, fmt.Errorf("ec2 client is unset")
+	}
+	return rt.Clients.EC2, nil
+}
+
+func (rt *Runtime) EC2CreateVolume(ctx context.Context, in *ec2.CreateVolumeInput) (*ec2.CreateVolumeOutput, error) {
+	api, err := rt.ec2API()
+	if err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*ec2.CreateVolumeOutput, error) {
+		return api.CreateVolume(ctx, in)
+	})
+}
+
+func (rt *Runtime) EC2ModifyVolume(ctx context.Context, in *ec2.ModifyVolumeInput) (*ec2.ModifyVolumeOutput, error) {
+	if in == nil {
+		return nil, fmt.Errorf("preserve volume")
+	}
+	if err := rt.proceed(rt.permitVolume(ctx, aws.ToString(in.VolumeId))); err != nil {
+		return nil, err
+	}
+	api, err := rt.ec2API()
+	if err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*ec2.ModifyVolumeOutput, error) {
+		return api.ModifyVolume(ctx, in)
+	})
+}
+
+func (rt *Runtime) EC2RunInstances(ctx context.Context, in *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {
+	api, err := rt.ec2API()
+	if err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*ec2.RunInstancesOutput, error) {
+		return api.RunInstances(ctx, in)
+	})
+}
+
+func (rt *Runtime) EC2AllocateAddress(
+	ctx context.Context, in *ec2.AllocateAddressInput,
+) (*ec2.AllocateAddressOutput, error) {
+	api, err := rt.ec2API()
+	if err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*ec2.AllocateAddressOutput, error) {
+		return api.AllocateAddress(ctx, in)
+	})
+}
+
+func (rt *Runtime) EC2CreateKeyPair(ctx context.Context, in *ec2.CreateKeyPairInput) (*ec2.CreateKeyPairOutput, error) {
+	api, err := rt.ec2API()
+	if err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*ec2.CreateKeyPairOutput, error) {
+		return api.CreateKeyPair(ctx, in)
+	})
+}
+
+func (rt *Runtime) EC2ImportKeyPair(ctx context.Context, in *ec2.ImportKeyPairInput) (*ec2.ImportKeyPairOutput, error) {
+	api, err := rt.ec2API()
+	if err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*ec2.ImportKeyPairOutput, error) {
+		return api.ImportKeyPair(ctx, in)
+	})
+}
+
+func (rt *Runtime) EC2CreateVpc(ctx context.Context, in *ec2.CreateVpcInput) (*ec2.CreateVpcOutput, error) {
+	api, err := rt.ec2API()
+	if err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*ec2.CreateVpcOutput, error) {
+		return api.CreateVpc(ctx, in)
+	})
+}
+
+func (rt *Runtime) EC2CreateSubnet(ctx context.Context, in *ec2.CreateSubnetInput) (*ec2.CreateSubnetOutput, error) {
+	if in == nil {
+		return nil, fmt.Errorf("preserve subnet")
+	}
+	if err := rt.proceed(rt.permitVpc(ctx, aws.ToString(in.VpcId))); err != nil {
+		return nil, err
+	}
+	api, err := rt.ec2API()
+	if err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*ec2.CreateSubnetOutput, error) {
+		return api.CreateSubnet(ctx, in)
+	})
+}
+
+func (rt *Runtime) EC2CreateSecurityGroup(
+	ctx context.Context, in *ec2.CreateSecurityGroupInput,
+) (*ec2.CreateSecurityGroupOutput, error) {
+	if in == nil {
+		return nil, fmt.Errorf("preserve security-group")
+	}
+	if vpc := aws.ToString(in.VpcId); vpc != "" {
+		if err := rt.proceed(rt.permitVpc(ctx, vpc)); err != nil {
+			return nil, err
+		}
+	}
+	api, err := rt.ec2API()
+	if err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*ec2.CreateSecurityGroupOutput, error) {
+		return api.CreateSecurityGroup(ctx, in)
+	})
+}
+
+func (rt *Runtime) EC2AuthorizeSecurityGroupIngress(
+	ctx context.Context, in *ec2.AuthorizeSecurityGroupIngressInput,
+) (*ec2.AuthorizeSecurityGroupIngressOutput, error) {
+	if err := rt.proceed(rt.permitGroup(ctx, aws.ToString(in.GroupId))); err != nil {
+		return nil, err
+	}
+	api, err := rt.ec2API()
+	if err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*ec2.AuthorizeSecurityGroupIngressOutput, error) {
+		return api.AuthorizeSecurityGroupIngress(ctx, in)
+	})
+}
+
+func (rt *Runtime) EC2AuthorizeSecurityGroupEgress(
+	ctx context.Context, in *ec2.AuthorizeSecurityGroupEgressInput,
+) (*ec2.AuthorizeSecurityGroupEgressOutput, error) {
+	if err := rt.proceed(rt.permitGroup(ctx, aws.ToString(in.GroupId))); err != nil {
+		return nil, err
+	}
+	api, err := rt.ec2API()
+	if err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*ec2.AuthorizeSecurityGroupEgressOutput, error) {
+		return api.AuthorizeSecurityGroupEgress(ctx, in)
+	})
+}
+
+func (rt *Runtime) EC2RevokeSecurityGroupIngress(
+	ctx context.Context, in *ec2.RevokeSecurityGroupIngressInput,
+) (*ec2.RevokeSecurityGroupIngressOutput, error) {
+	if err := rt.proceed(rt.permitGroup(ctx, aws.ToString(in.GroupId))); err != nil {
+		return nil, err
+	}
+	api, err := rt.ec2API()
+	if err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*ec2.RevokeSecurityGroupIngressOutput, error) {
+		return api.RevokeSecurityGroupIngress(ctx, in)
+	})
+}
+
+func (rt *Runtime) EC2RevokeSecurityGroupEgress(
+	ctx context.Context, in *ec2.RevokeSecurityGroupEgressInput,
+) (*ec2.RevokeSecurityGroupEgressOutput, error) {
+	if err := rt.proceed(rt.permitGroup(ctx, aws.ToString(in.GroupId))); err != nil {
+		return nil, err
+	}
+	api, err := rt.ec2API()
+	if err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*ec2.RevokeSecurityGroupEgressOutput, error) {
+		return api.RevokeSecurityGroupEgress(ctx, in)
+	})
+}
+
+func (rt *Runtime) EC2CreateSnapshot(
+	ctx context.Context, in *ec2.CreateSnapshotInput,
+) (*ec2.CreateSnapshotOutput, error) {
+	if in == nil {
+		return nil, fmt.Errorf("preserve snapshot")
+	}
+	if err := rt.proceed(rt.permitVolume(ctx, aws.ToString(in.VolumeId))); err != nil {
+		return nil, err
+	}
+	api, err := rt.ec2API()
+	if err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*ec2.CreateSnapshotOutput, error) {
+		return api.CreateSnapshot(ctx, in)
+	})
+}
+
+func (rt *Runtime) EC2CreateInternetGateway(
+	ctx context.Context, in *ec2.CreateInternetGatewayInput,
+) (*ec2.CreateInternetGatewayOutput, error) {
+	api, err := rt.ec2API()
+	if err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*ec2.CreateInternetGatewayOutput, error) {
+		return api.CreateInternetGateway(ctx, in)
+	})
+}
+
+func copySourceBucket(src string) string {
+	src = strings.TrimPrefix(src, "/")
+	if i := strings.IndexByte(src, '/'); i >= 0 {
+		src = src[:i]
+	}
+	if plain, err := url.PathUnescape(src); err == nil {
+		src = plain
+	}
+	return src
+}
+
+func (rt *Runtime) S3CopyObject(ctx context.Context, in *s3.CopyObjectInput) (*s3.CopyObjectOutput, error) {
+	if in == nil {
+		return nil, fmt.Errorf("preserve bucket")
+	}
+	if err := rt.proceed(rt.permitBucket(ctx, copySourceBucket(aws.ToString(in.CopySource)))); err != nil {
+		return nil, err
+	}
+	if err := rt.proceed(rt.permitBucket(ctx, aws.ToString(in.Bucket))); err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*s3.CopyObjectOutput, error) {
+		return rt.Clients.S3.CopyObject(ctx, in)
+	})
+}
+
+func (rt *Runtime) S3DeleteObjects(ctx context.Context, in *s3.DeleteObjectsInput) (*s3.DeleteObjectsOutput, error) {
+	if in == nil {
+		return nil, fmt.Errorf("preserve bucket")
+	}
+	if err := rt.proceed(rt.permitBucket(ctx, aws.ToString(in.Bucket))); err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*s3.DeleteObjectsOutput, error) {
+		return rt.Clients.S3.DeleteObjects(ctx, in)
+	})
+}
+
+func (rt *Runtime) S3PutObjectTagging(
+	ctx context.Context, in *s3.PutObjectTaggingInput,
+) (*s3.PutObjectTaggingOutput, error) {
+	if in == nil {
+		return nil, fmt.Errorf("preserve bucket")
+	}
+	if err := rt.proceed(rt.permitBucket(ctx, aws.ToString(in.Bucket))); err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*s3.PutObjectTaggingOutput, error) {
+		return rt.Clients.S3.PutObjectTagging(ctx, in)
+	})
+}
+
+func (rt *Runtime) S3PutBucketPolicy(
+	ctx context.Context, in *s3.PutBucketPolicyInput,
+) (*s3.PutBucketPolicyOutput, error) {
+	if in == nil {
+		return nil, fmt.Errorf("preserve bucket")
+	}
+	if err := rt.proceed(rt.permitBucket(ctx, aws.ToString(in.Bucket))); err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*s3.PutBucketPolicyOutput, error) {
+		return rt.Clients.S3.PutBucketPolicy(ctx, in)
+	})
+}
+
+func (rt *Runtime) S3CreateMultipartUpload(
+	ctx context.Context, in *s3.CreateMultipartUploadInput,
+) (*s3.CreateMultipartUploadOutput, error) {
+	if in == nil {
+		return nil, fmt.Errorf("preserve bucket")
+	}
+	if err := rt.proceed(rt.permitBucket(ctx, aws.ToString(in.Bucket))); err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*s3.CreateMultipartUploadOutput, error) {
+		return rt.Clients.S3.CreateMultipartUpload(ctx, in)
+	})
+}
+
+func (rt *Runtime) S3PutBucketVersioning(
+	ctx context.Context, in *s3.PutBucketVersioningInput,
+) (*s3.PutBucketVersioningOutput, error) {
+	if in == nil {
+		return nil, fmt.Errorf("preserve bucket")
+	}
+	if err := rt.proceed(rt.permitBucket(ctx, aws.ToString(in.Bucket))); err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*s3.PutBucketVersioningOutput, error) {
+		return rt.Clients.S3.PutBucketVersioning(ctx, in)
+	})
+}
+
+func (rt *Runtime) S3PutBucketCors(ctx context.Context, in *s3.PutBucketCorsInput) (*s3.PutBucketCorsOutput, error) {
+	if in == nil {
+		return nil, fmt.Errorf("preserve bucket")
+	}
+	if err := rt.proceed(rt.permitBucket(ctx, aws.ToString(in.Bucket))); err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*s3.PutBucketCorsOutput, error) {
+		return rt.Clients.S3.PutBucketCors(ctx, in)
+	})
+}
+
+func (rt *Runtime) S3PutBucketLifecycleConfiguration(
+	ctx context.Context, in *s3.PutBucketLifecycleConfigurationInput,
+) (*s3.PutBucketLifecycleConfigurationOutput, error) {
+	if in == nil {
+		return nil, fmt.Errorf("preserve bucket")
+	}
+	if err := rt.proceed(rt.permitBucket(ctx, aws.ToString(in.Bucket))); err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*s3.PutBucketLifecycleConfigurationOutput, error) {
+		return rt.Clients.S3.PutBucketLifecycleConfiguration(ctx, in)
+	})
+}
+
+func (rt *Runtime) S3PutBucketWebsite(
+	ctx context.Context, in *s3.PutBucketWebsiteInput,
+) (*s3.PutBucketWebsiteOutput, error) {
+	if in == nil {
+		return nil, fmt.Errorf("preserve bucket")
+	}
+	if err := rt.proceed(rt.permitBucket(ctx, aws.ToString(in.Bucket))); err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*s3.PutBucketWebsiteOutput, error) {
+		return rt.Clients.S3.PutBucketWebsite(ctx, in)
+	})
+}
+
+func (rt *Runtime) IAMCreateUser(ctx context.Context, in *iam.CreateUserInput) (*iam.CreateUserOutput, error) {
+	if rt.Clients == nil || rt.Clients.IAM == nil {
+		return nil, fmt.Errorf("iam client is unset")
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*iam.CreateUserOutput, error) {
+		return rt.Clients.IAM.CreateUser(ctx, in)
+	})
+}
+
+func (rt *Runtime) IAMDeleteUser(ctx context.Context, in *iam.DeleteUserInput) (*iam.DeleteUserOutput, error) {
+	if in == nil {
+		return nil, fmt.Errorf("preserve user")
+	}
+	if err := rt.proceed(rt.permitIAMUser(ctx, aws.ToString(in.UserName))); err != nil {
+		return nil, err
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*iam.DeleteUserOutput, error) {
+		return rt.Clients.IAM.DeleteUser(ctx, in)
+	})
+}
+
+func (rt *Runtime) permitIAMUser(ctx context.Context, name string) error {
+	if rt.Clients == nil || rt.Clients.IAM == nil {
+		return fmt.Errorf("preserve user %s: iam client is unset", name)
+	}
+	_, err := withDeadline(ctx, func(ctx context.Context) (*iam.GetUserOutput, error) {
+		return rt.Clients.IAM.GetUser(ctx, &iam.GetUserInput{UserName: aws.String(name)})
+	})
+	rows, rowErr := readLedger(rt.Cfg.OutDir)
+	if rowErr != nil {
+		return fmt.Errorf("preserve user %s: %w", name, rowErr)
+	}
+	if err != nil {
+		if strings.Contains(err.Error(), "NoSuch") || strings.Contains(err.Error(), "NotFound") {
+			owners := mergeOwners(runOwners(name), ledgerOwners(rows, "user", name, rt.ledgerScope()))
+			if AllowMutation(false, owners, nil, rt.keepRun) {
+				return errVerifiedAbsent
+			}
+		}
+		return fmt.Errorf("preserve user %s: %w", name, err)
+	}
+	owners := mergeOwners(runOwners(name), ledgerOwners(rows, "user", name, rt.ledgerScope()))
+	if !AllowMutation(false, owners, nil, rt.keepRun) {
+		return fmt.Errorf("preserve user %s", name)
+	}
+	return nil
+}
+
+func (rt *Runtime) STSAssumeRole(ctx context.Context, in *sts.AssumeRoleInput) (*sts.AssumeRoleOutput, error) {
+	if rt.Clients == nil || rt.Clients.STS == nil {
+		return nil, fmt.Errorf("sts client is unset")
+	}
+	return withDeadline(ctx, func(ctx context.Context) (*sts.AssumeRoleOutput, error) {
+		return rt.Clients.STS.AssumeRole(ctx, in)
 	})
 }

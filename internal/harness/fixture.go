@@ -145,7 +145,7 @@ func (rt *Runtime) createNet(ctx context.Context) (string, string, error) {
 		return "", "", fmt.Errorf("EC2 endpoint is unset")
 	}
 	vpcOut, err := withDeadline(ctx, func(ctx context.Context) (*ec2.CreateVpcOutput, error) {
-		return rt.Clients.EC2.CreateVpc(ctx, &ec2.CreateVpcInput{
+		return rt.EC2CreateVpc(ctx, &ec2.CreateVpcInput{
 			CidrBlock:         aws.String("10.0.0.0/16"),
 			TagSpecifications: rt.TagSpec(ec2types.ResourceTypeVpc),
 		})
@@ -163,7 +163,7 @@ func (rt *Runtime) createNet(ctx context.Context) (string, string, error) {
 		})
 	})
 	subOut, err := withDeadline(ctx, func(ctx context.Context) (*ec2.CreateSubnetOutput, error) {
-		return rt.Clients.EC2.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+		return rt.EC2CreateSubnet(ctx, &ec2.CreateSubnetInput{
 			VpcId:             aws.String(vpcID),
 			CidrBlock:         aws.String("10.0.1.0/24"),
 			AvailabilityZone:  aws.String("vws-1a"),
@@ -469,6 +469,7 @@ type sweepItem struct {
 	owners []string
 	peers  [][]string
 	direct bool
+	seen   bool
 }
 
 type ec2View struct {
@@ -1051,9 +1052,11 @@ func (rt *Runtime) instanceAttachmentPeers(ctx context.Context, instanceID strin
 	if err != nil {
 		return nil, err
 	}
+	seenVol := map[string]ec2types.Volume{}
 	var peers [][]string
 	for _, v := range volumes {
 		volID := aws.ToString(v.VolumeId)
+		seenVol[volID] = v
 		owners := resourceOwners(v.Tags, rows, "volume", volID, rt.ledgerScope())
 		if rt.notedDevice(volID) {
 			owners = appendOwner(owners, rt.Cfg.RunID)
@@ -1069,7 +1072,80 @@ func (rt *Runtime) instanceAttachmentPeers(ctx context.Context, instanceID strin
 			peers = append(peers, append([]string{}, owners...))
 		}
 	}
+	blocks, err := rt.blockDeviceVolumes(ctx, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range blocks {
+		v, ok := seenVol[id]
+		if !ok {
+			_, gone, obsErr := rt.observeVolume(ctx, sweepItem{id: id})
+			if obsErr != nil || !gone {
+				return nil, fmt.Errorf("block device %s is unresolved", id)
+			}
+			continue
+		}
+		if !volumeAttachedTo(v, instanceID) {
+			return nil, fmt.Errorf("block device %s is unresolved", id)
+		}
+	}
 	return peers, nil
+}
+
+func volumeAttachedTo(v ec2types.Volume, instanceID string) bool {
+	for _, a := range v.Attachments {
+		if a.State == ec2types.VolumeAttachmentStateDetached || aws.ToString(a.InstanceId) != instanceID {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func (rt *Runtime) blockDeviceVolumes(ctx context.Context, instanceID string) ([]string, error) {
+	var matched int
+	var blocks []ec2types.InstanceBlockDeviceMapping
+	err := eachPage(func(token *string) (*string, error) {
+		out, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeInstancesOutput, error) {
+			return rt.Clients.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+				InstanceIds: []string{instanceID}, NextToken: token,
+			})
+		})
+		if err != nil {
+			return nil, err
+		}
+		if out == nil {
+			return nil, fmt.Errorf("describe instances returned nothing")
+		}
+		for _, res := range out.Reservations {
+			for _, inst := range res.Instances {
+				if aws.ToString(inst.InstanceId) != instanceID {
+					continue
+				}
+				matched++
+				blocks = inst.BlockDeviceMappings
+			}
+		}
+		return out.NextToken, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if matched != 1 {
+		return nil, fmt.Errorf("instance %s block devices are unresolved", instanceID)
+	}
+	var ids []string
+	for _, b := range blocks {
+		if b.Ebs == nil {
+			continue
+		}
+		id := aws.ToString(b.Ebs.VolumeId)
+		if id == "" {
+			return nil, fmt.Errorf("block device is unresolved")
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 func (rt *Runtime) markSwept(id string) {
@@ -1127,6 +1203,13 @@ func (rt *Runtime) observeVolume(ctx context.Context, item sweepItem) (sweepItem
 		return out.NextToken, nil
 	})
 	if err != nil {
+		if len(matched) > 0 {
+			item.seen = true
+			for _, v := range matched {
+				item.owners = mergeOwners(item.owners, tagOwners(v.Tags))
+			}
+			return item, false, err
+		}
 		if strings.Contains(err.Error(), "NotFound") && len(matched) == 0 {
 			return item, true, nil
 		}

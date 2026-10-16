@@ -61,6 +61,10 @@ func TestStartWaitsUntilStopped(t *testing.T) {
 				"<vpc><vpcId>vpc-1</vpcId><state>available</state></vpc>")); writeErr != nil {
 				panic(writeErr)
 			}
+		case "DescribeVpcs":
+			if _, writeErr := io.WriteString(w, ec2Item("DescribeVpcsResponse", ownedVpcSet())); writeErr != nil {
+				panic(writeErr)
+			}
 		case "CreateSubnet":
 			inner := "<subnet><subnetId>subnet-1</subnetId><state>available</state><vpcId>vpc-1</vpcId></subnet>"
 			if _, writeErr := io.WriteString(w, ec2Item("CreateSubnetResponse", inner)); writeErr != nil {
@@ -122,6 +126,12 @@ func TestStartWaitsUntilStopped(t *testing.T) {
 	if !started.Load() || startedTooSoon.Load() {
 		t.Fatalf("started %v too soon %v stopping describes %d", started.Load(), startedTooSoon.Load(), stopping.Load())
 	}
+}
+
+func ownedVpcSet() string {
+	return `<vpcSet><item><vpcId>vpc-1</vpcId><state>available</state><cidrBlock>10.0.0.0/16</cidrBlock>` +
+		`<tagSet><item><key>vws:conformance-run</key>` +
+		`<value>conf-20261015T120000Z-abc123</value></item></tagSet></item></vpcSet>`
 }
 
 func ec2Item(root, inner string) string {

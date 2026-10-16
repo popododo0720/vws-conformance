@@ -20,8 +20,21 @@ func Judge(exp cases.Expect, got cases.Outcome) (status, reason string) {
 	if got.Code != exp.Code {
 		return "fail", fmt.Sprintf("code got %q want %q", got.Code, exp.Code)
 	}
-	if exp.Code != "" && got.Message == "" {
-		return "fail", "error message is empty"
+	if exp.Code != "" {
+		if got.Message == "" {
+			return "fail", "error message is empty"
+		}
+		pat := messagePattern(exp.Code)
+		if pat == "" {
+			return "fail", "error message expectation is unset"
+		}
+		re, err := regexp.Compile(pat)
+		if err != nil {
+			return "error", fmt.Sprintf("message pattern %s: %v", exp.Code, err)
+		}
+		if !re.MatchString(got.Message) {
+			return "fail", fmt.Sprintf("message got %q, pattern %s", got.Message, pat)
+		}
 	}
 	for field, pat := range exp.Patterns {
 		re, err := regexp.Compile(pat)

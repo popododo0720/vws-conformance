@@ -56,7 +56,7 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	case "VPC-GAP-001":
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.RevokeSecurityGroupIngress(ctx, &awsec2.RevokeSecurityGroupIngressInput{GroupId: gid})
+				_, err := rt.EC2RevokeSecurityGroupIngress(ctx, &awsec2.RevokeSecurityGroupIngressInput{GroupId: gid})
 				return wrapErr("runGaps", err)
 			})
 			return callOut, wrapErr("runGaps", callErr)
@@ -64,7 +64,7 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	case "VPC-GAP-002":
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.AuthorizeSecurityGroupEgress(ctx, &awsec2.AuthorizeSecurityGroupEgressInput{
+				_, err := rt.EC2AuthorizeSecurityGroupEgress(ctx, &awsec2.AuthorizeSecurityGroupEgressInput{
 					GroupId: gid,
 					IpPermissions: []types.IpPermission{{
 						IpProtocol: aws.String("-1"),
@@ -78,7 +78,7 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	case "VPC-GAP-003":
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.RevokeSecurityGroupEgress(ctx, &awsec2.RevokeSecurityGroupEgressInput{GroupId: gid})
+				_, err := rt.EC2RevokeSecurityGroupEgress(ctx, &awsec2.RevokeSecurityGroupEgressInput{GroupId: gid})
 				return wrapErr("runGaps", err)
 			})
 			return callOut, wrapErr("runGaps", callErr)
@@ -102,7 +102,7 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	case "VPC-GAP-006":
 		var id string
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
-			out, err := api.CreateInternetGateway(ctx, &awsec2.CreateInternetGatewayInput{
+			out, err := rt.EC2CreateInternetGateway(ctx, &awsec2.CreateInternetGatewayInput{
 				TagSpecifications: rt.TagSpec(types.ResourceTypeInternetGateway),
 			})
 			if err == nil && out != nil && out.InternetGateway != nil {

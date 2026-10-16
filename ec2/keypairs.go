@@ -78,7 +78,7 @@ func runKeys(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	case "EC2-KP-001":
 		var created bool
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.CreateKeyPair(ctx, &awsec2.CreateKeyPairInput{
+			_, err := rt.EC2CreateKeyPair(ctx, &awsec2.CreateKeyPairInput{
 				KeyName: aws.String(name), KeyType: types.KeyTypeRsa,
 				KeyFormat: types.KeyFormatPem,
 			})
@@ -90,7 +90,7 @@ func runKeys(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		}
 		return o, wrapErr("runKeys", err)
 	case "EC2-KP-002":
-		if _, err := api.CreateKeyPair(ctx, &awsec2.CreateKeyPairInput{KeyName: aws.String(name)}); err != nil {
+		if _, err := rt.EC2CreateKeyPair(ctx, &awsec2.CreateKeyPairInput{KeyName: aws.String(name)}); err != nil {
 			return cases.Outcome{}, fmt.Errorf("create: %w", err)
 		}
 		deleteKey(rt, name)
@@ -102,7 +102,7 @@ func runKeys(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 			return callOut, wrapErr("runKeys", callErr)
 		}
 	case "EC2-KP-003":
-		if _, err := api.CreateKeyPair(ctx, &awsec2.CreateKeyPairInput{KeyName: aws.String(name)}); err != nil {
+		if _, err := rt.EC2CreateKeyPair(ctx, &awsec2.CreateKeyPairInput{KeyName: aws.String(name)}); err != nil {
 			return cases.Outcome{}, fmt.Errorf("create: %w", err)
 		}
 		{
@@ -119,7 +119,7 @@ func runKeys(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		}
 		var created bool
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.ImportKeyPair(ctx, &awsec2.ImportKeyPairInput{KeyName: aws.String(name), PublicKeyMaterial: pub})
+			_, err := rt.EC2ImportKeyPair(ctx, &awsec2.ImportKeyPairInput{KeyName: aws.String(name), PublicKeyMaterial: pub})
 			created = err == nil
 			return wrapErr("runKeys", err)
 		})
@@ -128,13 +128,13 @@ func runKeys(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		}
 		return o, wrapErr("runKeys", err)
 	case "EC2-KP-101":
-		if _, err := api.CreateKeyPair(ctx, &awsec2.CreateKeyPairInput{KeyName: aws.String(name)}); err != nil {
+		if _, err := rt.EC2CreateKeyPair(ctx, &awsec2.CreateKeyPairInput{KeyName: aws.String(name)}); err != nil {
 			return cases.Outcome{}, fmt.Errorf("create: %w", err)
 		}
 		deleteKey(rt, name)
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.CreateKeyPair(ctx, &awsec2.CreateKeyPairInput{KeyName: aws.String(name)})
+				_, err := rt.EC2CreateKeyPair(ctx, &awsec2.CreateKeyPairInput{KeyName: aws.String(name)})
 				return wrapErr("runKeys", err)
 			})
 			return callOut, wrapErr("runKeys", callErr)
@@ -158,7 +158,7 @@ func runKeys(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	case "EC2-KP-104":
 		var created bool
 		callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.ImportKeyPair(ctx, &awsec2.ImportKeyPairInput{
+			_, err := rt.EC2ImportKeyPair(ctx, &awsec2.ImportKeyPairInput{
 				KeyName:           aws.String(name),
 				PublicKeyMaterial: []byte("not-a-key"),
 			})

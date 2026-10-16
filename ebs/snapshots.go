@@ -82,7 +82,7 @@ func runSnap(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		}
 		var id string
 		callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-			out, err := api.CreateSnapshot(ctx, &awsec2.CreateSnapshotInput{
+			out, err := rt.EC2CreateSnapshot(ctx, &awsec2.CreateSnapshotInput{
 				VolumeId:    aws.String(vol),
 				Description: aws.String(rt.Name("missing")),
 			})
@@ -119,7 +119,7 @@ func runSnap(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	case "EBS-SNAP-001":
 		var id string
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
-			out, err := api.CreateSnapshot(ctx, &awsec2.CreateSnapshotInput{
+			out, err := rt.EC2CreateSnapshot(ctx, &awsec2.CreateSnapshotInput{
 				VolumeId:    aws.String(vol),
 				Description: aws.String(desc),
 			})
@@ -131,7 +131,7 @@ func runSnap(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		o.Fields["id"] = id
 		return o, wrapErr("runSnap", err)
 	case "EBS-SNAP-002", "EBS-SNAP-003":
-		out, err := api.CreateSnapshot(ctx, &awsec2.CreateSnapshotInput{
+		out, err := rt.EC2CreateSnapshot(ctx, &awsec2.CreateSnapshotInput{
 			VolumeId:    aws.String(vol),
 			Description: aws.String(desc),
 		})
@@ -172,7 +172,7 @@ func goneSnap(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, toke
 		return "", err
 	}
 	desc := rt.Name(token)
-	out, err := api.CreateSnapshot(ctx, &awsec2.CreateSnapshotInput{
+	out, err := rt.EC2CreateSnapshot(ctx, &awsec2.CreateSnapshotInput{
 		VolumeId: aws.String(vol), Description: aws.String(desc),
 	})
 	if err != nil {

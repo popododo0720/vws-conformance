@@ -76,11 +76,11 @@ func goneVolume(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (s
 		AvailabilityZone: aws.String("vws-1a"), Size: aws.Int32(harness.VolumeGiB),
 		VolumeType: types.VolumeTypeGp2, TagSpecifications: rt.TagSpec(types.ResourceTypeVolume),
 	}
-	out, err := api.CreateVolume(ctx, in)
+	out, err := rt.EC2CreateVolume(ctx, in)
 	if harness.UnsupportedParameter(err) {
 		bare := *in
 		bare.TagSpecifications = nil
-		out, err = api.CreateVolume(ctx, &bare)
+		out, err = rt.EC2CreateVolume(ctx, &bare)
 	}
 	if err != nil {
 		return "", fmt.Errorf("create volume: %w", err)

@@ -138,13 +138,13 @@ func runUsers(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Out
 	case "IAM-USR-001":
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.CreateUser(ctx, &awsiam.CreateUserInput{UserName: aws.String(name), Path: aws.String(path)})
+				_, err := rt.IAMCreateUser(ctx, &awsiam.CreateUserInput{UserName: aws.String(name), Path: aws.String(path)})
 				return wrapErr("runUsers", err)
 			})
 			return callOut, wrapErr("runUsers", callErr)
 		}
 	case "IAM-USR-002":
-		if _, err := api.CreateUser(ctx, &awsiam.CreateUserInput{
+		if _, err := rt.IAMCreateUser(ctx, &awsiam.CreateUserInput{
 			UserName: aws.String(name),
 			Path:     aws.String(path),
 		}); err != nil {
@@ -166,7 +166,7 @@ func runUsers(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Out
 			return callOut, wrapErr("runUsers", callErr)
 		}
 	case "IAM-USR-004":
-		if _, err := api.CreateUser(ctx, &awsiam.CreateUserInput{
+		if _, err := rt.IAMCreateUser(ctx, &awsiam.CreateUserInput{
 			UserName: aws.String(name),
 			Path:     aws.String(path),
 		}); err != nil {
@@ -174,13 +174,13 @@ func runUsers(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Out
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.DeleteUser(ctx, &awsiam.DeleteUserInput{UserName: aws.String(name)})
+				_, err := rt.IAMDeleteUser(ctx, &awsiam.DeleteUserInput{UserName: aws.String(name)})
 				return wrapErr("runUsers", err)
 			})
 			return callOut, wrapErr("runUsers", callErr)
 		}
 	case "IAM-USR-101":
-		if _, err := api.CreateUser(ctx, &awsiam.CreateUserInput{
+		if _, err := rt.IAMCreateUser(ctx, &awsiam.CreateUserInput{
 			UserName: aws.String(name),
 			Path:     aws.String(path),
 		}); err != nil {
@@ -188,7 +188,7 @@ func runUsers(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Out
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.CreateUser(ctx, &awsiam.CreateUserInput{UserName: aws.String(name), Path: aws.String(path)})
+				_, err := rt.IAMCreateUser(ctx, &awsiam.CreateUserInput{UserName: aws.String(name), Path: aws.String(path)})
 				return wrapErr("runUsers", err)
 			})
 			return callOut, wrapErr("runUsers", callErr)
@@ -205,7 +205,7 @@ func runUsers(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Out
 		long := rt.Name("user") + "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.CreateUser(ctx, &awsiam.CreateUserInput{UserName: aws.String(long)})
+				_, err := rt.IAMCreateUser(ctx, &awsiam.CreateUserInput{UserName: aws.String(long)})
 				return wrapErr("runUsers", err)
 			})
 			return callOut, wrapErr("runUsers", callErr)

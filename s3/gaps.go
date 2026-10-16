@@ -69,7 +69,7 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	case "S3-GAP-001":
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.CopyObject(ctx, &s3.CopyObjectInput{
+				_, err := rt.S3CopyObject(ctx, &s3.CopyObjectInput{
 					Bucket: aws.String(name), Key: aws.String("c"),
 					CopySource: aws.String(name + "/k"),
 				})
@@ -80,7 +80,7 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	case "S3-GAP-002":
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+				_, err := rt.S3DeleteObjects(ctx, &s3.DeleteObjectsInput{
 					Bucket: aws.String(name),
 					Delete: &types.Delete{Objects: []types.ObjectIdentifier{{Key: aws.String("k")}}},
 				})
@@ -91,7 +91,7 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	case "S3-GAP-003":
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.PutObjectTagging(ctx, &s3.PutObjectTaggingInput{
+				_, err := rt.S3PutObjectTagging(ctx, &s3.PutObjectTaggingInput{
 					Bucket: aws.String(name), Key: aws.String("k"),
 					Tagging: &types.Tagging{TagSet: []types.Tag{{Key: aws.String("a"), Value: aws.String("b")}}},
 				})
@@ -111,7 +111,7 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		doc := bucketPolicy(name)
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.PutBucketPolicy(ctx, &s3.PutBucketPolicyInput{Bucket: aws.String(name), Policy: aws.String(doc)})
+				_, err := rt.S3PutBucketPolicy(ctx, &s3.PutBucketPolicyInput{Bucket: aws.String(name), Policy: aws.String(doc)})
 				return wrapErr("runGaps", err)
 			})
 			return callOut, wrapErr("runGaps", callErr)
@@ -119,7 +119,7 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	case "S3-GAP-006":
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+				_, err := rt.S3CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
 					Bucket: aws.String(name),
 					Key:    aws.String("m"),
 				})
@@ -130,7 +130,7 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	case "S3-GAP-007":
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.PutBucketVersioning(ctx, &s3.PutBucketVersioningInput{
+				_, err := rt.S3PutBucketVersioning(ctx, &s3.PutBucketVersioningInput{
 					Bucket:                  aws.String(name),
 					VersioningConfiguration: &types.VersioningConfiguration{Status: types.BucketVersioningStatusSuspended},
 				})
@@ -149,7 +149,7 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	case "S3-GAP-009":
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.PutBucketCors(ctx, &s3.PutBucketCorsInput{
+				_, err := rt.S3PutBucketCors(ctx, &s3.PutBucketCorsInput{
 					Bucket: aws.String(name),
 					CORSConfiguration: &types.CORSConfiguration{CORSRules: []types.CORSRule{{
 						AllowedMethods: []string{"GET"},
@@ -163,7 +163,7 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	case "S3-GAP-010":
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.PutBucketLifecycleConfiguration(ctx, &s3.PutBucketLifecycleConfigurationInput{
+				_, err := rt.S3PutBucketLifecycleConfiguration(ctx, &s3.PutBucketLifecycleConfigurationInput{
 					Bucket: aws.String(name),
 					LifecycleConfiguration: &types.BucketLifecycleConfiguration{Rules: []types.LifecycleRule{{
 						ID: aws.String("expire"), Status: types.ExpirationStatusEnabled,
@@ -178,7 +178,7 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	case "S3-GAP-016":
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.PutBucketLifecycleConfiguration(ctx, &s3.PutBucketLifecycleConfigurationInput{
+				_, err := rt.S3PutBucketLifecycleConfiguration(ctx, &s3.PutBucketLifecycleConfigurationInput{
 					Bucket: aws.String(name),
 					LifecycleConfiguration: &types.BucketLifecycleConfiguration{Rules: []types.LifecycleRule{{
 						ID: aws.String("bad"), Status: types.ExpirationStatusEnabled,
@@ -192,7 +192,7 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	case "S3-GAP-011":
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.PutBucketWebsite(ctx, &s3.PutBucketWebsiteInput{
+				_, err := rt.S3PutBucketWebsite(ctx, &s3.PutBucketWebsiteInput{
 					Bucket: aws.String(name),
 					WebsiteConfiguration: &types.WebsiteConfiguration{
 						IndexDocument: &types.IndexDocument{Suffix: aws.String("index.html")},

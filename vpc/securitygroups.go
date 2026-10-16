@@ -95,7 +95,7 @@ func runSG(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcom
 	case "VPC-SG-001":
 		var id string
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
-			out, err := api.CreateSecurityGroup(ctx, &awsec2.CreateSecurityGroupInput{
+			out, err := rt.EC2CreateSecurityGroup(ctx, &awsec2.CreateSecurityGroupInput{
 				GroupName:   aws.String(name),
 				Description: aws.String("conformance"), VpcId: aws.String(vpcID),
 			})
@@ -123,7 +123,7 @@ func runSG(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcom
 			IpRanges: []types.IpRange{{CidrIp: aws.String("10.0.0.0/8")}},
 		}
 		if c.ID == "VPC-SG-103" {
-			if _, err := api.AuthorizeSecurityGroupIngress(ctx,
+			if _, err := rt.EC2AuthorizeSecurityGroupIngress(ctx,
 				&awsec2.AuthorizeSecurityGroupIngressInput{
 					GroupId:       aws.String(id),
 					IpPermissions: []types.IpPermission{ip},
@@ -133,7 +133,7 @@ func runSG(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcom
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.AuthorizeSecurityGroupIngress(ctx, &awsec2.AuthorizeSecurityGroupIngressInput{
+				_, err := rt.EC2AuthorizeSecurityGroupIngress(ctx, &awsec2.AuthorizeSecurityGroupIngressInput{
 					GroupId:       aws.String(id),
 					IpPermissions: []types.IpPermission{ip},
 				})
@@ -172,7 +172,7 @@ func runSG(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcom
 		{
 			var created string
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				out, err := api.CreateSecurityGroup(ctx, &awsec2.CreateSecurityGroupInput{
+				out, err := rt.EC2CreateSecurityGroup(ctx, &awsec2.CreateSecurityGroupInput{
 					GroupName:   aws.String(name),
 					Description: aws.String("conformance"), VpcId: aws.String(vpcID),
 				})
@@ -215,7 +215,7 @@ func goneGroup(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, cid
 }
 
 func makeSG(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, vpcID, name string) (string, error) {
-	out, err := api.CreateSecurityGroup(ctx, &awsec2.CreateSecurityGroupInput{
+	out, err := rt.EC2CreateSecurityGroup(ctx, &awsec2.CreateSecurityGroupInput{
 		GroupName:   aws.String(name),
 		Description: aws.String("conformance"), VpcId: aws.String(vpcID),
 	})

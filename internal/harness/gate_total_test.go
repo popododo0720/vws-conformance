@@ -203,7 +203,8 @@ func TestFreshnessClearedOnDelete(t *testing.T) {
 		if r.Method == http.MethodHead || r.Method == http.MethodGet {
 			if !created.Load() || deletes.Load() == 0 {
 				w.WriteHeader(http.StatusNotFound)
-				if _, err := io.WriteString(w, `<?xml version="1.0"?><Error><Code>NoSuchBucket</Code><Message>missing</Message></Error>`); err != nil {
+				const missing = `<?xml version="1.0"?><Error><Code>NoSuchBucket</Code><Message>missing</Message></Error>`
+				if _, err := io.WriteString(w, missing); err != nil {
 					panic(err)
 				}
 				return
@@ -227,6 +228,45 @@ func TestFreshnessClearedOnDelete(t *testing.T) {
 	if deletes.Load() != 1 || err == nil || !strings.Contains(err.Error(), "preserve") {
 		t.Fatalf("deletes %d err %v", deletes.Load(), err)
 	}
+}
+
+func TestVerifiedAbsentBlockDeviceAllowsTerminate(t *testing.T) {
+	const run = "conf-20261015T120000Z-abc123"
+	var terms atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		vals := requestValues(r)
+		action := vals.Get("Action")
+		switch action {
+		case "TerminateInstances":
+			terms.Add(1)
+			writeEC2(w, 200, ec2OK("TerminateInstancesResponse", "<instancesSet/>"))
+		case "DescribeInstances":
+			item := strings.Replace(instOwned("i-1", run), "<name>running</name>", "<name>terminated</name>", 1)
+			item = strings.Replace(item, "</instanceState>", "</instanceState>"+goneBlockDevice("vol-gone"), 1)
+			writeEC2(w, 200, ec2OK("DescribeInstancesResponse", "<reservationSet>"+item+"</reservationSet>"))
+		case "DescribeVolumes":
+			if vals.Get("VolumeId.1") == "vol-gone" {
+				writeEC2(w, 400, ec2Err("InvalidVolume.NotFound", "not found"))
+				return
+			}
+			writeEC2(w, 200, ec2OK("DescribeVolumesResponse", "<volumeSet/>"))
+		default:
+			status, body := ec2Describe(action, false)
+			writeEC2(w, status, body)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	rt := ec2Runtime(t, srv.URL, t.TempDir())
+	err := rt.EC2Terminate(context.Background(), []string{"i-1"})
+	if terms.Load() != 1 || err != nil {
+		t.Fatalf("terminates %d err %v", terms.Load(), err)
+	}
+}
+
+func goneBlockDevice(id string) string {
+	return "<blockDeviceMapping><item><deviceName>/dev/xvda</deviceName><ebs>" +
+		"<volumeId>" + id + "</volumeId><status>attached</status>" +
+		"<deleteOnTermination>true</deleteOnTermination></ebs></item></blockDeviceMapping>"
 }
 
 func TestTerminateReconcilesBlockDeviceMappings(t *testing.T) {
