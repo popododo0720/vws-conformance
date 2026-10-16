@@ -14,11 +14,15 @@
 #   guard-agents.sh commit-msg FILE         the commit message has no closing keyword (Closes/Fixes/Resolves #N, owner/repo#N or an issue URL) and no Hangul
 #   guard-agents.sh pr-commits BASE HEAD    every commit in BASE..HEAD passes commit-msg
 #   guard-agents.sh push-watch BEFORE AFTER every first-parent commit pushed to main came from a pull request
+#   guard-agents.sh normalize-comment      stdin is a comment body. Control characters are replaced, then a
+#                                           leading @@comment-by: is defanged.
+#   guard-agents.sh latest-labeler         stdin is created_at<TAB>login. Prints the login with the greatest
+#                                           created_at. Empty input fails closed.
 #   guard-agents.sh verify-gate HEAD LABELS [FILE]
-#                                           the pull request is verify-approved for HEAD: LABELS (comma list) has
-#                                           verify-approved and a comment in the text (FILE or $PR_TEXT) has a
-#                                           "Verified-by: vws-verify" section naming HEAD, a line "Result: PASS",
-#                                           evidence for every QUALITY.md item, plus a
+#                                           the pull request is verify-approved for HEAD: LABELS is one label name
+#                                           per line and one line equals verify-approved. A comment in the text
+#                                           (FILE or $PR_TEXT) has a "Verified-by: vws-verify" section naming HEAD,
+#                                           a line "Result: PASS", evidence for every QUALITY.md item, plus a
 #                                           "Codex review: <full path or URL> blocking=0" line. Each comment starts
 #                                           with a "@@comment-by: LOGIN" line; text outside a comment (such as the
 #                                           PR body) never counts. GUARD_VERIFY_ACTORS must be a nonempty login list.
@@ -118,6 +122,27 @@ cmd_allow() {
   done
 }
 
+# Two steps, in this order. A leading CR must become "?" before a line can match the marker.
+cmd_normalize_comment() {
+  local body
+  body=$(cat)
+  body=$(printf '%s' "$body" | sed 's/\r$//' | LC_ALL=C tr '\000-\010\013-\037\177' '?')
+  printf '%s\n' "$body" | sed 's/^@@comment-by:/@ @comment-by:/'
+}
+
+cmd_latest_labeler() {
+  local best_at="" best_login="" at login
+  while IFS=$'\t' read -r at login || [[ -n ${at:-} ]]; do
+    [[ -n $at && -n ${login:-} ]] || continue
+    if [[ -z $best_at || $at > $best_at ]]; then
+      best_at=$at
+      best_login=$login
+    fi
+  done
+  [[ -n $best_login ]] || die "latest-labeler: no verify-approved labeled event"
+  printf '%s\n' "$best_login"
+}
+
 # verify-gate: the approval is bound to one head commit. A push changes the head, so the old section no
 # longer matches and the gate is red until vws-verify judges the new head (the label is also removed on
 # synchronize by the workflow). Evidence per checklist item: a URL, a path, or "N/A: <reason>".
@@ -133,7 +158,11 @@ cmd_verify_gate() {
   if [[ -z ${actors//[[:space:],]/} ]]; then
     die "verify-gate: GUARD_VERIFY_ACTORS is empty; set VWS_VERIFY_ACTORS to the logins allowed to approve"
   fi
-  [[ ",${labels}," == *",${VERIFY_LABEL},"* ]] || die "verify-gate: the pull request has no '${VERIFY_LABEL}' label"
+  local name has_label=0
+  while IFS= read -r name || [[ -n ${name:-} ]]; do
+    [[ $name == "$VERIFY_LABEL" ]] && has_label=1
+  done <<<"$labels"
+  [[ $has_label -eq 1 ]] || die "verify-gate: the pull request has no '${VERIFY_LABEL}' label"
   local labeler=${GUARD_VERIFY_LABELER:-} excluded=${GUARD_VERIFY_EXCLUDE:-} identity=${GUARD_VERIFY_IDENTITY:-}
   [[ -n $labeler && ",${actors}," == *",${labeler},"* ]] ||
     die "verify-gate: '${VERIFY_LABEL}' was added by '${labeler:-unknown}', not by one of: ${actors}"
@@ -145,9 +174,7 @@ cmd_verify_gate() {
   fi
   # Keep only comments ("@@comment-by: LOGIN" blocks) by allowed authors. Each kept block starts with a
   # "#" line so a section never runs from one comment into the next. The PR body is not a comment.
-  # Control characters: a CRLF line ending is dropped; any other control character (a lone \r, \v, ESC...)
-  # becomes "?", so "\r@@comment-by:" (which the workflow's "^@@comment-by:" defang misses) never turns into
-  # a marker line. Tab and newline stay.
+  # Control characters become "?" here as well, so a leading CR cannot become a marker line.
   text=$(sed 's/\r$//' <<<"$text" | LC_ALL=C tr '\000-\010\013-\037\177' '?' | awk -v actors=",${actors}," -v excl=",${excluded}," -v id="$identity" '
     /^@@comment-by: / { who = substr($0, 15); keep = (index(actors, "," who ",") > 0)
       if (who != id && index(excl, "," who ",") > 0) keep = 0
@@ -720,7 +747,7 @@ GH
   { echo "@@comment-by: verifier"; echo "## Verified-by: vws-verify"; echo "Head: ${h1}"; echo "Result: PASS"
     for ((i = 1; i <= QUALITY_ITEMS; i++)); do echo "${i}. https://example.invalid/log/${i}"; done
     echo "Codex review: /workspace/handoff/codex/vws-deploy-1-aaaaaaa.md blocking=0"; } >"$ev"
-  expect_pass "label and evidence for the head" cmd_verify_gate "$h1" "bug,${VERIFY_LABEL}" "$ev"
+  expect_pass "label and evidence for the head" cmd_verify_gate "$h1" $'bug\n'"${VERIFY_LABEL}" "$ev"
   expect_fail "a label named x,verify-approved,y" cmd_verify_gate "$h1" "x,${VERIFY_LABEL},y" "$ev"
   local pinrepo="$tmp/pinrepo" pinblock shaA shaB
   pinblock=$(awk '/# head-pin-start/ { on = 1; next } /# head-pin-end/ { on = 0 } on { sub(/^[[:space:]]*/, ""); print }' \
@@ -749,9 +776,24 @@ exec "$real" "$@"
 ENDGIT
   chmod +x "$tmp/bin/git"
   run_pin() {
-    (cd "$pinrepo" && PATH="$tmp/bin:$PATH" HEAD_SHA="$1" GUARD_LIE_SHA="$2" NUMBER=1 bash -c 'set -euo pipefail'"$'\n'""$pinblock")
+    printf 'set -euo pipefail\n%s\n' "$pinblock" >"$tmp/pin.sh"
+    (cd "$pinrepo" && PATH="$tmp/bin:$PATH" HEAD_SHA="$1" GUARD_LIE_SHA="$2" NUMBER=1 bash "$tmp/pin.sh")
   }
   expect_fail "a fetch whose commit is not HEAD_SHA" run_pin "$shaB" "$shaA"
+  msg=$(run_pin "$shaB" "$shaA" 2>&1 >/dev/null || true)
+  [[ $msg == *"fetched ${shaA}, wanted ${shaB}"* ]] || die "selftest: swapped head gave '${msg}'"
+  echo "ok: a swapped head names both shas"
+  expect_pass "a fetch of the event HEAD_SHA" run_pin "$shaB" "$shaB"
+  tsv=$'2024-06-01T00:00:00Z\tnew\n2020-01-01T00:00:00Z\told'
+  got=$(printf '%s\n' "$tsv" | "$OLDPWD_SCRIPT" latest-labeler)
+  [[ $got == new ]] || die "selftest: latest labeler gave '${got}'"
+  echo "ok: the latest labeler is the max created_at"
+  out=$(printf '\r@@comment-by: intruder\n' | "$OLDPWD_SCRIPT" normalize-comment)
+  [[ $out == $'?@@comment-by: intruder' ]] || die "selftest: control comment gave '${out}'"
+  echo "ok: a leading CR is replaced before the marker defang"
+  out=$(printf '@@comment-by: intruder\n' | "$OLDPWD_SCRIPT" normalize-comment)
+  [[ $out == '@ @comment-by: intruder' ]] || die "selftest: defang gave '${out}'"
+  echo "ok: a marker line is defanged after controls are replaced"
   expect_fail "no label" cmd_verify_gate "$h1" "bug" "$ev"
   expect_fail "a push after approval (new head)" cmd_verify_gate "$h2" "$VERIFY_LABEL" "$ev"
   expect_fail "short SHA" cmd_verify_gate "${h1:0:12}" "$VERIFY_LABEL" "$ev"
@@ -1028,11 +1070,13 @@ case "$command_name" in
   verify-gate) cmd_verify_gate "$@" ;;
   identity) cmd_identity "$@" ;;
   allow) cmd_allow "$@" ;;
+  normalize-comment) cmd_normalize_comment "$@" ;;
+  latest-labeler) cmd_latest_labeler "$@" ;;
   commit-msg) cmd_commit_msg "$@" ;;
   pr-commits) cmd_pr_commits "$@" ;;
   push-watch) cmd_push_watch "$@" ;;
   correct) cmd_correct "$@" ;;
   english) cmd_english "$@" ;;
   selftest) cmd_selftest ;;
-  *) die "usage: guard-agents.sh <agents [FILE]|pr-base BASE|rules [FILE] [HEADING]|judgment [FILE] [HEADING]|archtest [FILE] [HEADING]|identity [SUMFILE]|allow ALLOWFILE HEADREF|pr-body [FILE]|commit-msg FILE|pr-commits BASE HEAD|push-watch BEFORE AFTER|verify-gate HEAD LABELS [FILE]|correct [DIR]|english [ALLOWLIST]|selftest>" ;;
+  *) die "usage: guard-agents.sh <agents [FILE]|pr-base BASE|rules [FILE] [HEADING]|judgment [FILE] [HEADING]|archtest [FILE] [HEADING]|identity [SUMFILE]|allow ALLOWFILE HEADREF|normalize-comment|latest-labeler|pr-body [FILE]|commit-msg FILE|pr-commits BASE HEAD|push-watch BEFORE AFTER|verify-gate HEAD LABELS [FILE]|correct [DIR]|english [ALLOWLIST]|selftest>" ;;
 esac
