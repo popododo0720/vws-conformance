@@ -164,7 +164,7 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 			return callOut, wrapErr("runVol", callErr)
 		}
 	case "EBS-VOL-101", "EBS-VOL-104", "EBS-VOL-105", "EBS-VOL-106", "EBS-VOL-107":
-		id, err := goneVol(ctx, rt, api, "missing")
+		id, err := goneVol(ctx, rt, api, c.ID)
 		if err != nil {
 			return cases.Outcome{}, err
 		}

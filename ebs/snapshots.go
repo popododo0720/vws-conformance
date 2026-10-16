@@ -59,7 +59,7 @@ func runSnap(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	}
 	switch c.ID {
 	case "EBS-SNAP-101", "EBS-SNAP-102":
-		id, err := goneSnap(ctx, rt, api)
+		id, err := goneSnap(ctx, rt, api, c.ID)
 		if err != nil {
 			return cases.Outcome{}, err
 		}
@@ -150,12 +150,12 @@ func runSnap(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	}
 }
 
-func goneSnap(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (string, error) {
-	vol, err := makeVol(ctx, rt, api, "snapgone")
+func goneSnap(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, token string) (string, error) {
+	vol, err := makeVol(ctx, rt, api, token+"vol")
 	if err != nil {
 		return "", err
 	}
-	desc := rt.Name("snapgone")
+	desc := rt.Name(token)
 	out, err := api.CreateSnapshot(ctx, &awsec2.CreateSnapshotInput{
 		VolumeId: aws.String(vol), Description: aws.String(desc),
 	})
