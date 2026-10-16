@@ -53,6 +53,34 @@ func TestSweepReportsVolumeThatStaysInUse(t *testing.T) {
 	}
 }
 
+func TestSweepDropsAVolumeWhenDetachIsMissing(t *testing.T) {
+	var deletes atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		action := ec2Action(r)
+		if action == "DetachVolume" {
+			writeEC2(w, 400, ec2Err("InvalidAction", "DetachVolume"))
+			return
+		}
+		if action == "DeleteVolume" {
+			deletes.Add(1)
+			writeEC2(w, 400, ec2Err("IncorrectState", "volume is in use"))
+			return
+		}
+		status, body := ec2Describe(action, true)
+		writeEC2(w, status, body)
+	}))
+	defer srv.Close()
+	rt := runtimeOn(t, srv.URL, "vol-1")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := rt.Sweep(ctx); err != nil {
+		t.Fatalf("sweep: %v deletes %d", err, deletes.Load())
+	}
+	if deletes.Load() != 1 {
+		t.Fatalf("deletes %d", deletes.Load())
+	}
+}
+
 func TestSweepDetachesAnAttachedVolume(t *testing.T) {
 	var detached atomic.Bool
 	var deletes atomic.Int32
