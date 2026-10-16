@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -222,6 +223,66 @@ func TestMakeVolWaitsUntilAvailable(t *testing.T) {
 	}
 	if id != "vol-1" || describes.Load() < 2 {
 		t.Fatalf("id %s describes %d", id, describes.Load())
+	}
+}
+
+func TestMakeVolReturnsLedgerErrorAndKeepsCleanup(t *testing.T) {
+	const run = "conf-20261015T120000Z-abc123"
+	var deletes atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, readErr := io.ReadAll(r.Body)
+		if readErr != nil {
+			panic(readErr)
+		}
+		w.Header().Set("Content-Type", "text/xml")
+		body := string(b)
+		switch {
+		case strings.Contains(body, "DescribeVolumes"):
+			if _, writeErr := io.WriteString(w, describeVolumeXML("available")); writeErr != nil {
+				panic(writeErr)
+			}
+		case strings.Contains(body, "DeleteVolume"):
+			deletes.Add(1)
+			if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+				`<DeleteVolumeResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">`+
+				`<requestId>r</requestId><return>true</return></DeleteVolumeResponse>`); writeErr != nil {
+				panic(writeErr)
+			}
+		default:
+			if _, writeErr := io.WriteString(w, volumeXML("available")); writeErr != nil {
+				panic(writeErr)
+			}
+		}
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	blocked := dir + "/not-a-directory"
+	if err := os.WriteFile(blocked, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt := harness.NewRuntime(harness.Config{
+		RunID: run, OutDir: blocked, Region: "vws-1", Target: "local-fake", AccountID: "123456789012",
+	}, nil)
+	awsCfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithRegion("vws-1"),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("AKIDEXAMPLE", "secret", "")),
+		config.WithEC2IMDSClientEnableState(imds.ClientDisabled),
+		config.WithRetryer(func() aws.Retryer {
+			return retry.NewStandard(func(o *retry.StandardOptions) { o.MaxAttempts = 1 })
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := awsec2.NewFromConfig(awsCfg, func(o *awsec2.Options) { o.BaseEndpoint = aws.String(srv.URL) })
+	if _, err := makeVol(context.Background(), rt, api, "vol"); err == nil || !strings.Contains(err.Error(), "ledger") {
+		t.Fatalf("err %v", err)
+	}
+	if err := rt.Clean.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if deletes.Load() != 1 {
+		t.Fatalf("deletes %d", deletes.Load())
 	}
 }
 
