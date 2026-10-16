@@ -183,3 +183,45 @@ func ownedTag(tags []ec2types.Tag, keep func(string) bool) bool {
 	}
 	return false
 }
+
+func appendOwner(owners []string, id string) []string {
+	if ValidateRunID(id) != nil {
+		return owners
+	}
+	for _, owner := range owners {
+		if owner == id {
+			return owners
+		}
+	}
+	return append(owners, id)
+}
+
+func mergeOwners(dst, src []string) []string {
+	for _, id := range src {
+		dst = appendOwner(dst, id)
+	}
+	return dst
+}
+
+func runOwners(name string) []string {
+	id, ok := runIDFromName(name)
+	if !ok {
+		return nil
+	}
+	return []string{id}
+}
+
+func tagOwners(tags []ec2types.Tag) []string {
+	var owners []string
+	for _, tag := range tags {
+		key := aws.ToString(tag.Key)
+		val := aws.ToString(tag.Value)
+		if key == "vws:conformance-run" {
+			owners = appendOwner(owners, val)
+		}
+		if key == "Name" {
+			owners = mergeOwners(owners, runOwners(val))
+		}
+	}
+	return owners
+}
