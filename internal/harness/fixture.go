@@ -253,7 +253,7 @@ func (rt *Runtime) clearOwned(ctx context.Context, rows []sweep.Resource) error 
 			return rt.deleteItems(ctx, targets)
 		}
 		last = live
-		if err := rt.deleteItems(ctx, targets); err != nil {
+		if err := rt.deleteItems(ctx, targets); err != nil && !retryableDelete(err) {
 			return rt.sweepGiveUp(ctx, last, err)
 		}
 		timer := time.NewTimer(sweepPause)
@@ -903,7 +903,7 @@ func deleteEC2(ctx context.Context, rt *Runtime, items []sweepItem) error {
 			_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteVolumeOutput, error) {
 				return c.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(item.id)})
 			})
-			if err != nil && !strings.Contains(err.Error(), "NotFound") && !strings.Contains(err.Error(), "IncorrectState") {
+			if err != nil && !strings.Contains(err.Error(), "NotFound") {
 				return fmt.Errorf("delete volume %s: %w", item.id, err)
 			}
 		case "snapshot":
@@ -963,19 +963,24 @@ func deleteEC2(ctx context.Context, rt *Runtime, items []sweepItem) error {
 			_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteSubnetOutput, error) {
 				return c.DeleteSubnet(ctx, &ec2.DeleteSubnetInput{SubnetId: aws.String(item.id)})
 			})
-			if err != nil && !strings.Contains(err.Error(), "NotFound") && !strings.Contains(err.Error(), "Dependency") {
+			if err != nil && !strings.Contains(err.Error(), "NotFound") {
 				return fmt.Errorf("delete subnet: %w", err)
 			}
 		case "vpc":
 			_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteVpcOutput, error) {
 				return c.DeleteVpc(ctx, &ec2.DeleteVpcInput{VpcId: aws.String(item.id)})
 			})
-			if err != nil && !strings.Contains(err.Error(), "NotFound") && !strings.Contains(err.Error(), "Dependency") {
+			if err != nil && !strings.Contains(err.Error(), "NotFound") {
 				return fmt.Errorf("delete vpc: %w", err)
 			}
 		}
 	}
 	return nil
+}
+
+func retryableDelete(err error) bool {
+	s := err.Error()
+	return strings.Contains(s, "IncorrectState") || strings.Contains(s, "Dependency")
 }
 
 func rowInScope(row sweep.Resource, scope ledgerScope) bool {
