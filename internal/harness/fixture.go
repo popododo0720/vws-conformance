@@ -342,6 +342,25 @@ func readLedger(dir string) ([]sweep.Resource, error) {
 	return out, nil
 }
 
+func (rt *Runtime) bucketTags(ctx context.Context, name string) ([]ec2types.Tag, error) {
+	out, err := withDeadline(ctx, func(ctx context.Context) (*s3.GetBucketTaggingOutput, error) {
+		return rt.Clients.S3.GetBucketTagging(ctx, &s3.GetBucketTaggingInput{Bucket: aws.String(name)})
+	})
+	if err != nil {
+		if strings.Contains(err.Error(), "NoSuchTagSet") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get bucket tagging %s: %w", name, err)
+	}
+	var tags []ec2types.Tag
+	if out != nil {
+		for _, tag := range out.TagSet {
+			tags = append(tags, ec2types.Tag{Key: tag.Key, Value: tag.Value})
+		}
+	}
+	return tags, nil
+}
+
 func emptyAndDelete(ctx context.Context, c *s3.Client, name string) error {
 	var token *string
 	for {
@@ -475,9 +494,19 @@ func (rt *Runtime) collectInventory(ctx context.Context, rows []sweep.Resource, 
 			}
 			for _, b := range out.Buckets {
 				name := aws.ToString(b.Name)
-				if ownedName(name, rt.keepRun) {
-					items = append(items, sweepItem{kind: "bucket", id: name, owners: runOwners(name)})
+				if !ownedName(name, rt.keepRun) {
+					continue
 				}
+				tags, tagErr := rt.bucketTags(ctx, name)
+				if tagErr != nil {
+					return nil, tagErr
+				}
+				if ownerOutsideKeep(tags, []string{name}, rt.keepRun) {
+					continue
+				}
+				items = append(items, sweepItem{
+					kind: "bucket", id: name, owners: mergeOwners(runOwners(name), tagOwners(tags)),
+				})
 			}
 			return out.ContinuationToken, nil
 		})

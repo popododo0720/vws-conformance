@@ -33,6 +33,9 @@ const testAccount = "123456789012"
 func TestSweepReportsVolumeThatStaysInUse(t *testing.T) {
 	var deletes atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeNoSuchTagSet(w, r) {
+			return
+		}
 		action := ec2Action(r)
 		if action == "DetachVolume" {
 			writeEC2(w, 200, ec2OK("DetachVolumeResponse", "<volumeId>vol-1</volumeId>"))
@@ -61,6 +64,9 @@ func TestSweepReportsVolumeThatStaysInUse(t *testing.T) {
 
 func TestSweepKeepsAnUndetachableVolume(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeNoSuchTagSet(w, r) {
+			return
+		}
 		action := ec2Action(r)
 		if action == "DetachVolume" {
 			writeEC2(w, 400, ec2Err("InvalidAction", "DetachVolume"))
@@ -105,6 +111,9 @@ func TestSweepLeavesLiveForeignAndOtherTargetVolumes(t *testing.T) {
 	}
 	deleted := map[string]bool{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeNoSuchTagSet(w, r) {
+			return
+		}
 		if r.Method == http.MethodGet {
 			w.Header().Set("Content-Type", "application/xml")
 			if _, writeErr := io.WriteString(w, listBucketsXML(nil)); writeErr != nil {
@@ -165,6 +174,9 @@ func TestSweepDetachesAnAttachedVolume(t *testing.T) {
 	var detached atomic.Bool
 	var deletes atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeNoSuchTagSet(w, r) {
+			return
+		}
 		action := ec2Action(r)
 		switch action {
 		case "DetachVolume":
@@ -203,6 +215,9 @@ func TestSweepSucceedsWhenVolumeDisappears(t *testing.T) {
 	var gone atomic.Bool
 	var deletes atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeNoSuchTagSet(w, r) {
+			return
+		}
 		action := ec2Action(r)
 		if action == "DeleteVolume" {
 			deletes.Add(1)
@@ -257,6 +272,9 @@ func TestSweepKeepsForeignAndActiveResources(t *testing.T) {
 		mu.Unlock()
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeNoSuchTagSet(w, r) {
+			return
+		}
 		if r.Method == http.MethodDelete {
 			dropBucket(strings.Trim(r.URL.Path, "/"))
 			w.WriteHeader(http.StatusNoContent)
@@ -361,6 +379,9 @@ func TestSweepKeepsForeignRunAcrossOutDirs(t *testing.T) {
 	volumes := map[string]string{"vol-mine": mine, "vol-foreign": foreign}
 	deleted := map[string]bool{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeNoSuchTagSet(w, r) {
+			return
+		}
 		if r.Method == http.MethodDelete && r.URL.Path != "/" {
 			name := strings.Trim(r.URL.Path, "/")
 			mu.Lock()
@@ -434,6 +455,9 @@ func TestSweepRespectsLiveMarkerForItsOwnRunID(t *testing.T) {
 	volumes := map[string]string{"vol-mine": mine}
 	deleted := map[string]bool{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeNoSuchTagSet(w, r) {
+			return
+		}
 		if r.Method == http.MethodDelete && r.URL.Path != "/" {
 			name := strings.Trim(r.URL.Path, "/")
 			mu.Lock()
@@ -508,6 +532,9 @@ func TestSweepUsesSharedActivity(t *testing.T) {
 	buckets := map[string]bool{mineName: true, liveName: true, deadName: true, releasedName: true}
 	deleted := map[string]bool{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeNoSuchTagSet(w, r) {
+			return
+		}
 		if r.Method == http.MethodDelete && r.URL.Path != "/" {
 			name := strings.Trim(r.URL.Path, "/")
 			mu.Lock()
@@ -576,6 +603,9 @@ func TestSweepReadsTheSecondBucketPage(t *testing.T) {
 	var mu sync.Mutex
 	deleted := map[string]bool{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeNoSuchTagSet(w, r) {
+			return
+		}
 		if r.Method == http.MethodDelete && r.URL.Path != "/" {
 			mu.Lock()
 			deleted["bucket "+strings.Trim(r.URL.Path, "/")] = true
@@ -633,6 +663,9 @@ func TestSweepReadsTheSecondDescribePage(t *testing.T) {
 	var page atomic.Int32
 	var terminated atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeNoSuchTagSet(w, r) {
+			return
+		}
 		if r.Method == http.MethodGet {
 			w.Header().Set("Content-Type", "application/xml")
 			if _, writeErr := io.WriteString(w, listBucketsXML(nil)); writeErr != nil {
@@ -678,6 +711,18 @@ func TestSweepReadsTheSecondDescribePage(t *testing.T) {
 	if !terminated.Load() {
 		t.Fatal("instance on page 2 was kept")
 	}
+}
+
+func writeNoSuchTagSet(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method != http.MethodGet || !r.URL.Query().Has("tagging") {
+		return false
+	}
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusNotFound)
+	if _, writeErr := io.WriteString(w, noSuchTagSetXML(strings.Trim(r.URL.Path, "/"))); writeErr != nil {
+		panic(writeErr)
+	}
+	return true
 }
 
 func listBucketsXML(names map[string]bool) string {
