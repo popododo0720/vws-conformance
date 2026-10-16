@@ -19,6 +19,48 @@ import (
 	"github.com/popododo0720/vws-conformance/internal/harness"
 )
 
+func TestMakeVolRetriesWhenTagsAreUnsupported(t *testing.T) {
+	const run = "conf-20261015T120000Z-abc123"
+	var tagged, plain atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		body := string(b)
+		w.Header().Set("Content-Type", "text/xml")
+		if strings.Contains(body, "DescribeVolumes") {
+			_, _ = io.WriteString(w, describeVolumeXML("available"))
+			return
+		}
+		if strings.Contains(body, "TagSpecification") {
+			tagged.Add(1)
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+				`<Response><Errors><Error><Code>InvalidParameterValue</Code>`+
+				`<Message>unsupported</Message></Error></Errors><RequestID>r</RequestID></Response>`)
+			return
+		}
+		plain.Add(1)
+		_, _ = io.WriteString(w, volumeXML("available"))
+	}))
+	defer srv.Close()
+	rt := harness.NewRuntime(harness.Config{RunID: run, OutDir: t.TempDir(), Region: "vws-1"}, nil)
+	awsCfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithRegion("vws-1"),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("AKIDEXAMPLE", "secret", "")),
+		config.WithEC2IMDSClientEnableState(imds.ClientDisabled),
+		config.WithRetryer(func() aws.Retryer {
+			return retry.NewStandard(func(o *retry.StandardOptions) { o.MaxAttempts = 1 })
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := awsec2.NewFromConfig(awsCfg, func(o *awsec2.Options) { o.BaseEndpoint = aws.String(srv.URL) })
+	id, err := makeVol(context.Background(), rt, api, "vol")
+	if err != nil || id != "vol-1" || tagged.Load() != 1 || plain.Load() != 1 {
+		t.Fatalf("id %s err %v tagged %d plain %d", id, err, tagged.Load(), plain.Load())
+	}
+}
+
 func TestMakeVolTagsTheRun(t *testing.T) {
 	const run = "conf-20261015T120000Z-abc123"
 	var body string

@@ -22,6 +22,34 @@ import (
 	"github.com/popododo0720/vws-conformance/internal/harness"
 )
 
+func TestAllocIDRetriesWhenTagsAreUnsupported(t *testing.T) {
+	const run = "conf-20261015T120000Z-abc123"
+	var tagged, plain atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/xml")
+		if strings.Contains(string(b), "TagSpecification") {
+			tagged.Add(1)
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+				`<Response><Errors><Error><Code>InvalidParameterValue</Code>`+
+				`<Message>unsupported</Message></Error></Errors><RequestID>r</RequestID></Response>`)
+			return
+		}
+		plain.Add(1)
+		_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+			`<AllocateAddressResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">`+
+			`<requestId>r</requestId><publicIp>203.0.113.10</publicIp><domain>vpc</domain>`+
+			`<allocationId>eipalloc-1</allocationId></AllocateAddressResponse>`)
+	}))
+	defer srv.Close()
+	rt := harness.NewRuntime(harness.Config{RunID: run, OutDir: t.TempDir(), Region: "vws-1"}, nil)
+	id, err := allocID(context.Background(), rt, testEC2(t, srv.URL))
+	if err != nil || id != "eipalloc-1" || tagged.Load() != 1 || plain.Load() != 1 {
+		t.Fatalf("id %s err %v tagged %d plain %d", id, err, tagged.Load(), plain.Load())
+	}
+}
+
 func TestAllocIDReleasesWhenLedgerFails(t *testing.T) {
 	const run = "conf-20261015T120000Z-abc123"
 	var body string
