@@ -5,8 +5,6 @@ on:
   pull_request:
 
 jobs:
-  # Guard self-tests and the AGENTS.md checks always run. The Go steps run once the module exists
-  # (the harness lands in a separate pull request); until then they report that there is no module.
   test:
     runs-on: ubuntu-latest
     steps:
@@ -14,8 +12,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
-      - name: Install pinned PyYAML
-        run: python3 -m pip install --user --require-hashes -r scripts/requirements-guard.txt
       - run: scripts/guard-agents.sh selftest
       - run: scripts/guard-agents.sh agents
       - run: scripts/guard-agents.sh rules
@@ -24,7 +20,6 @@ jobs:
           if [ ! -f go.mod ]; then echo "no go.mod yet: nothing to test"; exit 0; fi
           go test -race -count=1 -timeout 300s ./...
 
-  # Common golangci-lint baseline (vws-deploy .github/golangci-common.yml, vws-deploy#300).
   lint:
     runs-on: ubuntu-latest
     steps:

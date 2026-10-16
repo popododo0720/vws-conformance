@@ -6,6 +6,9 @@
 #   guard-agents.sh judgment [FILE] [HEADING] alias of rules
 #   guard-agents.sh archtest [FILE] [HEADING] prints the rules line, then runs go test -v on GUARD_ARCHTEST_PKG
 #   guard-agents.sh identity [SUMFILE]      this file's sha256 equals SUMFILE (default scripts/guard-agents.sh.sha256)
+#   guard-agents.sh allow ALLOWFILE HEADREF every locked path at HEADREF has a line "HASH  PATH" in ALLOWFILE
+#                                           (sha256, two spaces). ALLOWFILE is the default-branch file.
+#                                           A line that exists only at HEADREF does not count.
 #   guard-agents.sh pr-base BASE_REF        a pull request must target the main branch
 #   guard-agents.sh pr-body [FILE]          the pull request text (FILE or $PR_BODY) has "Part of #N", no closing keyword and no Hangul
 #   guard-agents.sh commit-msg FILE         the commit message has no closing keyword (Closes/Fixes/Resolves #N, owner/repo#N or an issue URL) and no Hangul
@@ -28,8 +31,7 @@
 # GUARD_VERIFY_LABEL (default verify-approved), GUARD_QUALITY_ITEMS (default 9, the QUALITY.md checklist),
 # GUARD_VERIFY_ACTORS (comma list of logins allowed to approve; empty fails closed), GUARD_VERIFY_LABELER
 # (login that last added the label), GUARD_VERIFY_EXCLUDE (PR author and head pusher: never approve),
-# GUARD_VERIFY_IDENTITY (the vws-verify login, exempt from EXCLUDE), GUARD_WORKFLOW_FILE (workflow to check
-# for the verify-gate job; default .github/workflows/repo-guard.yml, or the file at GITHUB_SHA in Actions),
+# GUARD_VERIFY_IDENTITY (the vws-verify login, exempt from EXCLUDE),
 # GUARD_ARCHTEST_PKG (default ./internal/archtest/...), GITHUB_REPOSITORY and an authenticated gh for push-watch.
 set -euo pipefail
 export LC_ALL=C
@@ -39,8 +41,8 @@ HEADING=${GUARD_HEADING:-## Insider-risk guardrails}
 ITEMS=${GUARD_ITEMS:-7}
 VERIFY_LABEL=${GUARD_VERIFY_LABEL:-verify-approved}
 QUALITY_ITEMS=${GUARD_QUALITY_ITEMS:-9}
-# pull_request_target runs the copy of this file from the default branch and reads the pull request
-# workflow as data. A pull_request run uses the merge commit, so that run can replace the job.
+# pull_request_target runs this file from the default branch. allow reads the digest list from that
+# checkout, so a pull request cannot authorize its own edits to a locked file.
 die() {
   echo "$*" >&2
   exit 1
@@ -90,195 +92,30 @@ cmd_rules() {
   echo "rules: $(wc -l <<<"$rows") rows, $(awk -F'|' '$3 ~ /^[[:space:]]*Judgment/' <<<"$rows" | wc -l) Judgment"
 }
 
-# PyYAML decodes key escapes. The key "on" stays a string.
-assert_verify_workflow() {
-  local file=${GUARD_WORKFLOW_FILE:-} blob
-  if [[ -n $file ]]; then
-    [[ -f $file ]] || die "verify-gate: workflow ${file} does not exist"
-    blob=$(cat "$file")
-  elif [[ -n ${GITHUB_SHA:-} ]]; then
-    blob=$(git show "${GITHUB_SHA}:.github/workflows/repo-guard.yml" 2>/dev/null) ||
-      die "verify-gate: cannot read .github/workflows/repo-guard.yml at ${GITHUB_SHA}"
-    file="${GITHUB_SHA}:.github/workflows/repo-guard.yml"
-  else
-    file=.github/workflows/repo-guard.yml
-    [[ -f $file ]] || die "verify-gate: workflow ${file} does not exist"
-    blob=$(cat "$file")
-  fi
-  GUARD_WF_TEXT=$blob python3 - <<'PY' || exit 1
-import os, re, sys
-
-PINNED_YAML = "6.0.2"
-MAIN_IF = "github.base_ref == 'main'"
-CHECKOUT_REF = "${{ github.event.repository.default_branch }}"
-RUN_MARKERS = (
-    "python3 -m pip install --user --require-hashes -r scripts/requirements-guard.txt",
-    "issues/${NUMBER}/labels",
-    "@@comment-by:",
-    "cannot tell who pushed the head",
-    "refs/pull/${NUMBER}/head",
-    "refusing the PR head copy",
-    "scripts/guard-agents.sh identity",
-    "scripts/guard-agents.sh verify-gate",
+# Paths the verify-gate job loads. A pull request cannot shrink this set.
+# scripts/guard-allowed.sha256 is not listed. It is this checkout's digest list, so a review
+# can add a hash before the blob changes.
+LOCKED_PATHS=(
+  .github/workflows/repo-guard.yml
+  scripts/guard-agents.sh
+  scripts/guard-agents.sh.sha256
 )
 
-def fail(msg):
-    sys.stderr.write("verify-gate: " + msg + "\n")
-    sys.exit(1)
-
-def code_text(script):
-    lines = []
-    for line in script.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        out = []
-        quote = ""
-        i = 0
-        while i < len(line):
-            ch = line[i]
-            if quote:
-                out.append(ch)
-                if ch == quote and line[i - 1:i] != "\\":
-                    quote = ""
-                i += 1
-                continue
-            if ch in ("'", '"'):
-                quote = ch
-                out.append(ch)
-                i += 1
-                continue
-            if ch == "#":
-                break
-            out.append(ch)
-            i += 1
-        kept = "".join(out).strip()
-        if kept:
-            lines.append(kept)
-    return "\n".join(lines)
-
-def as_list(value):
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, list):
-        return value
-    return []
-
-def main():
-    try:
-        import yaml
-    except ImportError:
-        fail("PyYAML " + PINNED_YAML + " is required")
-    if getattr(yaml, "__version__", "") != PINNED_YAML:
-        fail("PyYAML " + PINNED_YAML + " is required")
-
-    class GuardLoader(yaml.SafeLoader):
-        pass
-
-    GuardLoader.yaml_implicit_resolvers = {
-        key: [(tag, rx) for tag, rx in pairs if tag != "tag:yaml.org,2002:bool"]
-        for key, pairs in yaml.SafeLoader.yaml_implicit_resolvers.items()
-    }
-    GuardLoader.add_implicit_resolver(
-        "tag:yaml.org,2002:bool",
-        re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"),
-        list("tTfF"),
-    )
-
-    def construct_mapping(loader, node, deep=False):
-        loader.flatten_mapping(node)
-        mapping = {}
-        for key_node, value_node in node.value:
-            key = loader.construct_object(key_node, deep=deep)
-            if key in mapping:
-                fail("workflow has a duplicate key: " + str(key))
-            mapping[key] = loader.construct_object(value_node, deep=deep)
-        return mapping
-
-    GuardLoader.add_constructor("tag:yaml.org,2002:map", construct_mapping)
-    try:
-        doc = yaml.load(os.environ.get("GUARD_WF_TEXT", ""), Loader=GuardLoader)
-    except SystemExit:
-        raise
-    except Exception as exc:
-        fail("workflow could not be parsed: " + str(exc))
-    if not isinstance(doc, dict):
-        fail("workflow has no pull_request_target trigger for main")
-
-    triggers = doc.get("on")
-    if not isinstance(triggers, dict):
-        fail("workflow has no pull_request_target trigger for main")
-    for event in ("pull_request", "pull_request_target"):
-        node = triggers.get(event)
-        if not isinstance(node, dict) or "main" not in as_list(node.get("branches")):
-            fail("workflow has no " + event + " trigger for main")
-
-    jobs = doc.get("jobs")
-    if not isinstance(jobs, dict) or not isinstance(jobs.get("verify-gate"), dict):
-        fail("workflow has no verify-gate job")
-    job = jobs["verify-gate"]
-    if "if" not in job:
-        fail("verify-gate job does not limit the base to main")
-    if job.get("if") != MAIN_IF:
-        fail("workflow sets if on the verify-gate job")
-    if "continue-on-error" in job and job.get("continue-on-error") is not False:
-        fail("workflow sets continue-on-error on the verify-gate job")
-    steps = job.get("steps")
-    if not isinstance(steps, list) or len(steps) != 2:
-        fail("verify-gate job steps are not the checkout and the approval")
-    checkout, approval = steps
-    if not isinstance(checkout, dict) or checkout.get("uses") != "actions/checkout@v4":
-        fail("verify-gate checkout is not actions/checkout@v4")
-    with_map = checkout.get("with")
-    if not isinstance(with_map, dict) or with_map.get("ref") != CHECKOUT_REF:
-        fail("verify-gate checks out a ref other than the default branch")
-    if with_map.get("persist-credentials") is not False:
-        fail("verify-gate checkout keeps credentials")
-    for step in steps:
-        if not isinstance(step, dict):
-            fail("verify-gate job steps are not the checkout and the approval")
-        if "if" in step:
-            fail("workflow sets if on the verify-gate step")
-        if "continue-on-error" in step and step.get("continue-on-error") is not False:
-            fail("workflow sets continue-on-error on the verify-gate step")
-    if approval.get("name") != "Approved for this head" or not isinstance(approval.get("run"), str):
-        fail("verify-gate approval step was removed")
-    runs = []
-
-    def walk(node):
-        if isinstance(node, dict):
-            run = node.get("run")
-            if isinstance(run, str):
-                runs.append(code_text(run))
-            for value in node.values():
-                walk(value)
-        elif isinstance(node, list):
-            for value in node:
-                walk(value)
-
-    walk(doc)
-    for run in runs:
-        if "HEAD_SHA:scripts/guard-agents.sh" in run or "HEAD_SHA}:scripts/guard-agents.sh" in run:
-            fail("workflow loads the guard script from the PR head")
-    text = code_text(approval["run"])
-    if "git checkout" in text:
-        fail("verify-gate approval script checks out another tree")
-    pos = 0
-    for marker in RUN_MARKERS:
-        found = text.find(marker, pos)
-        if found < 0:
-            fail("verify-gate approval script is missing " + marker)
-        if re.search(r"(^|\n)\s*exit\s+0\b", text[pos:found]):
-            fail("verify-gate approval script exits 0 before the gate")
-        pos = found + len(marker)
-
-try:
-    main()
-except SystemExit:
-    raise
-except Exception as exc:
-    fail("workflow could not be parsed: " + str(exc))
-PY
+cmd_allow() {
+  local allowfile=${1:-} headref=${2:-} path hash
+  [[ -n $allowfile && -n $headref ]] || die "allow: needs ALLOWFILE and HEADREF"
+  [[ -f $allowfile ]] || die "allow: ${allowfile} is missing; refusing"
+  git rev-parse --verify --quiet "${headref}^{commit}" >/dev/null ||
+    die "allow: ${headref} is not a commit"
+  for path in "${LOCKED_PATHS[@]}"; do
+    if ! git cat-file -e "${headref}:${path}" 2>/dev/null; then
+      die "allow: ${path} is missing at ${headref}"
+    fi
+    hash=$(git show "${headref}:${path}" | sha256sum | awk '{print $1}')
+    if ! grep -F -x -q -e "${hash}  ${path}" "$allowfile"; then
+      die "allow: ${path} (${hash}) is not in the trusted digest list; land that digest on the default branch first"
+    fi
+  done
 }
 
 # verify-gate: the approval is bound to one head commit. A push changes the head, so the old section no
@@ -288,7 +125,6 @@ cmd_verify_gate() {
   local head=${1:-} labels=${2:-} text=${PR_TEXT:-} section n line actors result
   actors=${GUARD_VERIFY_ACTORS:-}
   [[ $head =~ ^[0-9a-f]{40}$ ]] || die "verify-gate: needs the full head commit SHA"
-  assert_verify_workflow
   if [[ -n ${3:-} ]]; then
     [[ -f $3 ]] || die "verify-gate: ${3} does not exist"
     text=$(cat "$3")
@@ -997,153 +833,115 @@ GH
   sed -i '/^Head: /a Result: PASS' "$tmp/resultpass.md"
   expect_pass "Result: PASS and a nonempty actor list" env GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
     "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$tmp/resultpass.md"
-  cp .github/workflows/repo-guard.yml "$tmp/shelltrue.yml"
-  sed -i '/- name: Approved for this head/a\        shell: /bin/true' "$tmp/shelltrue.yml"
-  expect_fail "shell /bin/true on Approved for this head" \
-    env GUARD_WORKFLOW_FILE="$tmp/shelltrue.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  cp .github/workflows/repo-guard.yml "$tmp/repoatk.yml"
-  sed -i '/persist-credentials: false/i\          repository: attacker/x' "$tmp/repoatk.yml"
-  expect_fail "checkout with.repository attacker/x" \
-    env GUARD_WORKFLOW_FILE="$tmp/repoatk.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  cp .github/workflows/repo-guard.yml "$tmp/rebind.yml"
-  sed -i \
-    -e 's|GUARD_VERIFY_ACTORS: ${{ vars.VWS_VERIFY_ACTORS }}|GUARD_VERIFY_ACTORS: ${{ github.event.pull_request.user.login }}|' \
-    -e 's|GUARD_VERIFY_IDENTITY: ${{ vars.VWS_VERIFY_IDENTITY }}|GUARD_VERIFY_IDENTITY: ${{ github.event.pull_request.user.login }}|' \
-    "$tmp/rebind.yml"
-  expect_fail "GUARD_VERIFY_ACTORS rebound to the PR author" \
-    env GUARD_WORKFLOW_FILE="$tmp/rebind.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  cp .github/workflows/repo-guard.yml "$tmp/wrap.yml"
+  local arepo="$tmp/arepo" aallow="$tmp/trusted.sha256"
+  seed_locked() {
+    aallow="$tmp/trusted.sha256"
+    rm -rf "$arepo"
+    mkdir -p "$arepo/.github/workflows" "$arepo/scripts"
+    cp .github/workflows/repo-guard.yml "$arepo/.github/workflows/repo-guard.yml"
+    cp scripts/guard-agents.sh "$arepo/scripts/guard-agents.sh"
+    cp scripts/guard-agents.sh.sha256 "$arepo/scripts/guard-agents.sh.sha256"
+    git -C "$arepo" init -q -b "$MAIN"
+    git -C "$arepo" config user.email t@example.invalid
+    git -C "$arepo" config user.name t
+    git -C "$arepo" add .github scripts
+    git -C "$arepo" commit -q -m base
+    : >"$aallow"
+    local p h
+    for p in "${LOCKED_PATHS[@]}"; do
+      h=$(git -C "$arepo" show "HEAD:${p}" | sha256sum | awk '{print $1}')
+      printf '%s  %s\n' "$h" "$p" >>"$aallow"
+    done
+  }
+  commit_locked() {
+    git -C "$arepo" add -A
+    git -C "$arepo" commit -q -m mut
+  }
+  run_allow() {
+    (cd "$arepo" && bash "$OLDPWD_SCRIPT" allow "$aallow" HEAD)
+  }
+  seed_locked
+  expect_pass "locked files that match the trusted digest list" run_allow
+  local p h
+  for p in "${LOCKED_PATHS[@]}"; do
+    h=$(sha256sum "$p" | awk '{print $1}')
+    grep -F -x -q "${h}  ${p}" scripts/guard-allowed.sha256 ||
+      die "selftest: ${p} is not in scripts/guard-allowed.sha256"
+  done
+  echo "ok: scripts/guard-allowed.sha256 matches the locked files"
+  seed_locked
   awk '
     /set -euo pipefail/ && !w { print; print "          if false; then"; w = 1; next }
     /scripts\/guard-agents.sh verify-gate/ && !done { print; print "          fi"; done = 1; next }
     { print }
-  ' "$tmp/wrap.yml" >"$tmp/wrap2.yml"
-  mv "$tmp/wrap2.yml" "$tmp/wrap.yml"
-  expect_fail "if false around the approval body" \
-    env GUARD_WORKFLOW_FILE="$tmp/wrap.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  printf 'name: repo-guard\njobs:\n  verify-gate:\n    steps:\n      - run: exit 0\n' >"$tmp/weak.yml"
-  expect_fail "a workflow that drops the verify-gate steps" \
-    env GUARD_WORKFLOW_FILE="$tmp/weak.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  msg=$( (env GUARD_WORKFLOW_FILE="$tmp/weak.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev") 2>&1 >/dev/null || true)
-  [[ $msg == *"no pull_request_target trigger"* ]] || die "selftest: a weak workflow gave '${msg}'"
-  echo "ok: a weak workflow names the missing trigger"
-  {
-    echo '# github.event.pull_request.base.sha'
-    echo '# pull_request_target'
-    echo '# refs/pull/${NUMBER}/head'
-    echo '# scripts/guard-agents.sh identity'
-    echo '# scripts/guard-agents.sh verify-gate'
-    echo '# vars.VWS_VERIFY_ACTORS'
-    echo '# cannot tell who pushed the head'
-    echo '# @@comment-by:'
-    echo '# issues/${NUMBER}/labels'
-    echo '# refusing the PR head copy'
-    echo 'name: repo-guard'
-    echo 'jobs:'
-    echo '  verify-gate:'
-    echo '    steps:'
-    echo '      - run: exit 0'
-  } >"$tmp/commented.yml"
-  expect_fail "required steps that survive only as comments" \
-    env GUARD_WORKFLOW_FILE="$tmp/commented.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  # continue-on-error and if are workflow keys. Text inside a run script is not a key.
-  cp .github/workflows/repo-guard.yml "$tmp/coe.yml"
-  sed -i '/- name: Approved for this head/a\        continue-on-error: true' "$tmp/coe.yml"
-  expect_fail "continue-on-error on Approved for this head" \
-    env GUARD_WORKFLOW_FILE="$tmp/coe.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  msg=$( (env GUARD_WORKFLOW_FILE="$tmp/coe.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev") 2>&1 >/dev/null || true)
-  [[ $msg == *"continue-on-error"* ]] || die "selftest: continue-on-error gave '${msg}'"
-  echo "ok: continue-on-error names the key"
-  cp .github/workflows/repo-guard.yml "$tmp/iffalse.yml"
-  sed -i '/- name: Approved for this head/a\        if: false' "$tmp/iffalse.yml"
-  expect_fail "if: false on Approved for this head" \
-    env GUARD_WORKFLOW_FILE="$tmp/iffalse.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  awk '/^  verify-gate:$/ { print; print "    continue-on-error: true"; next } { print }' \
-    .github/workflows/repo-guard.yml >"$tmp/jobcoe.yml"
-  expect_fail "continue-on-error on the verify-gate job" \
-    env GUARD_WORKFLOW_FILE="$tmp/jobcoe.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  awk '/^  verify-gate:$/ { print; print "    if: false"; next } { print }' \
-    .github/workflows/repo-guard.yml >"$tmp/jobif.yml"
-  expect_fail "if: false on the verify-gate job" \
-    env GUARD_WORKFLOW_FILE="$tmp/jobif.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  cp .github/workflows/repo-guard.yml "$tmp/headload.yml"
-  printf '\n          git show "${HEAD_SHA}:scripts/guard-agents.sh"\n' >>"$tmp/headload.yml"
-  expect_fail "the workflow loads the guard script from the PR head" \
-    env GUARD_WORKFLOW_FILE="$tmp/headload.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  msg=$( (env GUARD_WORKFLOW_FILE="$tmp/headload.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev") 2>&1 >/dev/null || true)
-  [[ $msg == *"loads the guard script from the PR head"* ]] || die "selftest: head load gave '${msg}'"
-  echo "ok: a head script load names the refusal"
-  cp .github/workflows/repo-guard.yml "$tmp/coefalse.yml"
-  sed -i '/- name: Approved for this head/a\        continue-on-error: false' "$tmp/coefalse.yml"
-  expect_pass "continue-on-error false on the gate step" \
-    env GUARD_WORKFLOW_FILE="$tmp/coefalse.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  awk '/run: \|/ && !done { print; print "          if: false"; done = 1; next } { print }' \
-    .github/workflows/repo-guard.yml >"$tmp/runif.yml"
-  expect_pass "if inside the run script is not a workflow key" \
-    env GUARD_WORKFLOW_FILE="$tmp/runif.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  # Encoded keys, a non-main base, and marker strings that are not the real steps.
-  cp .github/workflows/repo-guard.yml "$tmp/uif.yml"
-  sed -i '/- name: Approved for this head/a\        "\\u0069f": false' "$tmp/uif.yml"
-  expect_fail "a unicode-escaped if on the gate step" \
-    env GUARD_WORKFLOW_FILE="$tmp/uif.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  msg=$( (env GUARD_WORKFLOW_FILE="$tmp/uif.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev") 2>&1 >/dev/null || true)
-  [[ $msg == *"sets if"* ]] || die "selftest: unicode if gave '${msg}'"
-  echo "ok: a unicode escape decodes to if"
-  cp .github/workflows/repo-guard.yml "$tmp/ucoe.yml"
-  sed -i '/- name: Approved for this head/a\        "\\u0063ontinue-on-error": true' "$tmp/ucoe.yml"
-  expect_fail "a unicode-escaped continue-on-error on the gate step" \
-    env GUARD_WORKFLOW_FILE="$tmp/ucoe.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  cp .github/workflows/repo-guard.yml "$tmp/notrigger.yml"
-  sed -i 's/^  pull_request_target:/  not_a_trigger:/' "$tmp/notrigger.yml"
-  sed -i '/set -euo pipefail/a\          echo pull_request_target' "$tmp/notrigger.yml"
-  expect_fail "pull_request_target only as text" \
-    env GUARD_WORKFLOW_FILE="$tmp/notrigger.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  cp .github/workflows/repo-guard.yml "$tmp/exit0.yml"
-  sed -i '/set -euo pipefail/a\          exit 0' "$tmp/exit0.yml"
-  expect_fail "exit 0 before the approval checks" \
-    env GUARD_WORKFLOW_FILE="$tmp/exit0.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  msg=$( (env GUARD_WORKFLOW_FILE="$tmp/exit0.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev") 2>&1 >/dev/null || true)
-  [[ $msg == *"exits 0 before the gate"* ]] || die "selftest: exit 0 gave '${msg}'"
-  echo "ok: exit 0 before the gate names the command"
-  cp .github/workflows/repo-guard.yml "$tmp/headref.yml"
-  sed -i 's|^          ref: .*|          ref: ${{ github.event.pull_request.head.sha }}|' "$tmp/headref.yml"
-  sed -i '/set -euo pipefail/a\          echo "github.event.pull_request.base.sha"' "$tmp/headref.yml"
-  expect_fail "checkout of the pull request head" \
-    env GUARD_WORKFLOW_FILE="$tmp/headref.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  msg=$( (env GUARD_WORKFLOW_FILE="$tmp/headref.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev") 2>&1 >/dev/null || true)
-  [[ $msg == *"default branch"* ]] || die "selftest: head checkout gave '${msg}'"
-  echo "ok: a head checkout names the default branch"
-  cp .github/workflows/repo-guard.yml "$tmp/basesha.yml"
-  sed -i 's|^          ref: .*|          ref: ${{ github.event.pull_request.base.sha }}|' "$tmp/basesha.yml"
-  sed -i '/^    branches:/d' "$tmp/basesha.yml"
-  sed -i "/^    if: github.base_ref == 'main'\$/d" "$tmp/basesha.yml"
-  expect_fail "checkout of a pull request base that is not the default branch" \
-    env GUARD_WORKFLOW_FILE="$tmp/basesha.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  ' "$arepo/.github/workflows/repo-guard.yml" >"$tmp/wrap.yml"
+  mv "$tmp/wrap.yml" "$arepo/.github/workflows/repo-guard.yml"
+  commit_locked
+  expect_fail "if false around the approval body" run_allow
+  seed_locked
+  sed -i '/- name: Approved for this head/a\        shell: /bin/true' "$arepo/.github/workflows/repo-guard.yml"
+  commit_locked
+  expect_fail "shell /bin/true on the approval step" run_allow
+  msg=$(run_allow 2>&1 >/dev/null || true)
+  [[ $msg == *".github/workflows/repo-guard.yml"* && $msg == *"not in the trusted digest list"* ]] ||
+    die "selftest: shell /bin/true gave '${msg}'"
+  echo "ok: an unlisted digest names the list"
+  seed_locked
+  sed -i '/persist-credentials: false/i\          repository: attacker/x' "$arepo/.github/workflows/repo-guard.yml"
+  commit_locked
+  expect_fail "checkout with.repository attacker/x" run_allow
+  seed_locked
+  sed -i \
+    -e 's|GUARD_VERIFY_ACTORS: ${{ vars.VWS_VERIFY_ACTORS }}|GUARD_VERIFY_ACTORS: ${{ github.event.pull_request.user.login }}|' \
+    -e 's|GUARD_VERIFY_IDENTITY: ${{ vars.VWS_VERIFY_IDENTITY }}|GUARD_VERIFY_IDENTITY: ${{ github.event.pull_request.user.login }}|' \
+    "$arepo/.github/workflows/repo-guard.yml"
+  commit_locked
+  expect_fail "GUARD_VERIFY_ACTORS rebound to the PR author" run_allow
+  seed_locked
+  sed -i '/- name: Approved for this head/a\        continue-on-error: true' "$arepo/.github/workflows/repo-guard.yml"
+  commit_locked
+  expect_fail "continue-on-error on the approval step" run_allow
+  seed_locked
+  sed -i '/- name: Approved for this head/a\        "\\u0069f": false' "$arepo/.github/workflows/repo-guard.yml"
+  commit_locked
+  expect_fail "a unicode-escaped if on the approval step" run_allow
+  seed_locked
+  sed -i '/set -euo pipefail/a\          exit 0' "$arepo/.github/workflows/repo-guard.yml"
+  commit_locked
+  expect_fail "exit 0 before the approval checks" run_allow
+  seed_locked
+  sed -i 's|^          ref: .*|          ref: ${{ github.event.pull_request.head.sha }}|' "$arepo/.github/workflows/repo-guard.yml"
+  commit_locked
+  expect_fail "checkout of the pull request head" run_allow
+  seed_locked
+  printf '#!/bin/sh\nexit 0\n' >"$arepo/scripts/guard-agents.sh"
+  (cd "$arepo" && sha256sum scripts/guard-agents.sh >scripts/guard-agents.sh.sha256)
+  [[ $(awk 'NR==1 { print $1 }' "$arepo/scripts/guard-agents.sh.sha256") == $(sha256sum "$arepo/scripts/guard-agents.sh" | awk '{print $1}') ]] ||
+    die "selftest: exit 0 fixture digest does not match the script"
+  commit_locked
+  expect_fail "a guard script replaced by exit 0 with a matching digest" run_allow
+  seed_locked
+  sed -i '/- name: Approved for this head/a\        shell: /bin/true' "$arepo/.github/workflows/repo-guard.yml"
+  commit_locked
+  h=$(git -C "$arepo" show "HEAD:.github/workflows/repo-guard.yml" | sha256sum | awk '{print $1}')
+  printf '%s  %s\n' "$h" ".github/workflows/repo-guard.yml" >>"$aallow"
+  expect_pass "a digest landed on the trusted list before the blob change" run_allow
+  seed_locked
+  cp "$aallow" "$tmp/old-allow.sha256"
+  sed -i '/- name: Approved for this head/a\        shell: /bin/true' "$arepo/.github/workflows/repo-guard.yml"
+  commit_locked
+  h=$(git -C "$arepo" show "HEAD:.github/workflows/repo-guard.yml" | sha256sum | awk '{print $1}')
+  cat "$tmp/old-allow.sha256" >"$arepo/scripts/guard-allowed.sha256"
+  printf '%s  %s\n' "$h" ".github/workflows/repo-guard.yml" >>"$arepo/scripts/guard-allowed.sha256"
+  commit_locked
+  git -C "$arepo" show "HEAD:scripts/guard-allowed.sha256" | grep -F -x -q "${h}  .github/workflows/repo-guard.yml" ||
+    die "selftest: same-PR fixture did not record the new digest"
+  aallow="$tmp/old-allow.sha256"
+  expect_fail "a digest list edited in the same commit" run_allow
+  seed_locked
+  git -C "$arepo" rm -q .github/workflows/repo-guard.yml
+  git -C "$arepo" commit -q -m gone
+  expect_fail "a deleted repo-guard.yml" run_allow
   local brepo="$tmp/brepo" bbase="$tmp/bbase" bhead block out got
   block=$(awk '/# bootstrap-guard-start/ { on = 1; next } /# bootstrap-guard-end/ { on = 0 } on { sub(/^[[:space:]]*/, ""); print }' \
     .github/workflows/repo-guard.yml)
@@ -1198,11 +996,12 @@ case "$command_name" in
   archtest) cmd_archtest "$@" ;;
   verify-gate) cmd_verify_gate "$@" ;;
   identity) cmd_identity "$@" ;;
+  allow) cmd_allow "$@" ;;
   commit-msg) cmd_commit_msg "$@" ;;
   pr-commits) cmd_pr_commits "$@" ;;
   push-watch) cmd_push_watch "$@" ;;
   correct) cmd_correct "$@" ;;
   english) cmd_english "$@" ;;
   selftest) cmd_selftest ;;
-  *) die "usage: guard-agents.sh <agents [FILE]|pr-base BASE|rules [FILE] [HEADING]|judgment [FILE] [HEADING]|archtest [FILE] [HEADING]|identity [SUMFILE]|pr-body [FILE]|commit-msg FILE|pr-commits BASE HEAD|push-watch BEFORE AFTER|verify-gate HEAD LABELS [FILE]|correct [DIR]|english [ALLOWLIST]|selftest>" ;;
+  *) die "usage: guard-agents.sh <agents [FILE]|pr-base BASE|rules [FILE] [HEADING]|judgment [FILE] [HEADING]|archtest [FILE] [HEADING]|identity [SUMFILE]|allow ALLOWFILE HEADREF|pr-body [FILE]|commit-msg FILE|pr-commits BASE HEAD|push-watch BEFORE AFTER|verify-gate HEAD LABELS [FILE]|correct [DIR]|english [ALLOWLIST]|selftest>" ;;
 esac

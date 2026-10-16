@@ -1,0 +1,3 @@
+f02cc578246625b205157d6b834a3787ec6236f8679b6c72eb546beedd2a99ec  .github/workflows/repo-guard.yml
+859acc2e4fdf7172f3ce31a596711b44777855aa2f558a204efc781a8b917f51  scripts/guard-agents.sh
+a594c73eccda6fa192ccc6e6636e3b9dde1dd71add04459cd79150fb63627142  scripts/guard-agents.sh.sha256
