@@ -39,22 +39,8 @@ HEADING=${GUARD_HEADING:-## Insider-risk guardrails}
 ITEMS=${GUARD_ITEMS:-7}
 VERIFY_LABEL=${GUARD_VERIFY_LABEL:-verify-approved}
 QUALITY_ITEMS=${GUARD_QUALITY_ITEMS:-9}
-# Step text the verify-gate job must still contain. A pull_request run uses the workflow from the merge
-# commit, so that run can replace the job. pull_request_target runs the copy of this file from the default
-# branch and reads the pull request workflow as data.
-VERIFY_WORKFLOW_STRINGS=(
-  'github.event.pull_request.base.sha'
-  'pull_request_target'
-  'refs/pull/${NUMBER}/head'
-  'scripts/guard-agents.sh identity'
-  'scripts/guard-agents.sh verify-gate'
-  'vars.VWS_VERIFY_ACTORS'
-  'cannot tell who pushed the head'
-  '@@comment-by:'
-  'issues/${NUMBER}/labels'
-  'refusing the PR head copy'
-)
-
+# pull_request_target runs the copy of this file from the default branch and reads the pull request
+# workflow as data. A pull_request run uses the merge commit, so that run can replace the job.
 die() {
   echo "$*" >&2
   exit 1
@@ -104,10 +90,9 @@ cmd_rules() {
   echo "rules: $(wc -l <<<"$rows") rows, $(awk -F'|' '$3 ~ /^[[:space:]]*Judgment/' <<<"$rows" | wc -l) Judgment"
 }
 
-# Comment lines do not count. A required step that survives only as a comment was removed.
-# if and continue-on-error are keys. The same words inside a run: block scalar are not keys.
+# PyYAML decodes key escapes. The key "on" stays a string.
 assert_verify_workflow() {
-  local file=${GUARD_WORKFLOW_FILE:-} blob stripped s
+  local file=${GUARD_WORKFLOW_FILE:-} blob
   if [[ -n $file ]]; then
     [[ -f $file ]] || die "verify-gate: workflow ${file} does not exist"
     blob=$(cat "$file")
@@ -123,191 +108,169 @@ assert_verify_workflow() {
   GUARD_WF_TEXT=$blob python3 - <<'PY' || exit 1
 import os, re, sys
 
+PINNED_YAML = "6.0.2"
+MAIN_IF = "github.base_ref == 'main'"
+CHECKOUT_REF = "${{ github.event.repository.default_branch }}"
+RUN_MARKERS = (
+    "python3 -m pip install --user --require-hashes -r scripts/requirements-guard.txt",
+    "issues/${NUMBER}/labels",
+    "@@comment-by:",
+    "cannot tell who pushed the head",
+    "refs/pull/${NUMBER}/head",
+    "refusing the PR head copy",
+    "scripts/guard-agents.sh identity",
+    "scripts/guard-agents.sh verify-gate",
+)
+
 def fail(msg):
     sys.stderr.write("verify-gate: " + msg + "\n")
     sys.exit(1)
 
-def main():
-    lines = [ln[:-1] if ln.endswith("\r") else ln for ln in os.environ.get("GUARD_WF_TEXT", "").splitlines()]
-    n = len(lines)
-
-    def indent_of(s):
-        i = 0
-        while i < len(s) and s[i] == " ":
-            i += 1
-        if i < len(s) and s[i] == "\t":
-            fail("workflow indentation uses a tab")
-        return i
-
-    def skippable(s):
-        t = s.lstrip(" ")
-        return t == "" or t.startswith("#")
-
-    key_re = re.compile(r"""^(?P<key>"[^"]*"|'[^']*'|[^:#'"\s][^:]*?)\s*:\s*(?P<val>.*)$""")
-
-    def parse_key(content):
-        m = key_re.match(content)
-        if not m:
-            return None
-        key = m.group("key").strip()
-        if len(key) >= 2 and key[0] == key[-1] and key[0] in ("'", '"'):
-            key = key[1:-1]
-        return key, m.group("val").strip()
-
-    def value_head(val):
+def code_text(script):
+    lines = []
+    for line in script.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
         out = []
         quote = ""
-        for ch in val:
+        i = 0
+        while i < len(line):
+            ch = line[i]
             if quote:
-                if ch == quote:
-                    quote = ""
                 out.append(ch)
+                if ch == quote and line[i - 1:i] != "\\":
+                    quote = ""
+                i += 1
                 continue
             if ch in ("'", '"'):
                 quote = ch
                 out.append(ch)
+                i += 1
                 continue
             if ch == "#":
                 break
             out.append(ch)
-        return "".join(out).strip()
-
-    def is_block_scalar(val):
-        return re.fullmatch(r"[|>][+-]?[1-9]?|[|>][1-9]?[+-]?", value_head(val)) is not None
-
-    def is_yaml_false(val):
-        return value_head(val) in ("false", "False", "FALSE")
-
-    def skip_nested_from(i, key_indent):
-        while i < n:
-            if lines[i].strip() == "":
-                i += 1
-                continue
-            if lines[i].lstrip(" ").startswith("#"):
-                if indent_of(lines[i]) <= key_indent:
-                    break
-                i += 1
-                continue
-            if indent_of(lines[i]) <= key_indent:
-                break
             i += 1
-        return i
+        kept = "".join(out).strip()
+        if kept:
+            lines.append(kept)
+    return "\n".join(lines)
 
-    def reject_gate_key(key, val, where):
-        if key == "<<":
-            fail("verify-gate " + where + " uses a YAML merge key")
-        if key == "if":
-            fail("workflow sets if on the verify-gate " + where)
-        if key == "continue-on-error" and not is_yaml_false(val):
-            fail("workflow sets continue-on-error on the verify-gate " + where)
+def as_list(value):
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return value
+    return []
 
-    i = 0
-    while i < n:
-        if not skippable(lines[i]) and indent_of(lines[i]) == 0:
-            kv = parse_key(lines[i].strip())
-            if kv and kv[0] == "jobs" and kv[1] == "":
-                i += 1
-                break
-        i += 1
-    else:
+def main():
+    try:
+        import yaml
+    except ImportError:
+        fail("PyYAML " + PINNED_YAML + " is required")
+    if getattr(yaml, "__version__", "") != PINNED_YAML:
+        fail("PyYAML " + PINNED_YAML + " is required")
+
+    class GuardLoader(yaml.SafeLoader):
+        pass
+
+    GuardLoader.yaml_implicit_resolvers = {
+        key: [(tag, rx) for tag, rx in pairs if tag != "tag:yaml.org,2002:bool"]
+        for key, pairs in yaml.SafeLoader.yaml_implicit_resolvers.items()
+    }
+    GuardLoader.add_implicit_resolver(
+        "tag:yaml.org,2002:bool",
+        re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"),
+        list("tTfF"),
+    )
+
+    def construct_mapping(loader, node, deep=False):
+        loader.flatten_mapping(node)
+        mapping = {}
+        for key_node, value_node in node.value:
+            key = loader.construct_object(key_node, deep=deep)
+            if key in mapping:
+                fail("workflow has a duplicate key: " + str(key))
+            mapping[key] = loader.construct_object(value_node, deep=deep)
+        return mapping
+
+    GuardLoader.add_constructor("tag:yaml.org,2002:map", construct_mapping)
+    try:
+        doc = yaml.load(os.environ.get("GUARD_WF_TEXT", ""), Loader=GuardLoader)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        fail("workflow could not be parsed: " + str(exc))
+    if not isinstance(doc, dict):
+        fail("workflow has no pull_request_target trigger for main")
+
+    triggers = doc.get("on")
+    if not isinstance(triggers, dict):
+        fail("workflow has no pull_request_target trigger for main")
+    for event in ("pull_request", "pull_request_target"):
+        node = triggers.get(event)
+        if not isinstance(node, dict) or "main" not in as_list(node.get("branches")):
+            fail("workflow has no " + event + " trigger for main")
+
+    jobs = doc.get("jobs")
+    if not isinstance(jobs, dict) or not isinstance(jobs.get("verify-gate"), dict):
         fail("workflow has no verify-gate job")
+    job = jobs["verify-gate"]
+    if "if" not in job:
+        fail("verify-gate job does not limit the base to main")
+    if job.get("if") != MAIN_IF:
+        fail("workflow sets if on the verify-gate job")
+    if "continue-on-error" in job and job.get("continue-on-error") is not False:
+        fail("workflow sets continue-on-error on the verify-gate job")
+    steps = job.get("steps")
+    if not isinstance(steps, list) or len(steps) != 2:
+        fail("verify-gate job steps are not the checkout and the approval")
+    checkout, approval = steps
+    if not isinstance(checkout, dict) or checkout.get("uses") != "actions/checkout@v4":
+        fail("verify-gate checkout is not actions/checkout@v4")
+    with_map = checkout.get("with")
+    if not isinstance(with_map, dict) or with_map.get("ref") != CHECKOUT_REF:
+        fail("verify-gate checks out a ref other than the default branch")
+    if with_map.get("persist-credentials") is not False:
+        fail("verify-gate checkout keeps credentials")
+    for step in steps:
+        if not isinstance(step, dict):
+            fail("verify-gate job steps are not the checkout and the approval")
+        if "if" in step:
+            fail("workflow sets if on the verify-gate step")
+        if "continue-on-error" in step and step.get("continue-on-error") is not False:
+            fail("workflow sets continue-on-error on the verify-gate step")
+    if approval.get("name") != "Approved for this head" or not isinstance(approval.get("run"), str):
+        fail("verify-gate approval step was removed")
+    runs = []
 
-    found = False
-    while i < n:
-        if skippable(lines[i]):
-            i += 1
-            continue
-        ind = indent_of(lines[i])
-        if ind < 2:
-            break
-        if ind > 2:
-            fail("workflow jobs are not a block mapping")
-        kv = parse_key(lines[i][ind:])
-        if not kv or kv[0] != "verify-gate":
-            i = skip_nested_from(i + 1, ind)
-            continue
-        if kv[1] != "":
-            fail("verify-gate job must be a block mapping")
-        found = True
-        job_indent = ind
-        i += 1
-        saw_steps = False
-        while i < n:
-            if skippable(lines[i]):
-                i += 1
-                continue
-            ind = indent_of(lines[i])
-            if ind <= job_indent:
-                break
-            if ind != job_indent + 2:
-                fail("verify-gate job nesting was not consumed")
-            content = lines[i][ind:]
-            kv = parse_key(content)
-            if not kv:
-                fail("verify-gate job has a line that is not a key")
-            key, val = kv
-            reject_gate_key(key, val, "job")
-            if key == "steps":
-                if val != "":
-                    fail("verify-gate steps must be a block sequence")
-                saw_steps = True
-                steps_indent = ind
-                i += 1
-                saw_item = False
-                while i < n:
-                    if skippable(lines[i]):
-                        i += 1
-                        continue
-                    sind = indent_of(lines[i])
-                    if sind <= steps_indent:
-                        break
-                    scontent = lines[i][sind:]
-                    if not scontent.startswith("- "):
-                        fail("verify-gate steps must be a block sequence")
-                    saw_item = True
-                    rest = scontent[2:]
-                    if rest.startswith("{") or rest.startswith("["):
-                        fail("verify-gate step uses flow style")
-                    step_indent = sind + 2
-                    pending = []
-                    if rest:
-                        sk = parse_key(rest)
-                        if not sk:
-                            fail("verify-gate step uses flow style")
-                        pending.append(sk)
-                    i += 1
-                    if pending and (pending[0][1] == "" or is_block_scalar(pending[0][1])):
-                        i = skip_nested_from(i, step_indent)
-                    while i < n:
-                        if skippable(lines[i]):
-                            i += 1
-                            continue
-                        kind = indent_of(lines[i])
-                        if kind != step_indent:
-                            break
-                        kcontent = lines[i][kind:]
-                        if kcontent.startswith("- "):
-                            break
-                        sk = parse_key(kcontent)
-                        if not sk:
-                            fail("verify-gate step has a line that is not a key")
-                        pending.append(sk)
-                        i += 1
-                        if sk[1] == "" or is_block_scalar(sk[1]):
-                            i = skip_nested_from(i, kind)
-                    for sk in pending:
-                        reject_gate_key(sk[0], sk[1], "step")
-                if not saw_item:
-                    fail("verify-gate job has no steps")
-                continue
-            if val == "" or is_block_scalar(val):
-                i = skip_nested_from(i + 1, ind)
-            else:
-                i += 1
-        if not saw_steps:
-            fail("verify-gate job has no steps")
-    if not found:
-        fail("workflow has no verify-gate job")
+    def walk(node):
+        if isinstance(node, dict):
+            run = node.get("run")
+            if isinstance(run, str):
+                runs.append(code_text(run))
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(doc)
+    for run in runs:
+        if "HEAD_SHA:scripts/guard-agents.sh" in run or "HEAD_SHA}:scripts/guard-agents.sh" in run:
+            fail("workflow loads the guard script from the PR head")
+    text = code_text(approval["run"])
+    if "git checkout" in text:
+        fail("verify-gate approval script checks out another tree")
+    pos = 0
+    for marker in RUN_MARKERS:
+        found = text.find(marker, pos)
+        if found < 0:
+            fail("verify-gate approval script is missing " + marker)
+        if re.search(r"(^|\n)\s*exit\s+0\b", text[pos:found]):
+            fail("verify-gate approval script exits 0 before the gate")
+        pos = found + len(marker)
 
 try:
     main()
@@ -316,14 +279,6 @@ except SystemExit:
 except Exception as exc:
     fail("workflow could not be parsed: " + str(exc))
 PY
-  stripped=$(grep -v -E '^[[:space:]]*#' <<<"$blob" || true)
-  for s in "${VERIFY_WORKFLOW_STRINGS[@]}"; do
-    grep -q -F -- "$s" <<<"$stripped" ||
-      die "verify-gate: ${file} is missing required step text: ${s}"
-  done
-  if grep -F -e 'HEAD_SHA:scripts/guard-agents.sh' -e 'HEAD_SHA}:scripts/guard-agents.sh' <<<"$stripped" >/dev/null; then
-    die "verify-gate: ${file} loads the guard script from the PR head"
-  fi
 }
 
 # verify-gate: the approval is bound to one head commit. A push changes the head, so the old section no
@@ -1048,8 +1003,8 @@ GH
     "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
   msg=$( (env GUARD_WORKFLOW_FILE="$tmp/weak.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
     "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev") 2>&1 >/dev/null || true)
-  [[ $msg == *"missing required step text"* ]] || die "selftest: a weak workflow gave '${msg}'"
-  echo "ok: a weak workflow names the missing step"
+  [[ $msg == *"no pull_request_target trigger"* ]] || die "selftest: a weak workflow gave '${msg}'"
+  echo "ok: a weak workflow names the missing trigger"
   {
     echo '# github.event.pull_request.base.sha'
     echo '# pull_request_target'
@@ -1120,6 +1075,10 @@ GH
   expect_fail "a unicode-escaped if on the gate step" \
     env GUARD_WORKFLOW_FILE="$tmp/uif.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
     "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  msg=$( (env GUARD_WORKFLOW_FILE="$tmp/uif.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev") 2>&1 >/dev/null || true)
+  [[ $msg == *"sets if"* ]] || die "selftest: unicode if gave '${msg}'"
+  echo "ok: a unicode escape decodes to if"
   cp .github/workflows/repo-guard.yml "$tmp/ucoe.yml"
   sed -i '/- name: Approved for this head/a\        "\\u0063ontinue-on-error": true' "$tmp/ucoe.yml"
   expect_fail "a unicode-escaped continue-on-error on the gate step" \
@@ -1136,12 +1095,20 @@ GH
   expect_fail "exit 0 before the approval checks" \
     env GUARD_WORKFLOW_FILE="$tmp/exit0.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
     "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  msg=$( (env GUARD_WORKFLOW_FILE="$tmp/exit0.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev") 2>&1 >/dev/null || true)
+  [[ $msg == *"exits 0 before the gate"* ]] || die "selftest: exit 0 gave '${msg}'"
+  echo "ok: exit 0 before the gate names the command"
   cp .github/workflows/repo-guard.yml "$tmp/headref.yml"
   sed -i 's|^          ref: .*|          ref: ${{ github.event.pull_request.head.sha }}|' "$tmp/headref.yml"
   sed -i '/set -euo pipefail/a\          echo "github.event.pull_request.base.sha"' "$tmp/headref.yml"
   expect_fail "checkout of the pull request head" \
     env GUARD_WORKFLOW_FILE="$tmp/headref.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
     "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  msg=$( (env GUARD_WORKFLOW_FILE="$tmp/headref.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev") 2>&1 >/dev/null || true)
+  [[ $msg == *"default branch"* ]] || die "selftest: head checkout gave '${msg}'"
+  echo "ok: a head checkout names the default branch"
   cp .github/workflows/repo-guard.yml "$tmp/basesha.yml"
   sed -i 's|^          ref: .*|          ref: ${{ github.event.pull_request.base.sha }}|' "$tmp/basesha.yml"
   sed -i '/^    branches:/d' "$tmp/basesha.yml"

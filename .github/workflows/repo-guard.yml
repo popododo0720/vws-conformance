@@ -7,11 +7,12 @@ name: repo-guard
 on:
   pull_request:
     # labeled/unlabeled re-run verify-gate when vws-verify approves or the label is removed (#249).
+    branches: [main]
     types: [opened, edited, reopened, synchronize, labeled, unlabeled]
-  # The same job on pull_request_target runs this file from the default branch. A pull request
-  # cannot replace those steps. It checks out the base commit and reads the pull request workflow
-  # as data. It does not check out or run the pull request tree.
+  # pull_request_target runs this file from the default branch. The branches filter runs before
+  # checkout.
   pull_request_target:
+    branches: [main]
     types: [opened, edited, reopened, synchronize, labeled, unlabeled]
 
 permissions:
@@ -53,9 +54,10 @@ jobs:
   # author and whoever last added the label must be in it. The PR author and the head commit's pusher
   # (GUARD_VERIFY_EXCLUDE) never approve, unless the login is the vws-verify identity
   # (repo variable VWS_VERIFY_IDENTITY).
-  # This job has no if. An if can skip the gate. issue_comment re-runs live in verify-rerun.yml, so this
-  # file does not need an event if on the gate. pull_request_target is what a pull request cannot replace.
+  # github.base_ref is the base branch name, so the only allowed if is that equality.
+  # GitHub evaluates it before checkout.
   verify-gate:
+    if: github.base_ref == 'main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -64,7 +66,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - name: Approved for this head
         env:
@@ -80,6 +82,7 @@ jobs:
           GUARD_VERIFY_IDENTITY: ${{ vars.VWS_VERIFY_IDENTITY }}
         run: |
           set -euo pipefail
+          python3 -m pip install --user --require-hashes -r scripts/requirements-guard.txt
           # Labels as they are now, not the event snapshot (a re-run replays the original event).
           LABELS=$(gh api "repos/${REPO}/issues/${NUMBER}/labels" --jq '[.[].name] | join(",")')
           text=$(mktemp)
