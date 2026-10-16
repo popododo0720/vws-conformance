@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -66,6 +67,33 @@ func TestTaggedForeignVolumeWithoutLedgerDoesNotAbortPreRun(t *testing.T) {
 	}
 }
 
+func TestMismatchedAccountDoesNotSweep(t *testing.T) {
+	const current = "conf-20261016T080300Z-ddeeff"
+	var deletes atomic.Int32
+	cfg := accountSweepConfig(t, current, "111111111111", &deletes)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, err := runtime(ctx, cfg)
+	if deletes.Load() != 0 {
+		t.Fatalf("sweep deleted %d err %v", deletes.Load(), err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "111111111111") {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestUnsetAccountDoesNotMatchEmptyLedger(t *testing.T) {
+	const current = "conf-20261016T080400Z-eeff00"
+	var deletes atomic.Int32
+	cfg := accountSweepConfig(t, current, "", &deletes)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, err := runtime(ctx, cfg)
+	if err != nil || deletes.Load() != 0 {
+		t.Fatalf("err %v deletes %d", err, deletes.Load())
+	}
+}
+
 func TestCurrentRunLeftoverStillAbortsPreRun(t *testing.T) {
 	const current = "conf-20261016T080100Z-bbccdd"
 	cfg := stuckVolumeConfig(t, stuckOpts{current: current, owner: current, ledger: true})
@@ -82,6 +110,107 @@ type stuckOpts struct {
 	owner   string
 	ledger  bool
 	tag     bool
+}
+
+func accountSweepConfig(t *testing.T, current, configured string, deletes *atomic.Int32) harness.Config {
+	t.Helper()
+	resetGate(t)
+	dir := t.TempDir()
+	row := sweep.Resource{
+		Kind: "volume", ID: "vol-stale", LedgerRunID: current,
+		Target: "local-fake", Account: configured,
+	}
+	b, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ledger.jsonl"), append(b, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(accountSweepServer(deletes))
+	t.Cleanup(srv.Close)
+	return harness.Config{
+		AccessKey: "AKIDEXAMPLE", Secret: "secret", Region: "vws-1",
+		EC2Endpoint: srv.URL, S3Endpoint: srv.URL, IAMEndpoint: srv.URL,
+		AllowedHosts:    []string{"127.0.0.1"},
+		AllowedAccounts: []string{"123456789012", "111111111111"},
+		Target:          "local-fake", RunID: current, OutDir: dir, Parallel: 1,
+		AccountID: configured, ConsoleAPIVersion: "local",
+	}
+}
+
+func accountSweepServer(deletes *atomic.Int32) http.HandlerFunc {
+	var gone atomic.Bool
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/xml")
+			if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+				`<ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`+
+				`<Owner><ID>owner</ID></Owner><Buckets></Buckets></ListAllMyBucketsResult>`); writeErr != nil {
+				panic(writeErr)
+			}
+			return
+		}
+		action := formAction(r)
+		if action == "GetCallerIdentity" {
+			w.Header().Set("Content-Type", "text/xml")
+			if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+				`<GetCallerIdentityResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">`+
+				`<GetCallerIdentityResult><Account>123456789012</Account>`+
+				`<Arn>arn:aws:iam::123456789012:root</Arn><UserId>AIDEXAMPLE</UserId>`+
+				`</GetCallerIdentityResult><ResponseMetadata><RequestId>r</RequestId></ResponseMetadata>`+
+				`</GetCallerIdentityResponse>`); writeErr != nil {
+				panic(writeErr)
+			}
+			return
+		}
+		const ns = `xmlns="http://ec2.amazonaws.com/doc/2016-11-15/"`
+		w.Header().Set("Content-Type", "text/xml")
+		if action == "DeleteVolume" {
+			deletes.Add(1)
+			gone.Store(true)
+			if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+				`<DeleteVolumeResponse `+ns+`><requestId>r</requestId><return>true</return></DeleteVolumeResponse>`); writeErr != nil {
+				panic(writeErr)
+			}
+			return
+		}
+		if action == "DescribeVolumes" && !gone.Load() {
+			if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+				`<DescribeVolumesResponse `+ns+`><requestId>r</requestId><volumeSet><item>`+
+				`<volumeId>vol-stale</volumeId><size>1</size><status>available</status>`+
+				`<volumeType>gp2</volumeType><availabilityZone>vws-1a</availabilityZone>`+
+				`</item></volumeSet></DescribeVolumesResponse>`); writeErr != nil {
+				panic(writeErr)
+			}
+			return
+		}
+		empty := map[string]string{
+			"DescribeInstances":        "reservationSet",
+			"DescribeVolumes":          "volumeSet",
+			"DescribeSnapshots":        "snapshotSet",
+			"DescribeAddresses":        "addressesSet",
+			"DescribeKeyPairs":         "keySet",
+			"DescribeSecurityGroups":   "securityGroupInfo",
+			"DescribeSubnets":          "subnetSet",
+			"DescribeVpcs":             "vpcSet",
+			"DescribeInternetGateways": "internetGatewaySet",
+		}
+		set, ok := empty[action]
+		if !ok {
+			w.WriteHeader(http.StatusBadRequest)
+			if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+				`<Response><Errors><Error><Code>InvalidAction</Code><Message>`+action+
+				`</Message></Error></Errors><RequestID>r</RequestID></Response>`); writeErr != nil {
+				panic(writeErr)
+			}
+			return
+		}
+		if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+			`<`+action+`Response `+ns+`><requestId>r</requestId><`+set+`/></`+action+`Response>`); writeErr != nil {
+			panic(writeErr)
+		}
+	}
 }
 
 func stuckVolumeConfig(t *testing.T, opt stuckOpts) harness.Config {
