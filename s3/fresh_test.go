@@ -121,7 +121,9 @@ func TestDuplicateCreateSendsLocationConstraint(t *testing.T) {
 			spec = c
 		}
 	}
-	_, _ = runBuckets(context.Background(), rt, spec)
+	if _, err := runBuckets(context.Background(), rt, spec); err != nil {
+		t.Fatal(err)
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if len(creates) < 2 {

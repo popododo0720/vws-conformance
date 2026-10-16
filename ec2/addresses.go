@@ -110,7 +110,7 @@ func runAddr(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.ReleaseAddress(ctx, &awsec2.ReleaseAddressInput{AllocationId: aws.String(id)})
+				err := rt.EC2ReleaseAddress(ctx, id)
 				return wrapErr("runAddr", err)
 			})
 			return callOut, wrapErr("runAddr", callErr)
@@ -122,7 +122,7 @@ func runAddr(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.ReleaseAddress(ctx, &awsec2.ReleaseAddressInput{AllocationId: aws.String(id)})
+				err := rt.EC2ReleaseAddress(ctx, id)
 				return wrapErr("runAddr", err)
 			})
 			return callOut, wrapErr("runAddr", callErr)
@@ -156,10 +156,7 @@ func runAddr(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.AssociateAddress(ctx, &awsec2.AssociateAddressInput{
-					AllocationId: aws.String(id),
-					InstanceId:   aws.String(inst),
-				})
+				_, err := rt.EC2AssociateAddress(ctx, id, inst)
 				return wrapErr("runAddr", err)
 			})
 			return callOut, wrapErr("runAddr", callErr)
@@ -197,10 +194,7 @@ func runAddr(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		}
 		var assoc string
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
-			out, err := api.AssociateAddress(ctx, &awsec2.AssociateAddressInput{
-				AllocationId: aws.String(id),
-				InstanceId:   aws.String(inst),
-			})
+			out, err := rt.EC2AssociateAddress(ctx, id, inst)
 			if err == nil {
 				assoc = aws.ToString(out.AssociationId)
 			}
@@ -215,7 +209,7 @@ func runAddr(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.DisassociateAddress(ctx, &awsec2.DisassociateAddressInput{AssociationId: aws.String(assoc)})
+				err := rt.EC2DisassociateAddress(ctx, id, assoc)
 				return wrapErr("runAddr", err)
 			})
 			return callOut, wrapErr("runAddr", callErr)
@@ -248,7 +242,7 @@ func goneAlloc(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (st
 	if err != nil {
 		return "", err
 	}
-	if _, err := api.ReleaseAddress(ctx, &awsec2.ReleaseAddressInput{AllocationId: aws.String(id)}); err != nil {
+	if err := rt.EC2ReleaseAddress(ctx, id); err != nil {
 		return "", fmt.Errorf("release %s: %w", id, err)
 	}
 	return id, nil

@@ -22,6 +22,9 @@ func TestUnexpectedBucketCreateIsDeleted(t *testing.T) {
 				panic(err)
 			}
 		}
+		if missingBucket(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/xml")
 		if r.Method == http.MethodDelete && strings.Trim(r.URL.Path, "/") == "NO" {
 			mu.Lock()

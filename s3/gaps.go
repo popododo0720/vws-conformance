@@ -59,7 +59,7 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	if err := createFresh(ctx, rt, api, name); err != nil {
 		return cases.Outcome{}, err
 	}
-	if _, err := api.PutObject(ctx, &s3.PutObjectInput{
+	if _, err := rt.S3PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(name), Key: aws.String("k"),
 		Body: bytesReader("v"),
 	}); err != nil {

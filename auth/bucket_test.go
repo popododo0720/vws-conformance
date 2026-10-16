@@ -18,6 +18,16 @@ func TestAuthBucketIsDeletedByItsCreator(t *testing.T) {
 	var mu sync.Mutex
 	deleted := map[string]bool{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusNotFound)
+			if _, err := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+				`<Error><Code>NoSuchBucket</Code><Message>The specified bucket does not exist</Message>`+
+				`<RequestId>r</RequestId></Error>`); err != nil {
+				panic(err)
+			}
+			return
+		}
 		if r.Method == http.MethodDelete && !strings.Contains(strings.Trim(r.URL.Path, "/"), "/") {
 			mu.Lock()
 			deleted[strings.Trim(r.URL.Path, "/")] = true

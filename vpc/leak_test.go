@@ -27,6 +27,16 @@ func TestUnexpectedVpcCreateIsTracked(t *testing.T) {
 		}
 		action := vals.Get("Action")
 		w.Header().Set("Content-Type", "text/xml")
+		if action == "DescribeVpcs" {
+			if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+				`<DescribeVpcsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">`+
+				`<requestId>r</requestId><vpcSet><item><vpcId>vpc-leak</vpcId><state>available</state>`+
+				`<cidrBlock>10.0.0.0/33</cidrBlock><ownerId>123456789012</ownerId><isDefault>false</isDefault>`+
+				`</item></vpcSet></DescribeVpcsResponse>`); writeErr != nil {
+				panic(writeErr)
+			}
+			return
+		}
 		if action == "DeleteVpc" {
 			mu.Lock()
 			deleted = true

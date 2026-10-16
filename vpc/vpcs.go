@@ -75,7 +75,7 @@ func runVpcs(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.DeleteVpc(ctx, &awsec2.DeleteVpcInput{VpcId: aws.String(id)})
+				err := rt.EC2DeleteVpc(ctx, id)
 				return wrapErr("runVpcs", err)
 			})
 			return callOut, wrapErr("runVpcs", callErr)
@@ -95,7 +95,7 @@ func runVpcs(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 			}
 			rt.Cleanup(func(ctx context.Context) error {
 				return rt.Keep(ctx, true, nil, nil, func(ctx context.Context) error {
-					_, err := api.DeleteVpc(ctx, &awsec2.DeleteVpcInput{VpcId: aws.String(id)})
+					err := rt.EC2DeleteVpc(ctx, id)
 					return ignoreGone(err)
 				})
 			})
@@ -119,7 +119,7 @@ func runVpcs(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 				if c.ID == "VPC-VPC-104" {
 					_, err = api.DescribeVpcs(ctx, &awsec2.DescribeVpcsInput{VpcIds: []string{id}})
 				} else {
-					_, err = api.DeleteVpc(ctx, &awsec2.DeleteVpcInput{VpcId: aws.String(id)})
+					err = rt.EC2DeleteVpc(ctx, id)
 				}
 				return wrapErr("runVpcs", err)
 			})
@@ -135,7 +135,7 @@ func runVpcs(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.DeleteVpc(ctx, &awsec2.DeleteVpcInput{VpcId: aws.String(id)})
+				err := rt.EC2DeleteVpc(ctx, id)
 				return wrapErr("runVpcs", err)
 			})
 			return callOut, wrapErr("runVpcs", callErr)
@@ -173,7 +173,7 @@ func createVpc(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, cid
 		}
 		rt.Cleanup(func(ctx context.Context) error {
 			return rt.Keep(ctx, true, nil, nil, func(ctx context.Context) error {
-				_, err := api.DeleteVpc(ctx, &awsec2.DeleteVpcInput{VpcId: aws.String(id)})
+				err := rt.EC2DeleteVpc(ctx, id)
 				return ignoreGone(err)
 			})
 		})
@@ -186,7 +186,7 @@ func goneVpc(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, cidr,
 	if err != nil {
 		return "", err
 	}
-	if _, err := api.DeleteVpc(ctx, &awsec2.DeleteVpcInput{VpcId: aws.String(id)}); err != nil {
+	if err := rt.EC2DeleteVpc(ctx, id); err != nil {
 		return "", fmt.Errorf("delete vpc %s: %w", id, err)
 	}
 	return id, nil
@@ -206,7 +206,7 @@ func makeVpc(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, cidr,
 	}
 	rt.Cleanup(func(ctx context.Context) error {
 		return rt.Keep(ctx, true, nil, nil, func(ctx context.Context) error {
-			_, err := api.DeleteVpc(ctx, &awsec2.DeleteVpcInput{VpcId: aws.String(id)})
+			err := rt.EC2DeleteVpc(ctx, id)
 			return ignoreGone(err)
 		})
 	})

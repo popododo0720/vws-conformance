@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -249,6 +250,7 @@ func runMutationRow(t *testing.T, row mutationRow) {
 	}
 	var mu sync.Mutex
 	seen := map[string]int{}
+	removed := map[string]bool{}
 	cleared := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Has("versions") {
@@ -297,16 +299,26 @@ func runMutationRow(t *testing.T, row mutationRow) {
 			writeEC2(w, http.StatusBadRequest, ec2Err("DependencyViolation", "still in use"))
 			return
 		}
+		gone := targetedGone(action, vals, removed)
 		if isTerminal(action) {
-			cleared = true
+			if id := mutatedID(action, vals); id != "" {
+				removed[id] = true
+			}
 		}
-		empty := cleared
+		hidden := map[string]bool{}
+		for id := range removed {
+			hidden[id] = true
+		}
 		mu.Unlock()
+		if gone {
+			writeEC2(w, http.StatusBadRequest, ec2Err("Invalid"+goneKind(action)+".NotFound", "gone"))
+			return
+		}
 		if isMutation(action) {
 			writeEC2(w, http.StatusOK, ec2OK(action+"Response", "<return>true</return>"))
 			return
 		}
-		status, body := mutationDescribe(action, row, empty)
+		status, body := mutationDescribe(action, row, hidden)
 		writeEC2(w, status, body)
 	}))
 	defer srv.Close()
@@ -390,10 +402,16 @@ func serveBucketMutation(
 	}
 }
 
-func mutationDescribe(action string, row mutationRow, empty bool) (int, string) {
-	if empty {
-		row = mutationRow{}
-	}
+func mutationDescribe(action string, row mutationRow, removed map[string]bool) (int, string) {
+	row.instances = hideOwned(row.instances, "instanceId", removed)
+	row.volumes = hideOwned(row.volumes, "volumeId", removed)
+	row.addresses = hideOwned(row.addresses, "allocationId", removed)
+	row.snaps = hideOwned(row.snaps, "snapshotId", removed)
+	row.keys = hideOwned(row.keys, "keyName", removed)
+	row.groups = hideOwned(row.groups, "groupId", removed)
+	row.subnets = hideOwned(row.subnets, "subnetId", removed)
+	row.vpcs = hideOwned(row.vpcs, "vpcId", removed)
+	row.gateways = hideOwned(row.gateways, "internetGatewayId", removed)
 	switch action {
 	case "DescribeInstances":
 		return 200, ec2OK("DescribeInstancesResponse", "<reservationSet>"+row.instances+"</reservationSet>")
@@ -416,6 +434,99 @@ func mutationDescribe(action string, row mutationRow, empty bool) (int, string) 
 	default:
 		return 400, ec2Err("InvalidAction", action)
 	}
+}
+
+func hideOwned(xml, idTag string, removed map[string]bool) string {
+	for id := range removed {
+		if strings.Contains(xml, "<"+idTag+">"+id+"</"+idTag+">") {
+			return ""
+		}
+	}
+	return xml
+}
+
+func mutatedID(action string, vals url.Values) string {
+	switch action {
+	case "TerminateInstances":
+		return firstValue(vals, "InstanceId.1", "InstanceId")
+	case "DeleteVolume":
+		return firstValue(vals, "VolumeId", "VolumeId.1")
+	case "ReleaseAddress":
+		return firstValue(vals, "AllocationId", "AllocationId.1")
+	case "DeleteInternetGateway":
+		return firstValue(vals, "InternetGatewayId", "InternetGatewayId.1")
+	case "DeleteSnapshot":
+		return firstValue(vals, "SnapshotId", "SnapshotId.1")
+	case "DeleteKeyPair":
+		return firstValue(vals, "KeyName", "KeyName.1")
+	case "DeleteSecurityGroup":
+		return firstValue(vals, "GroupId", "GroupId.1")
+	case "DeleteSubnet":
+		return firstValue(vals, "SubnetId", "SubnetId.1")
+	case "DeleteVpc":
+		return firstValue(vals, "VpcId", "VpcId.1")
+	default:
+		return ""
+	}
+}
+
+func firstValue(vals url.Values, keys ...string) string {
+	for _, key := range keys {
+		if v := vals.Get(key); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func goneKind(action string) string {
+	switch action {
+	case "DescribeVolumes":
+		return "Volume"
+	case "DescribeInstances":
+		return "InstanceID"
+	case "DescribeAddresses":
+		return "AllocationID"
+	case "DescribeInternetGateways":
+		return "InternetGatewayID"
+	case "DescribeSnapshots":
+		return "Snapshot"
+	case "DescribeKeyPairs":
+		return "KeyPair"
+	case "DescribeSecurityGroups":
+		return "Group"
+	case "DescribeSubnets":
+		return "SubnetID"
+	case "DescribeVpcs":
+		return "VpcID"
+	default:
+		return "Resource"
+	}
+}
+
+func targetedGone(action string, vals url.Values, removed map[string]bool) bool {
+	var id string
+	switch action {
+	case "DescribeVolumes":
+		id = vals.Get("VolumeId.1")
+	case "DescribeInstances":
+		id = vals.Get("InstanceId.1")
+	case "DescribeAddresses":
+		id = vals.Get("AllocationId.1")
+	case "DescribeInternetGateways":
+		id = vals.Get("InternetGatewayId.1")
+	case "DescribeSnapshots":
+		id = vals.Get("SnapshotId.1")
+	case "DescribeKeyPairs":
+		id = vals.Get("KeyName.1")
+	case "DescribeSecurityGroups":
+		id = vals.Get("GroupId.1")
+	case "DescribeSubnets":
+		id = vals.Get("SubnetId.1")
+	case "DescribeVpcs":
+		id = vals.Get("VpcId.1")
+	}
+	return id != "" && removed[id]
 }
 
 func listed(items []string, action string) bool {

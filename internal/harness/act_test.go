@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,14 +56,14 @@ func TestMutatingCallsStayInTheGate(t *testing.T) {
 		}
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
-			return err
+			return fmt.Errorf("rel %s: %w", path, err)
 		}
 		if rel == filepath.Join("internal", "harness", "act.go") {
 			return nil
 		}
 		body, err := os.ReadFile(path)
 		if err != nil {
-			return err
+			return fmt.Errorf("read %s: %w", path, err)
 		}
 		for _, name := range mutatingSDKCalls {
 			if strings.Contains(string(body), "."+name+"(") {

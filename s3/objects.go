@@ -91,7 +91,7 @@ func runObjects(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.O
 	case "S3-OBJ-001":
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.PutObject(ctx, &s3.PutObjectInput{
+				_, err := rt.S3PutObject(ctx, &s3.PutObjectInput{
 					Bucket: aws.String(name), Key: aws.String("k"), Body: bytesReader(string(body)),
 					ContentMD5: aws.String(good), Metadata: map[string]string{"color": "blue"},
 				})
@@ -100,7 +100,7 @@ func runObjects(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.O
 			return callOut, wrapErr("runObjects", callErr)
 		}
 	case "S3-OBJ-002":
-		if _, err := api.PutObject(ctx, &s3.PutObjectInput{
+		if _, err := rt.S3PutObject(ctx, &s3.PutObjectInput{
 			Bucket: aws.String(name), Key: aws.String("k"),
 			Body: bytesReader(string(body)), Metadata: map[string]string{"color": "blue"},
 		}); err != nil {
@@ -120,7 +120,7 @@ func runObjects(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.O
 		o.Fields["color"] = color
 		return o, wrapErr("runObjects", err)
 	case "S3-OBJ-003":
-		if _, err := api.PutObject(ctx, &s3.PutObjectInput{
+		if _, err := rt.S3PutObject(ctx, &s3.PutObjectInput{
 			Bucket: aws.String(name), Key: aws.String("k"),
 			Body: bytesReader(string(body)),
 		}); err != nil {
@@ -134,7 +134,7 @@ func runObjects(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.O
 			return callOut, wrapErr("runObjects", callErr)
 		}
 	case "S3-OBJ-004":
-		if _, err := api.PutObject(ctx, &s3.PutObjectInput{
+		if _, err := rt.S3PutObject(ctx, &s3.PutObjectInput{
 			Bucket: aws.String(name), Key: aws.String("k"),
 			Body: bytesReader(string(body)),
 		}); err != nil {
@@ -142,13 +142,13 @@ func runObjects(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.O
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(name), Key: aws.String("k")})
+				_, err := rt.S3DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(name), Key: aws.String("k")})
 				return wrapErr("runObjects", err)
 			})
 			return callOut, wrapErr("runObjects", callErr)
 		}
 	case "S3-OBJ-005":
-		if _, err := api.PutObject(ctx, &s3.PutObjectInput{
+		if _, err := rt.S3PutObject(ctx, &s3.PutObjectInput{
 			Bucket: aws.String(name), Key: aws.String("k"),
 			Body: bytesReader(string(body)),
 		}); err != nil {
@@ -179,7 +179,7 @@ func runObjects(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.O
 					s := md5.Sum([]byte("not-the-body"))
 					return base64.StdEncoding.EncodeToString(s[:])
 				}()
-				_, err := api.PutObject(ctx, &s3.PutObjectInput{
+				_, err := rt.S3PutObject(ctx, &s3.PutObjectInput{
 					Bucket: aws.String(name), Key: aws.String("k"), Body: bytesReader(string(body)),
 					ContentMD5: aws.String(badMD5),
 				})
@@ -188,7 +188,7 @@ func runObjects(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.O
 			return callOut, wrapErr("runObjects", callErr)
 		}
 	case "S3-OBJ-103":
-		if _, err := api.PutObject(ctx, &s3.PutObjectInput{
+		if _, err := rt.S3PutObject(ctx, &s3.PutObjectInput{
 			Bucket: aws.String(name), Key: aws.String("k"),
 			Body: bytesReader(string(body)),
 		}); err != nil {
@@ -205,7 +205,7 @@ func runObjects(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.O
 			return callOut, wrapErr("runObjects", callErr)
 		}
 	case "S3-OBJ-104":
-		if _, err := api.PutObject(ctx, &s3.PutObjectInput{
+		if _, err := rt.S3PutObject(ctx, &s3.PutObjectInput{
 			Bucket: aws.String(name), Key: aws.String("k"),
 			Body: bytesReader(string(body)),
 		}); err != nil {
@@ -224,7 +224,7 @@ func runObjects(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.O
 	case "S3-OBJ-105":
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(name), Key: aws.String("never-stored")})
+				_, err := rt.S3DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(name), Key: aws.String("never-stored")})
 				return wrapErr("runObjects", err)
 			})
 			return callOut, wrapErr("runObjects", callErr)
@@ -240,7 +240,7 @@ func runObjects(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.O
 	case "S3-OBJ-107":
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(name), Key: aws.String("k")})
+				_, err := rt.S3DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(name), Key: aws.String("k")})
 				return wrapErr("runObjects", err)
 			})
 			return callOut, wrapErr("runObjects", callErr)

@@ -280,10 +280,10 @@ func TestMakeVolReturnsLedgerErrorAndKeepsCleanup(t *testing.T) {
 	if _, err := makeVol(context.Background(), rt, api, "vol"); err == nil || !strings.Contains(err.Error(), "ledger") {
 		t.Fatalf("err %v", err)
 	}
-	if err := rt.Clean.Run(context.Background()); err != nil {
-		t.Fatal(err)
+	if err := rt.Clean.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "read ledger") {
+		t.Fatalf("cleanup %v", err)
 	}
-	if deletes.Load() != 1 {
+	if deletes.Load() != 0 {
 		t.Fatalf("deletes %d", deletes.Load())
 	}
 }

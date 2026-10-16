@@ -48,23 +48,23 @@ func SigV4() bind.Group {
 }
 
 func ownBucket(ctx context.Context, rt *harness.Runtime, name string) error {
-	_, err := rt.Clients.S3.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(name)})
-	created := err == nil
+	_, err := rt.S3CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(name)})
+	fresh := rt.BucketFresh(name)
 	if err != nil && !strings.Contains(err.Error(), "BucketAlready") {
 		return fmt.Errorf("bucket: %w", err)
 	}
-	if err := rt.ClaimBucket(ctx, name, created); err != nil {
+	if err := rt.ClaimBucket(ctx, name, fresh); err != nil {
 		return fmt.Errorf("bucket: %w", err)
 	}
 	rt.Cleanup(func(ctx context.Context) error {
 		return rt.Keep(ctx, true, nil, nil, func(ctx context.Context) error {
-			_, objErr := rt.Clients.S3.DeleteObject(ctx, &s3.DeleteObjectInput{
+			_, objErr := rt.S3DeleteObject(ctx, &s3.DeleteObjectInput{
 				Bucket: aws.String(name), Key: aws.String("k"),
 			})
 			if objErr != nil && !strings.Contains(objErr.Error(), "NoSuch") && !strings.Contains(objErr.Error(), "NotFound") {
 				return fmt.Errorf("delete object %s: %w", name, objErr)
 			}
-			_, delErr := rt.Clients.S3.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(name)})
+			delErr := rt.S3DeleteBucket(ctx, name)
 			if delErr != nil && !strings.Contains(delErr.Error(), "NoSuch") && !strings.Contains(delErr.Error(), "NotFound") {
 				return fmt.Errorf("delete bucket %s: %w", name, delErr)
 			}
@@ -111,7 +111,7 @@ func run(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcome,
 		if err := ownBucket(ctx, rt, name); err != nil {
 			return cases.Outcome{}, err
 		}
-		if _, err := rt.Clients.S3.PutObject(ctx, &s3.PutObjectInput{
+		if _, err := rt.S3PutObject(ctx, &s3.PutObjectInput{
 			Bucket: aws.String(name), Key: aws.String("k"),
 			Body: bytes.NewReader([]byte("v")),
 		}); err != nil {
@@ -143,7 +143,7 @@ func run(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcome,
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := rt.Clients.S3.PutObject(ctx, &s3.PutObjectInput{
+				_, err := rt.S3PutObject(ctx, &s3.PutObjectInput{
 					Bucket: aws.String(name), Key: aws.String("k"),
 					Body: bytes.NewReader([]byte("stream-body")),
 				})

@@ -15,6 +15,9 @@ import (
 func TestPutBucketPolicyUsesTheBucketARN(t *testing.T) {
 	var policy, bucket string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if missingBucket(w, r) {
+			return
+		}
 		if strings.Contains(r.URL.RawQuery, "policy") {
 			b, readErr := io.ReadAll(r.Body)
 			if readErr != nil {
@@ -117,6 +120,9 @@ func lifecycleBody(t *testing.T, id string) string {
 	t.Helper()
 	var body string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if missingBucket(w, r) {
+			return
+		}
 		b, readErr := io.ReadAll(r.Body)
 		if readErr != nil {
 			panic(readErr)

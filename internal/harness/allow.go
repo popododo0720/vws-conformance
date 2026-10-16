@@ -109,9 +109,18 @@ func canonicalIP(ip net.IP) net.IP {
 	return ip
 }
 
+func imdsAddress(ip net.IP) bool {
+	if ip.Equal(net.IPv4(169, 254, 169, 254)) {
+		return true
+	}
+	v6 := net.ParseIP("fd00:ec2::254")
+	return v6 != nil && ip.Equal(v6)
+}
+
 func addressPermitted(ip net.IP, cidrs []string) bool {
 	ip = canonicalIP(ip)
-	if ip == nil || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+	if ip == nil || imdsAddress(ip) || ip.IsUnspecified() || ip.IsMulticast() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
 		return false
 	}
 	if awsPublished(ip) {

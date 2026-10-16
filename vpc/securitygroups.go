@@ -79,7 +79,7 @@ func runSG(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcom
 				if c.ID == "VPC-SG-104" {
 					_, err = api.DescribeSecurityGroups(ctx, &awsec2.DescribeSecurityGroupsInput{GroupIds: []string{id}})
 				} else {
-					_, err = api.DeleteSecurityGroup(ctx, &awsec2.DeleteSecurityGroupInput{GroupId: aws.String(id)})
+					err = rt.EC2DeleteSecurityGroup(ctx, id)
 				}
 				return wrapErr("runSG", err)
 			})
@@ -107,7 +107,7 @@ func runSG(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcom
 		if id != "" {
 			rt.Cleanup(func(ctx context.Context) error {
 				return rt.Keep(ctx, true, nil, nil, func(ctx context.Context) error {
-					_, err := api.DeleteSecurityGroup(ctx, &awsec2.DeleteSecurityGroupInput{GroupId: aws.String(id)})
+					err := rt.EC2DeleteSecurityGroup(ctx, id)
 					return ignoreGone(err)
 				})
 			})
@@ -160,7 +160,7 @@ func runSG(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcom
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.DeleteSecurityGroup(ctx, &awsec2.DeleteSecurityGroupInput{GroupId: aws.String(id)})
+				err := rt.EC2DeleteSecurityGroup(ctx, id)
 				return wrapErr("runSG", err)
 			})
 			return callOut, wrapErr("runSG", callErr)
@@ -187,7 +187,7 @@ func runSG(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcom
 				}
 				rt.Cleanup(func(ctx context.Context) error {
 					return rt.Keep(ctx, true, nil, nil, func(ctx context.Context) error {
-						_, err := api.DeleteSecurityGroup(ctx, &awsec2.DeleteSecurityGroupInput{GroupId: aws.String(created)})
+						err := rt.EC2DeleteSecurityGroup(ctx, created)
 						return ignoreGone(err)
 					})
 				})
@@ -208,7 +208,7 @@ func goneGroup(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, cid
 	if err != nil {
 		return "", err
 	}
-	if _, err := api.DeleteSecurityGroup(ctx, &awsec2.DeleteSecurityGroupInput{GroupId: aws.String(id)}); err != nil {
+	if err := rt.EC2DeleteSecurityGroup(ctx, id); err != nil {
 		return "", fmt.Errorf("delete security group %s: %w", id, err)
 	}
 	return id, nil
@@ -223,9 +223,12 @@ func makeSG(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, vpcID,
 		return "", fmt.Errorf("create security group: %w", err)
 	}
 	id := aws.ToString(out.GroupId)
+	if err := rt.Track("security-group", id, name); err != nil {
+		return "", fmt.Errorf("track security group: %w", err)
+	}
 	rt.Cleanup(func(ctx context.Context) error {
 		return rt.Keep(ctx, true, nil, nil, func(ctx context.Context) error {
-			_, err := api.DeleteSecurityGroup(ctx, &awsec2.DeleteSecurityGroupInput{GroupId: aws.String(id)})
+			err := rt.EC2DeleteSecurityGroup(ctx, id)
 			return ignoreGone(err)
 		})
 	})

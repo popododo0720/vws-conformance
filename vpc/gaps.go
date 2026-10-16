@@ -112,7 +112,7 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		})
 		if id != "" {
 			if err := rt.Own("internet-gateway", id, rt.Name("igw"), func(ctx context.Context) error {
-				_, err := api.DeleteInternetGateway(ctx, &awsec2.DeleteInternetGatewayInput{InternetGatewayId: aws.String(id)})
+				err := rt.EC2DeleteInternetGateway(ctx, id)
 				if err == nil || strings.Contains(err.Error(), "NotFound") {
 					return nil
 				}

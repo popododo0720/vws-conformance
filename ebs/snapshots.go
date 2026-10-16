@@ -69,7 +69,7 @@ func runSnap(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 				if c.ID == "EBS-SNAP-102" {
 					_, err = api.DescribeSnapshots(ctx, &awsec2.DescribeSnapshotsInput{SnapshotIds: []string{id}})
 				} else {
-					_, err = api.DeleteSnapshot(ctx, &awsec2.DeleteSnapshotInput{SnapshotId: aws.String(id)})
+					err = rt.EC2DeleteSnapshot(ctx, id)
 				}
 				return wrapErr("runSnap", err)
 			})
@@ -97,7 +97,7 @@ func runSnap(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 			}
 			rt.Cleanup(func(ctx context.Context) error {
 				return rt.Keep(ctx, true, nil, nil, func(ctx context.Context) error {
-					_, err := api.DeleteSnapshot(ctx, &awsec2.DeleteSnapshotInput{SnapshotId: aws.String(id)})
+					err := rt.EC2DeleteSnapshot(ctx, id)
 					return harness.IgnoreCleanup(err)
 				})
 			})
@@ -156,7 +156,7 @@ func runSnap(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.DeleteSnapshot(ctx, &awsec2.DeleteSnapshotInput{SnapshotId: aws.String(id)})
+				err := rt.EC2DeleteSnapshot(ctx, id)
 				return wrapErr("runSnap", err)
 			})
 			return callOut, wrapErr("runSnap", callErr)
@@ -184,11 +184,11 @@ func goneSnap(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, toke
 	}
 	rt.Cleanup(func(ctx context.Context) error {
 		return rt.Keep(ctx, true, nil, nil, func(ctx context.Context) error {
-			_, err := api.DeleteSnapshot(ctx, &awsec2.DeleteSnapshotInput{SnapshotId: aws.String(id)})
+			err := rt.EC2DeleteSnapshot(ctx, id)
 			return harness.IgnoreCleanup(err)
 		})
 	})
-	if _, err := api.DeleteSnapshot(ctx, &awsec2.DeleteSnapshotInput{SnapshotId: aws.String(id)}); err != nil {
+	if err := rt.EC2DeleteSnapshot(ctx, id); err != nil {
 		return "", fmt.Errorf("delete snapshot %s: %w", id, err)
 	}
 	return id, nil

@@ -158,7 +158,7 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.DeleteVolume(ctx, &awsec2.DeleteVolumeInput{VolumeId: aws.String(id)})
+				err := rt.EC2DeleteVolume(ctx, id)
 				return wrapErr("runVol", err)
 			})
 			return callOut, wrapErr("runVol", callErr)
@@ -182,16 +182,13 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 				case "EBS-VOL-104":
 					_, err = api.DescribeVolumes(ctx, &awsec2.DescribeVolumesInput{VolumeIds: []string{id}})
 				case "EBS-VOL-105":
-					_, err = api.AttachVolume(ctx, &awsec2.AttachVolumeInput{
-						VolumeId:   aws.String(id),
-						InstanceId: aws.String(inst), Device: aws.String("/dev/sdf"),
-					})
+					_, err = rt.EC2AttachVolume(ctx, id, inst, "/dev/sdf")
 				case "EBS-VOL-106":
 					_, err = api.ModifyVolume(ctx, &awsec2.ModifyVolumeInput{VolumeId: aws.String(id), Size: aws.Int32(2)})
 				case "EBS-VOL-107":
-					_, err = api.DetachVolume(ctx, &awsec2.DetachVolumeInput{VolumeId: aws.String(id)})
+					err = rt.EC2DetachVolume(ctx, id, "", "")
 				default:
-					_, err = api.DeleteVolume(ctx, &awsec2.DeleteVolumeInput{VolumeId: aws.String(id)})
+					err = rt.EC2DeleteVolume(ctx, id)
 				}
 				return wrapErr("runVol", err)
 			})
@@ -255,10 +252,7 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 			return cases.Outcome{}, fmt.Errorf("describe volume: %w", err)
 		}
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.AttachVolume(ctx, &awsec2.AttachVolumeInput{
-				VolumeId: aws.String(vol), InstanceId: aws.String(inst),
-				Device: aws.String("/dev/sdf"),
-			})
+			_, err := rt.EC2AttachVolume(ctx, vol, inst, "/dev/sdf")
 			return wrapErr("runVol", err)
 		})
 		if c.ID == "EBS-VOL-003" {
@@ -273,9 +267,7 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 		if c.ID == "EBS-VOL-006" {
 			{
 				callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-					_, err := api.DetachVolume(ctx, &awsec2.DetachVolumeInput{
-						VolumeId: aws.String(vol), InstanceId: aws.String(inst), Device: aws.String("/dev/sdf"),
-					})
+					err := rt.EC2DetachVolume(ctx, vol, inst, "/dev/sdf")
 					return wrapErr("runVol", err)
 				})
 				return callOut, wrapErr("runVol", callErr)
@@ -283,7 +275,7 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.DeleteVolume(ctx, &awsec2.DeleteVolumeInput{VolumeId: aws.String(vol)})
+				err := rt.EC2DeleteVolume(ctx, vol)
 				return wrapErr("runVol", err)
 			})
 			return callOut, wrapErr("runVol", callErr)
@@ -356,7 +348,7 @@ func goneVol(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, token
 	if err != nil {
 		return "", err
 	}
-	if _, err := api.DeleteVolume(ctx, &awsec2.DeleteVolumeInput{VolumeId: aws.String(id)}); err != nil {
+	if err := rt.EC2DeleteVolume(ctx, id); err != nil {
 		return "", fmt.Errorf("delete volume %s: %w", id, err)
 	}
 	return id, nil

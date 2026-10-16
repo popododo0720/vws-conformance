@@ -53,8 +53,14 @@ func negativeCreateCleans(t *testing.T, id, create, clean string, groups ...[]ca
 			}
 			return
 		}
-		if action == "DescribeVolumes" || action == "DescribeInstances" {
+		if action == "DescribeVolumes" {
 			if _, writeErr := io.WriteString(w, emptyDescribe(action)); writeErr != nil {
+				panic(writeErr)
+			}
+			return
+		}
+		if action == "DescribeInstances" {
+			if _, writeErr := io.WriteString(w, describeInstanceXML("i-leak", "running")); writeErr != nil {
 				panic(writeErr)
 			}
 			return

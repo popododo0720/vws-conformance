@@ -74,7 +74,7 @@ func runSubs(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 				if c.ID == "VPC-SUB-103" {
 					_, err = api.DescribeSubnets(ctx, &awsec2.DescribeSubnetsInput{SubnetIds: []string{id}})
 				} else {
-					_, err = api.DeleteSubnet(ctx, &awsec2.DeleteSubnetInput{SubnetId: aws.String(id)})
+					err = rt.EC2DeleteSubnet(ctx, id)
 				}
 				return wrapErr("runSubs", err)
 			})
@@ -123,7 +123,7 @@ func runSubs(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.DeleteSubnet(ctx, &awsec2.DeleteSubnetInput{SubnetId: aws.String(id)})
+				err := rt.EC2DeleteSubnet(ctx, id)
 				return wrapErr("runSubs", err)
 			})
 			return callOut, wrapErr("runSubs", callErr)
@@ -168,7 +168,7 @@ func goneSubnet(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, ci
 	if err != nil {
 		return "", err
 	}
-	if _, err := api.DeleteSubnet(ctx, &awsec2.DeleteSubnetInput{SubnetId: aws.String(id)}); err != nil {
+	if err := rt.EC2DeleteSubnet(ctx, id); err != nil {
 		return "", fmt.Errorf("delete subnet %s: %w", id, err)
 	}
 	return id, nil
@@ -190,7 +190,7 @@ func createSubnet(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, 
 
 func ownSubnet(rt *harness.Runtime, api *awsec2.Client, id, token string) error {
 	return wrapErr("ownSubnet", rt.Own("subnet", id, rt.Name(token), func(ctx context.Context) error {
-		_, err := api.DeleteSubnet(ctx, &awsec2.DeleteSubnetInput{SubnetId: aws.String(id)})
+		err := rt.EC2DeleteSubnet(ctx, id)
 		if err == nil || strings.Contains(err.Error(), "NotFound") {
 			return nil
 		}

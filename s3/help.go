@@ -8,6 +8,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	"github.com/popododo0720/vws-conformance/internal/harness"
 )
@@ -18,7 +19,7 @@ func bucketName(rt *harness.Runtime, id string) string {
 	return strings.ToLower(rt.Name(id))
 }
 
-func deleteAllObjects(ctx context.Context, api *s3.Client, name string) error {
+func deleteAllObjects(ctx context.Context, rt *harness.Runtime, api *s3.Client, name string) error {
 	var token *string
 	seen := map[string]bool{}
 	for {
@@ -32,7 +33,7 @@ func deleteAllObjects(ctx context.Context, api *s3.Client, name string) error {
 			return fmt.Errorf("list %s: %w", name, err)
 		}
 		for _, obj := range page.Contents {
-			_, err := api.DeleteObject(ctx, &s3.DeleteObjectInput{
+			_, err := rt.S3DeleteObject(ctx, &s3.DeleteObjectInput{
 				Bucket: aws.String(name), Key: obj.Key,
 			})
 			if err != nil {
@@ -49,10 +50,10 @@ func deleteAllObjects(ctx context.Context, api *s3.Client, name string) error {
 		seen[next] = true
 		token = aws.String(next)
 	}
-	return deleteVersions(ctx, api, name)
+	return deleteVersions(ctx, rt, api, name)
 }
 
-func deleteVersions(ctx context.Context, api *s3.Client, name string) error {
+func deleteVersions(ctx context.Context, rt *harness.Runtime, api *s3.Client, name string) error {
 	var keyMarker, versionMarker *string
 	seen := map[string]bool{}
 	for {
@@ -66,12 +67,12 @@ func deleteVersions(ctx context.Context, api *s3.Client, name string) error {
 			return fmt.Errorf("list versions %s: %w", name, err)
 		}
 		for _, obj := range page.Versions {
-			if err := deleteVersion(ctx, api, name, obj.Key, obj.VersionId); err != nil {
+			if err := deleteVersion(ctx, rt, name, obj.Key, obj.VersionId); err != nil {
 				return err
 			}
 		}
 		for _, obj := range page.DeleteMarkers {
-			if err := deleteVersion(ctx, api, name, obj.Key, obj.VersionId); err != nil {
+			if err := deleteVersion(ctx, rt, name, obj.Key, obj.VersionId); err != nil {
 				return err
 			}
 		}
@@ -88,8 +89,8 @@ func deleteVersions(ctx context.Context, api *s3.Client, name string) error {
 	}
 }
 
-func deleteVersion(ctx context.Context, api *s3.Client, name string, key, version *string) error {
-	_, err := api.DeleteObject(ctx, &s3.DeleteObjectInput{
+func deleteVersion(ctx context.Context, rt *harness.Runtime, name string, key, version *string) error {
+	_, err := rt.S3DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(name), Key: key, VersionId: version,
 	})
 	if err != nil {
@@ -110,21 +111,28 @@ func ignoreNoSuch(err error) error {
 	return err
 }
 
+func bucketLocation(rt *harness.Runtime) *types.CreateBucketConfiguration {
+	region := rt.Region()
+	if region == "" || region == "us-east-1" {
+		return nil
+	}
+	return &types.CreateBucketConfiguration{LocationConstraint: types.BucketLocationConstraint(region)}
+}
+
 func createFresh(ctx context.Context, rt *harness.Runtime, api *s3.Client, name string) error {
-	_, err := api.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(name)})
+	_, err := rt.S3CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(name)})
 	if err != nil {
 		return fmt.Errorf("create bucket %s: %w", name, err)
 	}
-	if !harness.AllowMutation(true, nil, nil, func(string) bool { return false }) {
+	if !rt.BucketFresh(name) {
 		return fmt.Errorf("preserve bucket %s", name)
 	}
 	rt.Cleanup(func(ctx context.Context) error {
 		return rt.Keep(ctx, true, nil, nil, func(ctx context.Context) error {
-			if err := deleteAllObjects(ctx, api, name); err != nil {
+			if err := deleteAllObjects(ctx, rt, api, name); err != nil {
 				return err
 			}
-			_, err := api.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(name)})
-			return ignoreNoSuch(err)
+			return ignoreNoSuch(rt.S3DeleteBucket(ctx, name))
 		})
 	})
 	if err := rt.Track("bucket", name, name); err != nil {

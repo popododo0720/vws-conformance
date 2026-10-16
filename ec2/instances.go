@@ -248,7 +248,7 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.StopInstances(ctx, &awsec2.StopInstancesInput{InstanceIds: []string{id}})
+				err := rt.EC2Stop(ctx, []string{id})
 				return wrapErr("runInstances", err)
 			})
 			return callOut, wrapErr("runInstances", callErr)
@@ -261,7 +261,7 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 		if _, err := api.DescribeInstances(ctx, &awsec2.DescribeInstancesInput{InstanceIds: []string{id}}); err != nil {
 			return cases.Outcome{}, fmt.Errorf("describe instance: %w", err)
 		}
-		if _, err := api.StopInstances(ctx, &awsec2.StopInstancesInput{InstanceIds: []string{id}}); err != nil {
+		if err := rt.EC2Stop(ctx, []string{id}); err != nil {
 			return cases.Outcome{}, fmt.Errorf("stop: %w", err)
 		}
 		if err := waitStopped(ctx, api, id); err != nil {
@@ -269,7 +269,7 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.StartInstances(ctx, &awsec2.StartInstancesInput{InstanceIds: []string{id}})
+				err := rt.EC2Start(ctx, []string{id})
 				return wrapErr("runInstances", err)
 			})
 			return callOut, wrapErr("runInstances", callErr)
@@ -281,7 +281,7 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.TerminateInstances(ctx, &awsec2.TerminateInstancesInput{InstanceIds: []string{id}})
+				err := rt.EC2Terminate(ctx, []string{id})
 				return wrapErr("runInstances", err)
 			})
 			return callOut, wrapErr("runInstances", callErr)

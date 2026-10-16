@@ -63,7 +63,8 @@ func TestVolumePeersReadEveryPage(t *testing.T) {
 	srv := httptestServer(t, func(action string) (int, string) {
 		if action == "TerminateInstances" {
 			terminates.Add(1)
-			return 200, ec2OK("TerminateInstancesResponse", "<instancesSet><item><instanceId>i-1</instanceId></item></instancesSet>")
+			return 200, ec2OK("TerminateInstancesResponse",
+				"<instancesSet><item><instanceId>i-1</instanceId></item></instancesSet>")
 		}
 		if action != "DescribeVolumes" {
 			return ec2Describe(action, false)

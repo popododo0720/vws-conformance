@@ -55,6 +55,14 @@ func TestUnexpectedCreateIsTracked(t *testing.T) {
 					if _, writeErr := io.WriteString(w, describeVolumeXML("available")); writeErr != nil {
 						panic(writeErr)
 					}
+				case "DescribeSnapshots":
+					if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+						`<DescribeSnapshotsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">`+
+						`<requestId>r</requestId><snapshotSet><item><snapshotId>snap-leak</snapshotId>`+
+						`<volumeId>vol-1</volumeId><status>completed</status><ownerId>123456789012</ownerId>`+
+						`<description>missing</description></item></snapshotSet></DescribeSnapshotsResponse>`); writeErr != nil {
+						panic(writeErr)
+					}
 				case "CreateSnapshot":
 					if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
 						`<CreateSnapshotResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">`+

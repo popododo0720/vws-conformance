@@ -107,6 +107,10 @@ func TestForeignRunTagVetoesAFinishedBucket(t *testing.T) {
 	deleted := map[string]bool{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := strings.Trim(r.URL.Path, "/")
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		if r.Method == http.MethodDelete {
 			mu.Lock()
 			delete(present, name)

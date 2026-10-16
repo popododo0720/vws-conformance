@@ -56,6 +56,18 @@ func TestAuthWritesOnlyABucketThisRunOwns(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				path := strings.Trim(r.URL.Path, "/")
 				w.Header().Set("Content-Type", "application/xml")
+				if r.Method == http.MethodHead {
+					if row.create == http.StatusOK {
+						w.WriteHeader(http.StatusNotFound)
+						if _, err := io.WriteString(w, `<Error><Code>NoSuchBucket</Code>`+
+							`<Message>The specified bucket does not exist</Message><RequestId>r</RequestId></Error>`); err != nil {
+							panic(err)
+						}
+						return
+					}
+					w.WriteHeader(http.StatusOK)
+					return
+				}
 				if r.URL.Query().Has("tagging") {
 					writeAdoptTags(w, row.tags, runID, other, path)
 					return

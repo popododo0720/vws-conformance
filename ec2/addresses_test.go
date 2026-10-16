@@ -165,10 +165,10 @@ func TestAllocIDReleasesWhenLedgerFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("ledger accepted a file as the output directory")
 	}
-	if cerr := rt.Clean.Run(context.Background()); cerr != nil {
-		t.Fatal(cerr)
+	if cerr := rt.Clean.Run(context.Background()); cerr == nil || !strings.Contains(cerr.Error(), "read ledger") {
+		t.Fatalf("cleanup %v", cerr)
 	}
-	if releases.Load() != 1 {
+	if releases.Load() != 0 {
 		t.Errorf("releases %d err %v", releases.Load(), err)
 	}
 	if !strings.Contains(body, "vws%3Aconformance-run") && !strings.Contains(body, "vws:conformance-run") {

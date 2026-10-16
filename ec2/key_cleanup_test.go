@@ -57,6 +57,12 @@ func runKeyCleanup(t *testing.T, id string, succeed bool) bool {
 				`<Message>exists</Message></Error></Errors><RequestID>r</RequestID></Response>`); writeErr != nil {
 				panic(writeErr)
 			}
+		case "DescribeKeyPairs":
+			name := vals.Get("KeyName.1")
+			if _, writeErr := io.WriteString(w, ec2Item("DescribeKeyPairsResponse",
+				"<keySet><item><keyName>"+name+"</keyName><keyFingerprint>ab</keyFingerprint></item></keySet>")); writeErr != nil {
+				panic(writeErr)
+			}
 		case "ImportKeyPair":
 			if !succeed {
 				w.WriteHeader(http.StatusBadRequest)

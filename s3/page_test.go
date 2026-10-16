@@ -63,6 +63,9 @@ func listingRuntime(t *testing.T, page func(int) string) *harness.Runtime {
 	t.Helper()
 	var lists int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if missingBucket(w, r) {
+			return
+		}
 		if r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "list-type=2") {
 			w.Header().Set("Content-Type", "application/xml")
 			if _, writeErr := io.WriteString(w, page(lists)); writeErr != nil {

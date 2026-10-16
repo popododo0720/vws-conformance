@@ -43,9 +43,8 @@ func runTags(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.CreateTags(ctx, &awsec2.CreateTagsInput{
-					Resources: []string{id},
-					Tags:      []types.Tag{{Key: aws.String("Name"), Value: aws.String(rt.Name("tag"))}},
+				err := rt.EC2CreateTags(ctx, []string{id}, []types.Tag{
+					{Key: aws.String("Name"), Value: aws.String(rt.Name("tag"))},
 				})
 				return wrapErr("runTags", err)
 			})
@@ -62,10 +61,7 @@ func runTags(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.CreateTags(ctx, &awsec2.CreateTagsInput{
-					Resources: []string{id},
-					Tags:      rt.Tags(),
-				})
+				err := rt.EC2CreateTags(ctx, []string{id}, rt.Tags())
 				return wrapErr("runTags", err)
 			})
 			return callOut, wrapErr("runTags", callErr)
@@ -100,7 +96,7 @@ func goneVolume(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (s
 	if err := waitVolume(ctx, api, id); err != nil {
 		return "", err
 	}
-	if _, err := api.DeleteVolume(ctx, &awsec2.DeleteVolumeInput{VolumeId: aws.String(id)}); err != nil {
+	if err := rt.EC2DeleteVolume(ctx, id); err != nil {
 		return "", fmt.Errorf("delete volume %s: %w", id, err)
 	}
 	return id, nil

@@ -64,7 +64,7 @@ func runListings(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.
 			return cases.Outcome{}, err
 		}
 		for _, key := range []string{"a/x", "a/y", "b"} {
-			if _, err := api.PutObject(ctx, &s3.PutObjectInput{
+			if _, err := rt.S3PutObject(ctx, &s3.PutObjectInput{
 				Bucket: aws.String(name), Key: aws.String(key),
 				Body: bytesReader("v"),
 			}); err != nil {

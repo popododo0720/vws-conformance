@@ -107,7 +107,7 @@ func runKeys(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.DeleteKeyPair(ctx, &awsec2.DeleteKeyPairInput{KeyName: aws.String(name)})
+				err := rt.EC2DeleteKeyPair(ctx, name)
 				return wrapErr("runKeys", err)
 			})
 			return callOut, wrapErr("runKeys", callErr)
@@ -142,7 +142,7 @@ func runKeys(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	case "EC2-KP-102":
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.DeleteKeyPair(ctx, &awsec2.DeleteKeyPairInput{KeyName: aws.String(rt.Name("missing"))})
+				err := rt.EC2DeleteKeyPair(ctx, rt.Name("missing"))
 				return wrapErr("runKeys", err)
 			})
 			return callOut, wrapErr("runKeys", callErr)

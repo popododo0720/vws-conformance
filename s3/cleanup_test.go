@@ -23,6 +23,9 @@ func TestCreateFreshDeletesEveryObject(t *testing.T) {
 	deleted := map[string]bool{}
 	bucketGone := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if missingBucket(w, r) {
+			return
+		}
 		if r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "versions") {
 			w.Header().Set("Content-Type", "application/xml")
 			if _, writeErr := io.WriteString(w, `<ListVersionsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`+
@@ -99,6 +102,9 @@ func TestCleanupDeletesVersionsAndMarkers(t *testing.T) {
 	var mu sync.Mutex
 	versions := map[string]bool{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if missingBucket(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/xml")
 		if r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "versions") {
 			if _, writeErr := io.WriteString(w, versionList()); writeErr != nil {
@@ -158,6 +164,20 @@ func TestCleanupDeletesVersionsAndMarkers(t *testing.T) {
 	if !versions["v1"] || !versions["m1"] {
 		t.Fatalf("versions %v", versions)
 	}
+}
+
+func missingBucket(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method != http.MethodHead {
+		return false
+	}
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusNotFound)
+	if _, err := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+		`<Error><Code>NoSuchBucket</Code><Message>The specified bucket does not exist</Message>`+
+		`<RequestId>r</RequestId></Error>`); err != nil {
+		panic(err)
+	}
+	return true
 }
 
 func emptyList() string {

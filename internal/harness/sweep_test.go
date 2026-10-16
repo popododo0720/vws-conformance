@@ -172,6 +172,7 @@ func TestSweepLeavesLiveForeignAndOtherTargetVolumes(t *testing.T) {
 
 func TestSweepDetachesAnAttachedVolume(t *testing.T) {
 	var detached atomic.Bool
+	var deleted atomic.Bool
 	var deletes atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if writeNoSuchTagSet(w, r) {
@@ -191,11 +192,12 @@ func TestSweepDetachesAnAttachedVolume(t *testing.T) {
 				writeEC2(w, 400, ec2Err("IncorrectState", "volume is in use"))
 				return
 			}
+			deleted.Store(true)
 			writeEC2(w, 200, `<?xml version="1.0" encoding="UTF-8"?>`+
 				`<DeleteVolumeResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">`+
 				`<requestId>r</requestId><return>true</return></DeleteVolumeResponse>`)
 		default:
-			status, body := ec2Describe(action, !detached.Load())
+			status, body := ec2Describe(action, !deleted.Load())
 			writeEC2(w, status, body)
 		}
 	}))
@@ -714,6 +716,10 @@ func TestSweepReadsTheSecondDescribePage(t *testing.T) {
 }
 
 func writeNoSuchTagSet(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return true
+	}
 	if r.Method != http.MethodGet || !r.URL.Query().Has("tagging") {
 		return false
 	}

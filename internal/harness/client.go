@@ -187,6 +187,7 @@ type Runtime struct {
 	devMu     sync.Mutex
 	devices   map[string]struct{}
 	swept     map[string]struct{}
+	fresh     map[string]struct{}
 }
 
 func NewRuntime(cfg Config, cl *Clients) *Runtime {
