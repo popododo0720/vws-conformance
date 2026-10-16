@@ -721,6 +721,37 @@ GH
     for ((i = 1; i <= QUALITY_ITEMS; i++)); do echo "${i}. https://example.invalid/log/${i}"; done
     echo "Codex review: /workspace/handoff/codex/vws-deploy-1-aaaaaaa.md blocking=0"; } >"$ev"
   expect_pass "label and evidence for the head" cmd_verify_gate "$h1" "bug,${VERIFY_LABEL}" "$ev"
+  expect_fail "a label named x,verify-approved,y" cmd_verify_gate "$h1" "x,${VERIFY_LABEL},y" "$ev"
+  local pinrepo="$tmp/pinrepo" pinblock shaA shaB
+  pinblock=$(awk '/# head-pin-start/ { on = 1; next } /# head-pin-end/ { on = 0 } on { sub(/^[[:space:]]*/, ""); print }' \
+    .github/workflows/repo-guard.yml)
+  [[ -n $pinblock ]] || die "selftest: repo-guard.yml has no head pin"
+  mkdir -p "$pinrepo" "$tmp/bin"
+  git -C "$pinrepo" init -q -b "$MAIN"
+  git -C "$pinrepo" config user.email t@example.invalid
+  git -C "$pinrepo" config user.name t
+  echo a >"$pinrepo/a"
+  git -C "$pinrepo" add a
+  git -C "$pinrepo" commit -q -m a
+  shaA=$(git -C "$pinrepo" rev-parse HEAD)
+  echo b >>"$pinrepo/a"
+  git -C "$pinrepo" commit -q -am b
+  shaB=$(git -C "$pinrepo" rev-parse HEAD)
+  cat >"$tmp/bin/git" <<'ENDGIT'
+#!/bin/sh
+real=/usr/bin/git
+if [ "$1" = fetch ]; then
+  gd=$("$real" rev-parse --git-dir)
+  printf '%s\t\t%s\n' "$GUARD_LIE_SHA" lie > "$gd/FETCH_HEAD"
+  exit 0
+fi
+exec "$real" "$@"
+ENDGIT
+  chmod +x "$tmp/bin/git"
+  run_pin() {
+    (cd "$pinrepo" && PATH="$tmp/bin:$PATH" HEAD_SHA="$1" GUARD_LIE_SHA="$2" NUMBER=1 bash -c 'set -euo pipefail'"$'\n'""$pinblock")
+  }
+  expect_fail "a fetch whose commit is not HEAD_SHA" run_pin "$shaB" "$shaA"
   expect_fail "no label" cmd_verify_gate "$h1" "bug" "$ev"
   expect_fail "a push after approval (new head)" cmd_verify_gate "$h2" "$VERIFY_LABEL" "$ev"
   expect_fail "short SHA" cmd_verify_gate "${h1:0:12}" "$VERIFY_LABEL" "$ev"

@@ -92,7 +92,9 @@ jobs:
           GUARD_VERIFY_EXCLUDE="${PR_AUTHOR},${pusher},${committer}"
           export GUARD_VERIFY_LABELER GUARD_VERIFY_EXCLUDE
           gh auth setup-git
+          # head-pin-start
           git fetch --depth=1 origin "refs/pull/${NUMBER}/head"
+          # head-pin-end
           # bootstrap-guard-start
           guard=scripts/guard-agents.sh
           sum=scripts/guard-agents.sh.sha256
