@@ -75,7 +75,7 @@ func CanonicalHost(host string) (string, error) {
 	}
 	ascii, err := idna.Lookup.ToASCII(host)
 	if err != nil {
-		return "", err
+		return "", wrapErr("CanonicalHost", err)
 	}
 	return strings.ToLower(strings.TrimRight(ascii, ".")), nil
 }

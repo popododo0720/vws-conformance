@@ -21,7 +21,10 @@ import (
 func SigV4() bind.Group {
 	skip := cases.SkipIAM
 	a := func(id, op string, exp cases.Expect, skipReason string) cases.Case {
-		return cases.Case{ID: id, Service: "auth", Group: "sigv4", Op: op, Kind: cases.KindAuth, Suite: cases.SuiteRaw, DocURL: cases.DocSigV4, Expect: exp, Skip: skipReason, Impl: "yes"}
+		return cases.Case{
+			ID: id, Service: "auth", Group: "sigv4", Op: op, Kind: cases.KindAuth, Suite: cases.SuiteRaw,
+			DocURL: cases.DocSigV4, Expect: exp, Skip: skipReason, Impl: "yes",
+		}
 	}
 	return bind.Group{Service: "auth", Name: "sigv4", Run: run, Cases: []cases.Case{
 		a("AUTH-001", "ListBuckets", cases.Expect{HTTP: 200}, ""),
@@ -65,67 +68,82 @@ func run(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcome,
 	case "AUTH-007":
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rt.Cfg.S3Endpoint+"/", nil)
 		if err != nil {
-			return cases.Outcome{}, err
+			return cases.Outcome{}, wrapErr("run", err)
 		}
 		resp, err := rt.Clients.Raw.Do(req)
 		if err != nil {
 			return cases.Outcome{}, fmt.Errorf("unsigned: %w", err)
 		}
-		defer resp.Body.Close()
+		defer closeChecked(resp.Body)
 		return readErr(resp)
 	case "AUTH-009":
 		if rt.Clients.S3 == nil {
 			return cases.Outcome{}, fmt.Errorf("s3 client is unset")
 		}
 		name := rt.Name("auth")
-		if _, err := rt.Clients.S3.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(name)}); err != nil && !strings.Contains(err.Error(), "BucketAlready") {
+		if _, err := rt.Clients.S3.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(name)}); err != nil &&
+			!strings.Contains(err.Error(), "BucketAlready") {
 			return cases.Outcome{}, fmt.Errorf("bucket: %w", err)
 		}
-		if _, err := rt.Clients.S3.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(name), Key: aws.String("k"), Body: bytes.NewReader([]byte("v"))}); err != nil {
+		if _, err := rt.Clients.S3.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(name), Key: aws.String("k"),
+			Body: bytes.NewReader([]byte("v")),
+		}); err != nil {
 			return cases.Outcome{}, fmt.Errorf("put: %w", err)
 		}
 		ps := s3.NewPresignClient(rt.Clients.S3)
-		req, err := ps.PresignGetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(name), Key: aws.String("k")}, s3.WithPresignExpires(time.Minute))
+		req, err := ps.PresignGetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(name), Key: aws.String("k")},
+			s3.WithPresignExpires(time.Minute))
 		if err != nil {
-			return cases.Outcome{}, err
+			return cases.Outcome{}, wrapErr("run", err)
 		}
 		httpReq, err := http.NewRequestWithContext(ctx, req.Method, req.URL, nil)
 		if err != nil {
-			return cases.Outcome{}, err
+			return cases.Outcome{}, wrapErr("run", err)
 		}
 		resp, err := rt.Clients.Raw.Do(httpReq)
 		if err != nil {
-			return cases.Outcome{}, err
+			return cases.Outcome{}, wrapErr("run", err)
 		}
-		defer resp.Body.Close()
+		defer closeChecked(resp.Body)
 		return readErr(resp)
 	case "AUTH-010":
 		if rt.Clients.S3 == nil {
 			return cases.Outcome{}, fmt.Errorf("s3 client is unset")
 		}
 		name := rt.Name("stream")
-		if _, err := rt.Clients.S3.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(name)}); err != nil && !strings.Contains(err.Error(), "BucketAlready") {
+		if _, err := rt.Clients.S3.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(name)}); err != nil &&
+			!strings.Contains(err.Error(), "BucketAlready") {
 			return cases.Outcome{}, fmt.Errorf("bucket: %w", err)
 		}
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := rt.Clients.S3.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(name), Key: aws.String("k"), Body: bytes.NewReader([]byte("stream-body"))})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := rt.Clients.S3.PutObject(ctx, &s3.PutObjectInput{
+					Bucket: aws.String(name), Key: aws.String("k"),
+					Body: bytes.NewReader([]byte("stream-body")),
+				})
+				return wrapErr("run", err)
+			})
+			return callOut, wrapErr("run", callErr)
+		}
 	default:
 		return cases.Outcome{}, fmt.Errorf("auth case %s is not runnable", c.ID)
 	}
 }
 
-func signed(ctx context.Context, rt *harness.Runtime, service, region, key, secret string, when time.Time, flip bool) (cases.Outcome, error) {
+func signed(ctx context.Context, rt *harness.Runtime, service, region, key, secret string, when time.Time,
+	flip bool,
+) (cases.Outcome, error) {
 	if rt.Clients == nil || rt.Clients.Raw == nil {
 		return cases.Outcome{}, fmt.Errorf("http client is unset")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rt.Cfg.S3Endpoint+"/", nil)
 	if err != nil {
-		return cases.Outcome{}, err
+		return cases.Outcome{}, wrapErr("signed", err)
 	}
 	signer := v4.NewSigner()
-	err = signer.SignHTTP(ctx, aws.Credentials{AccessKeyID: key, SecretAccessKey: secret}, req, harness.PayloadHash(nil), service, region, when)
+	err = signer.SignHTTP(ctx, aws.Credentials{AccessKeyID: key, SecretAccessKey: secret}, req, harness.PayloadHash(nil),
+		service, region, when)
 	if err != nil {
 		return cases.Outcome{}, fmt.Errorf("sign: %w", err)
 	}
@@ -146,14 +164,14 @@ func signed(ctx context.Context, rt *harness.Runtime, service, region, key, secr
 	if err != nil {
 		return cases.Outcome{}, fmt.Errorf("signed call: %w", err)
 	}
-	defer resp.Body.Close()
+	defer closeChecked(resp.Body)
 	return readErr(resp)
 }
 
 func readErr(resp *http.Response) (cases.Outcome, error) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return cases.Outcome{}, err
+		return cases.Outcome{}, wrapErr("readErr", err)
 	}
 	text := string(body)
 	code := ""
@@ -175,5 +193,8 @@ func readErr(resp *http.Response) (cases.Outcome, error) {
 			msg = rest[:j]
 		}
 	}
-	return cases.Outcome{HTTP: resp.StatusCode, Code: code, Message: msg, Fields: map[string]string{}, Raw: harness.Redact(text)}, nil
+	return cases.Outcome{
+		HTTP: resp.StatusCode, Code: code, Message: msg, Fields: map[string]string{},
+		Raw: harness.Redact(text),
+	}, nil
 }

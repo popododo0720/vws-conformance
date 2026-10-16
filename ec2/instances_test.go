@@ -27,7 +27,8 @@ func TestDescribedInstanceUsesResponse(t *testing.T) {
 	if err != nil || got != launched {
 		t.Fatalf("got %q err %v", got, err)
 	}
-	if _, err = describedInstance(out, "i-0000000000000001", 200); err == nil || !strings.Contains(err.Error(), "returned") {
+	if _, err = describedInstance(out, "i-0000000000000001", 200); err == nil || !strings.Contains(err.Error(),
+		"returned") {
 		t.Fatalf("mismatch err %v", err)
 	}
 	if _, err = describedInstance(&awsec2.DescribeInstancesOutput{}, launched, 200); err == nil {
@@ -45,26 +46,43 @@ func TestStartWaitsUntilStopped(t *testing.T) {
 	var started atomic.Bool
 	var stopping atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		vals, _ := url.ParseQuery(string(b))
+		b, readErr := io.ReadAll(r.Body)
+		if readErr != nil {
+			panic(readErr)
+		}
+		vals, queryErr := url.ParseQuery(string(b))
+		if queryErr != nil {
+			panic(queryErr)
+		}
 		w.Header().Set("Content-Type", "text/xml")
 		switch vals.Get("Action") {
 		case "CreateVpc":
-			_, _ = io.WriteString(w, ec2Item("CreateVpcResponse", "<vpc><vpcId>vpc-1</vpcId><state>available</state></vpc>"))
+			if _, writeErr := io.WriteString(w, ec2Item("CreateVpcResponse",
+				"<vpc><vpcId>vpc-1</vpcId><state>available</state></vpc>")); writeErr != nil {
+				panic(writeErr)
+			}
 		case "CreateSubnet":
 			inner := "<subnet><subnetId>subnet-1</subnetId><state>available</state><vpcId>vpc-1</vpcId></subnet>"
-			_, _ = io.WriteString(w, ec2Item("CreateSubnetResponse", inner))
+			if _, writeErr := io.WriteString(w, ec2Item("CreateSubnetResponse", inner)); writeErr != nil {
+				panic(writeErr)
+			}
 		case "RunInstances":
-			_, _ = io.WriteString(w, runInstanceXML("i-1"))
+			if _, writeErr := io.WriteString(w, runInstanceXML("i-1")); writeErr != nil {
+				panic(writeErr)
+			}
 		case "StopInstances":
 			phase.Store(1)
-			_, _ = io.WriteString(w, ec2Item("StopInstancesResponse", "<instancesSet/>"))
+			if _, writeErr := io.WriteString(w, ec2Item("StopInstancesResponse", "<instancesSet/>")); writeErr != nil {
+				panic(writeErr)
+			}
 		case "StartInstances":
 			started.Store(true)
 			if phase.Load() != 2 {
 				startedTooSoon.Store(true)
 			}
-			_, _ = io.WriteString(w, ec2Item("StartInstancesResponse", "<instancesSet/>"))
+			if _, writeErr := io.WriteString(w, ec2Item("StartInstancesResponse", "<instancesSet/>")); writeErr != nil {
+				panic(writeErr)
+			}
 		case "DescribeInstances":
 			state := "running"
 			if phase.Load() == 1 {
@@ -78,7 +96,9 @@ func TestStartWaitsUntilStopped(t *testing.T) {
 			} else if phase.Load() == 2 {
 				state = "stopped"
 			}
-			_, _ = io.WriteString(w, describeInstanceXML("i-1", state))
+			if _, writeErr := io.WriteString(w, describeInstanceXML("i-1", state)); writeErr != nil {
+				panic(writeErr)
+			}
 		default:
 			w.WriteHeader(http.StatusBadRequest)
 		}
@@ -113,8 +133,14 @@ func ec2Item(root, inner string) string {
 func TestLaunchWaitsUntilRunning(t *testing.T) {
 	var describes atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		vals, _ := url.ParseQuery(string(b))
+		b, readErr := io.ReadAll(r.Body)
+		if readErr != nil {
+			panic(readErr)
+		}
+		vals, queryErr := url.ParseQuery(string(b))
+		if queryErr != nil {
+			panic(queryErr)
+		}
 		w.Header().Set("Content-Type", "text/xml")
 		if vals.Get("Action") == "DescribeInstances" {
 			n := describes.Add(1)
@@ -122,10 +148,14 @@ func TestLaunchWaitsUntilRunning(t *testing.T) {
 			if n >= 2 {
 				state = "running"
 			}
-			_, _ = io.WriteString(w, describeInstanceXML("i-1", state))
+			if _, writeErr := io.WriteString(w, describeInstanceXML("i-1", state)); writeErr != nil {
+				panic(writeErr)
+			}
 			return
 		}
-		_, _ = io.WriteString(w, runInstanceXML("i-1"))
+		if _, writeErr := io.WriteString(w, runInstanceXML("i-1")); writeErr != nil {
+			panic(writeErr)
+		}
 	}))
 	defer srv.Close()
 	rt := harness.NewRuntime(harness.Config{

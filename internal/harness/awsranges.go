@@ -13,8 +13,10 @@ import (
 //go:embed aws-ranges.txt
 var awsRangesFile embed.FS
 
-var awsRangesOnce sync.Once
-var awsRanges []netip.Prefix
+var (
+	awsRangesOnce sync.Once
+	awsRanges     []netip.Prefix
+)
 
 func publishedRanges() []netip.Prefix {
 	awsRangesOnce.Do(func() {
@@ -62,7 +64,10 @@ func awsPublished(ip net.IP) bool {
 
 func privateSupernets() []netip.Prefix {
 	var out []netip.Prefix
-	for _, s := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "100.64.0.0/10", "fc00::/7", "::1/128"} {
+	for _, s := range []string{
+		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "100.64.0.0/10", "fc00::/7",
+		"::1/128",
+	} {
 		p, err := netip.ParsePrefix(s)
 		if err == nil {
 			out = append(out, p)

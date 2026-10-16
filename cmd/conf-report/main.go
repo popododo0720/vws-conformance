@@ -47,5 +47,6 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	fmt.Printf("pass %d fail %d skip %d error %d\n", out.Summary.Pass, out.Summary.Fail, out.Summary.Skip, out.Summary.Error)
+	fmt.Printf("pass %d fail %d skip %d error %d\n", out.Summary.Pass, out.Summary.Fail, out.Summary.Skip,
+		out.Summary.Error)
 }

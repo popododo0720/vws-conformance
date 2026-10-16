@@ -13,7 +13,11 @@ import (
 
 func Gaps() bind.Group {
 	return bind.Group{Service: "ebs", Name: "gaps", Run: runGaps, Cases: []cases.Case{
-		{ID: "EBS-GAP-002", Service: "ebs", Group: "gaps", Op: "DescribeVolumesModifications", Kind: cases.KindGap, Suite: cases.SuiteSDK, DocURL: cases.DocEC2("DescribeVolumesModifications"), Expect: cases.Expect{HTTP: 200}, Impl: "gap"},
+		{
+			ID: "EBS-GAP-002", Service: "ebs", Group: "gaps", Op: "DescribeVolumesModifications", Kind: cases.KindGap,
+			Suite: cases.SuiteSDK, DocURL: cases.DocEC2("DescribeVolumesModifications"), Expect: cases.Expect{HTTP: 200},
+			Impl: "gap",
+		},
 	}}
 }
 
@@ -24,10 +28,13 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	}
 	switch c.ID {
 	case "EBS-GAP-002":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.DescribeVolumesModifications(ctx, &awsec2.DescribeVolumesModificationsInput{})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.DescribeVolumesModifications(ctx, &awsec2.DescribeVolumesModificationsInput{})
+				return wrapErr("runGaps", err)
+			})
+			return callOut, wrapErr("runGaps", callErr)
+		}
 	default:
 		return cases.Outcome{}, fmt.Errorf("no runner for %s", c.ID)
 	}

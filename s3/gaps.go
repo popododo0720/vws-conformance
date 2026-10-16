@@ -59,119 +59,189 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	if err := createFresh(ctx, rt, api, name); err != nil {
 		return cases.Outcome{}, err
 	}
-	if _, err := api.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(name), Key: aws.String("k"), Body: bytesReader("v")}); err != nil {
+	if _, err := api.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(name), Key: aws.String("k"),
+		Body: bytesReader("v"),
+	}); err != nil {
 		return cases.Outcome{}, fmt.Errorf("put: %w", err)
 	}
 	switch c.ID {
 	case "S3-GAP-001":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.CopyObject(ctx, &s3.CopyObjectInput{Bucket: aws.String(name), Key: aws.String("c"), CopySource: aws.String(name + "/k")})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.CopyObject(ctx, &s3.CopyObjectInput{
+					Bucket: aws.String(name), Key: aws.String("c"),
+					CopySource: aws.String(name + "/k"),
+				})
+				return wrapErr("runGaps", err)
+			})
+			return callOut, wrapErr("runGaps", callErr)
+		}
 	case "S3-GAP-002":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.DeleteObjects(ctx, &s3.DeleteObjectsInput{Bucket: aws.String(name), Delete: &types.Delete{Objects: []types.ObjectIdentifier{{Key: aws.String("k")}}}})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+					Bucket: aws.String(name),
+					Delete: &types.Delete{Objects: []types.ObjectIdentifier{{Key: aws.String("k")}}},
+				})
+				return wrapErr("runGaps", err)
+			})
+			return callOut, wrapErr("runGaps", callErr)
+		}
 	case "S3-GAP-003":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.PutObjectTagging(ctx, &s3.PutObjectTaggingInput{Bucket: aws.String(name), Key: aws.String("k"), Tagging: &types.Tagging{TagSet: []types.Tag{{Key: aws.String("a"), Value: aws.String("b")}}}})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.PutObjectTagging(ctx, &s3.PutObjectTaggingInput{
+					Bucket: aws.String(name), Key: aws.String("k"),
+					Tagging: &types.Tagging{TagSet: []types.Tag{{Key: aws.String("a"), Value: aws.String("b")}}},
+				})
+				return wrapErr("runGaps", err)
+			})
+			return callOut, wrapErr("runGaps", callErr)
+		}
 	case "S3-GAP-004":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.GetObjectAcl(ctx, &s3.GetObjectAclInput{Bucket: aws.String(name), Key: aws.String("k")})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.GetObjectAcl(ctx, &s3.GetObjectAclInput{Bucket: aws.String(name), Key: aws.String("k")})
+				return wrapErr("runGaps", err)
+			})
+			return callOut, wrapErr("runGaps", callErr)
+		}
 	case "S3-GAP-005":
 		doc := bucketPolicy(name)
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.PutBucketPolicy(ctx, &s3.PutBucketPolicyInput{Bucket: aws.String(name), Policy: aws.String(doc)})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.PutBucketPolicy(ctx, &s3.PutBucketPolicyInput{Bucket: aws.String(name), Policy: aws.String(doc)})
+				return wrapErr("runGaps", err)
+			})
+			return callOut, wrapErr("runGaps", callErr)
+		}
 	case "S3-GAP-006":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{Bucket: aws.String(name), Key: aws.String("m")})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+					Bucket: aws.String(name),
+					Key:    aws.String("m"),
+				})
+				return wrapErr("runGaps", err)
+			})
+			return callOut, wrapErr("runGaps", callErr)
+		}
 	case "S3-GAP-007":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.PutBucketVersioning(ctx, &s3.PutBucketVersioningInput{Bucket: aws.String(name), VersioningConfiguration: &types.VersioningConfiguration{Status: types.BucketVersioningStatusSuspended}})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.PutBucketVersioning(ctx, &s3.PutBucketVersioningInput{
+					Bucket:                  aws.String(name),
+					VersioningConfiguration: &types.VersioningConfiguration{Status: types.BucketVersioningStatusSuspended},
+				})
+				return wrapErr("runGaps", err)
+			})
+			return callOut, wrapErr("runGaps", callErr)
+		}
 	case "S3-GAP-008":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.GetBucketLocation(ctx, &s3.GetBucketLocationInput{Bucket: aws.String(name)})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.GetBucketLocation(ctx, &s3.GetBucketLocationInput{Bucket: aws.String(name)})
+				return wrapErr("runGaps", err)
+			})
+			return callOut, wrapErr("runGaps", callErr)
+		}
 	case "S3-GAP-009":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.PutBucketCors(ctx, &s3.PutBucketCorsInput{Bucket: aws.String(name), CORSConfiguration: &types.CORSConfiguration{CORSRules: []types.CORSRule{{AllowedMethods: []string{"GET"}, AllowedOrigins: []string{"*"}}}}})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.PutBucketCors(ctx, &s3.PutBucketCorsInput{
+					Bucket: aws.String(name),
+					CORSConfiguration: &types.CORSConfiguration{CORSRules: []types.CORSRule{{
+						AllowedMethods: []string{"GET"},
+						AllowedOrigins: []string{"*"},
+					}}},
+				})
+				return wrapErr("runGaps", err)
+			})
+			return callOut, wrapErr("runGaps", callErr)
+		}
 	case "S3-GAP-010":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.PutBucketLifecycleConfiguration(ctx, &s3.PutBucketLifecycleConfigurationInput{
-				Bucket: aws.String(name),
-				LifecycleConfiguration: &types.BucketLifecycleConfiguration{Rules: []types.LifecycleRule{{
-					ID: aws.String("expire"), Status: types.ExpirationStatusEnabled,
-					Filter:     &types.LifecycleRuleFilter{Prefix: aws.String("")},
-					Expiration: &types.LifecycleExpiration{Days: aws.Int32(1)},
-				}}},
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.PutBucketLifecycleConfiguration(ctx, &s3.PutBucketLifecycleConfigurationInput{
+					Bucket: aws.String(name),
+					LifecycleConfiguration: &types.BucketLifecycleConfiguration{Rules: []types.LifecycleRule{{
+						ID: aws.String("expire"), Status: types.ExpirationStatusEnabled,
+						Filter:     &types.LifecycleRuleFilter{Prefix: aws.String("")},
+						Expiration: &types.LifecycleExpiration{Days: aws.Int32(1)},
+					}}},
+				})
+				return wrapErr("runGaps", err)
 			})
-			return err
-		})
+			return callOut, wrapErr("runGaps", callErr)
+		}
 	case "S3-GAP-016":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.PutBucketLifecycleConfiguration(ctx, &s3.PutBucketLifecycleConfigurationInput{
-				Bucket: aws.String(name),
-				LifecycleConfiguration: &types.BucketLifecycleConfiguration{Rules: []types.LifecycleRule{{
-					ID: aws.String("bad"), Status: types.ExpirationStatusEnabled,
-					Filter: &types.LifecycleRuleFilter{Prefix: aws.String("")},
-				}}},
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.PutBucketLifecycleConfiguration(ctx, &s3.PutBucketLifecycleConfigurationInput{
+					Bucket: aws.String(name),
+					LifecycleConfiguration: &types.BucketLifecycleConfiguration{Rules: []types.LifecycleRule{{
+						ID: aws.String("bad"), Status: types.ExpirationStatusEnabled,
+						Filter: &types.LifecycleRuleFilter{Prefix: aws.String("")},
+					}}},
+				})
+				return wrapErr("runGaps", err)
 			})
-			return err
-		})
+			return callOut, wrapErr("runGaps", callErr)
+		}
 	case "S3-GAP-011":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.PutBucketWebsite(ctx, &s3.PutBucketWebsiteInput{Bucket: aws.String(name), WebsiteConfiguration: &types.WebsiteConfiguration{IndexDocument: &types.IndexDocument{Suffix: aws.String("index.html")}}})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.PutBucketWebsite(ctx, &s3.PutBucketWebsiteInput{
+					Bucket: aws.String(name),
+					WebsiteConfiguration: &types.WebsiteConfiguration{
+						IndexDocument: &types.IndexDocument{Suffix: aws.String("index.html")},
+					},
+				})
+				return wrapErr("runGaps", err)
+			})
+			return callOut, wrapErr("runGaps", callErr)
+		}
 	case "S3-GAP-012":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{Bucket: aws.String(name)})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{Bucket: aws.String(name)})
+				return wrapErr("runGaps", err)
+			})
+			return callOut, wrapErr("runGaps", callErr)
+		}
 	case "S3-GAP-014":
 		ps := s3.NewPresignClient(api)
-		req, err := ps.PresignGetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(name), Key: aws.String("k")}, s3.WithPresignExpires(time.Minute))
+		req, err := ps.PresignGetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(name), Key: aws.String("k")},
+			s3.WithPresignExpires(time.Minute))
 		if err != nil {
 			return cases.Outcome{}, fmt.Errorf("presign: %w", err)
 		}
 		httpReq, err := http.NewRequestWithContext(ctx, req.Method, req.URL, nil)
 		if err != nil {
-			return cases.Outcome{}, err
+			return cases.Outcome{}, wrapErr("runGaps", err)
 		}
 		resp, err := rt.Clients.Raw.Do(httpReq)
 		if err != nil {
 			return cases.Outcome{}, fmt.Errorf("presign get: %w", err)
 		}
-		defer resp.Body.Close()
+		defer closeChecked(resp.Body)
 		return cases.Outcome{HTTP: resp.StatusCode, Fields: map[string]string{}}, nil
 	case "S3-GAP-015":
 		req, err := http.NewRequestWithContext(ctx, http.MethodHead, rt.Cfg.S3Endpoint+"/k", nil)
 		if err != nil {
-			return cases.Outcome{}, err
+			return cases.Outcome{}, wrapErr("runGaps", err)
 		}
 		req.Host = name + ".s3." + rt.Region() + ".amazonaws.com"
-		if err := v4.NewSigner().SignHTTP(ctx, aws.Credentials{AccessKeyID: rt.Cfg.AccessKey, SecretAccessKey: rt.Cfg.Secret}, req, harness.PayloadHash(nil), "s3", rt.Region(), time.Now()); err != nil {
+		if err := v4.NewSigner().SignHTTP(ctx, aws.Credentials{AccessKeyID: rt.Cfg.AccessKey, SecretAccessKey: rt.Cfg.Secret},
+			req, harness.PayloadHash(nil), "s3", rt.Region(), time.Now()); err != nil {
 			return cases.Outcome{}, fmt.Errorf("sign virtual host: %w", err)
 		}
 		resp, err := rt.Clients.Raw.Do(req)
 		if err != nil {
 			return cases.Outcome{}, fmt.Errorf("virtual host: %w", err)
 		}
-		defer resp.Body.Close()
+		defer closeChecked(resp.Body)
 		return cases.Outcome{HTTP: resp.StatusCode, Fields: map[string]string{}}, nil
 	default:
 		return cases.Outcome{}, fmt.Errorf("no runner for %s", c.ID)

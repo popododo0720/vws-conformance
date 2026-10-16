@@ -11,9 +11,11 @@ import (
 
 var RunIDPattern = regexp.MustCompile(`^conf-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}$`)
 
-const InstanceType = "t2.nano"
-const VolumeGiB int32 = 1
-const DefaultParallel = 1
+const (
+	InstanceType          = "t2.nano"
+	VolumeGiB       int32 = 1
+	DefaultParallel       = 1
+)
 
 func ValidateRunID(id string) error {
 	if !RunIDPattern.MatchString(id) {

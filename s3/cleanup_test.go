@@ -25,13 +25,17 @@ func TestCreateFreshDeletesEveryObject(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "versions") {
 			w.Header().Set("Content-Type", "application/xml")
-			_, _ = io.WriteString(w, `<ListVersionsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`+
-				`<IsTruncated>false</IsTruncated></ListVersionsResult>`)
+			if _, writeErr := io.WriteString(w, `<ListVersionsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`+
+				`<IsTruncated>false</IsTruncated></ListVersionsResult>`); writeErr != nil {
+				panic(writeErr)
+			}
 			return
 		}
 		if r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "list-type=2") {
 			w.Header().Set("Content-Type", "application/xml")
-			_, _ = io.WriteString(w, listOne("c"))
+			if _, writeErr := io.WriteString(w, listOne("c")); writeErr != nil {
+				panic(writeErr)
+			}
 			return
 		}
 		if r.Method == http.MethodDelete {
@@ -43,9 +47,11 @@ func TestCreateFreshDeletesEveryObject(t *testing.T) {
 				if !ok {
 					w.Header().Set("Content-Type", "application/xml")
 					w.WriteHeader(http.StatusConflict)
-					_, _ = io.WriteString(w, `<Error><Code>BucketNotEmpty</Code>`+
+					if _, writeErr := io.WriteString(w, `<Error><Code>BucketNotEmpty</Code>`+
 						`<Message>The bucket you tried to delete is not empty</Message>`+
-						`<RequestId>r</RequestId></Error>`)
+						`<RequestId>r</RequestId></Error>`); writeErr != nil {
+						panic(writeErr)
+					}
 					return
 				}
 				mu.Lock()
@@ -95,11 +101,15 @@ func TestCleanupDeletesVersionsAndMarkers(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/xml")
 		if r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "versions") {
-			_, _ = io.WriteString(w, versionList())
+			if _, writeErr := io.WriteString(w, versionList()); writeErr != nil {
+				panic(writeErr)
+			}
 			return
 		}
 		if r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "list-type=2") {
-			_, _ = io.WriteString(w, emptyList())
+			if _, writeErr := io.WriteString(w, emptyList()); writeErr != nil {
+				panic(writeErr)
+			}
 			return
 		}
 		if r.Method == http.MethodDelete {
@@ -110,7 +120,10 @@ func TestCleanupDeletesVersionsAndMarkers(t *testing.T) {
 				mu.Unlock()
 				if !ok {
 					w.WriteHeader(http.StatusConflict)
-					_, _ = io.WriteString(w, `<Error><Code>BucketNotEmpty</Code><Message>not empty</Message></Error>`)
+					if _, writeErr := io.WriteString(w,
+						`<Error><Code>BucketNotEmpty</Code><Message>not empty</Message></Error>`); writeErr != nil {
+						panic(writeErr)
+					}
 					return
 				}
 				w.WriteHeader(http.StatusNoContent)

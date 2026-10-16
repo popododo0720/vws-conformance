@@ -40,11 +40,17 @@ func TestRawClientDoesNotFollowRedirect(t *testing.T) {
 	}))
 	defer src.Close()
 	cl := loadRaw(t, src.URL)
-	resp, err := cl.Get(src.URL)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, src.URL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closeErr := resp.Body.Close(); closeErr != nil {
+		panic(closeErr)
+	}
 	if hits != 0 {
 		t.Fatalf("redirect target was dialed %d times", hits)
 	}
@@ -79,7 +85,9 @@ func TestSDKDoesNotFollowRedirect(t *testing.T) {
 	if cl.S3.Options().HTTPClient != cl.Raw {
 		t.Fatal("sdk http client is not the raw client")
 	}
-	_, _ = cl.S3.ListBuckets(context.Background(), &s3.ListBucketsInput{})
+	if _, listErr := cl.S3.ListBuckets(context.Background(), &s3.ListBucketsInput{}); listErr != nil {
+		t.Log(listErr)
+	}
 	if hits != 0 {
 		t.Fatalf("redirect target was dialed %d times", hits)
 	}
@@ -88,9 +96,15 @@ func TestSDKDoesNotFollowRedirect(t *testing.T) {
 func TestRawClientIgnoresProxy(t *testing.T) {
 	if os.Getenv("CONF_PROXY_CHILD") == "1" {
 		cl := loadRaw(t, "http://127.0.0.1:9")
-		resp, err := cl.Get("http://203.0.113.20/blocked")
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://203.0.113.20/blocked", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := cl.Do(req)
 		if resp != nil {
-			resp.Body.Close()
+			if closeErr := resp.Body.Close(); closeErr != nil {
+				panic(closeErr)
+			}
 		}
 		if err == nil {
 			t.Fatal("public address was dialed")
@@ -103,7 +117,7 @@ func TestRawClientIgnoresProxy(t *testing.T) {
 		http.Error(w, "proxy", http.StatusBadGateway)
 	}))
 	defer proxy.Close()
-	cmd := exec.Command(os.Args[0], "-test.run=^TestRawClientIgnoresProxy$", "-test.count=1")
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestRawClientIgnoresProxy$", "-test.count=1")
 	cmd.Env = append(os.Environ(),
 		"CONF_PROXY_CHILD=1",
 		"HTTP_PROXY="+proxy.URL,
@@ -128,12 +142,17 @@ func TestLoadStaysOnAllowlistedEndpoint(t *testing.T) {
 		hits++
 		w.Header().Set("Content-Type", "application/xml")
 		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`<?xml version="1.0"?><Error><Code>NoSuchBucket</Code><Message>no</Message></Error>`))
+		raw := `<?xml version="1.0"?>` +
+			`<Error><Code>NoSuchBucket</Code><Message>no</Message></Error>`
+		if _, writeErr := w.Write([]byte(raw)); writeErr != nil {
+			panic(writeErr)
+		}
 	}))
 	defer srv.Close()
 	dir := t.TempDir()
 	configPath := dir + "/config"
-	if err := os.WriteFile(configPath, []byte("[default]\nendpoint_url = https://s3.us-east-1.amazonaws.com\n"), 0o600); err != nil {
+	if err := os.WriteFile(configPath, []byte("[default]\nendpoint_url = https://s3.us-east-1.amazonaws.com\n"),
+		0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("AWS_CONFIG_FILE", configPath)
@@ -152,7 +171,9 @@ func TestLoadStaysOnAllowlistedEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _ = cl.S3.ListBuckets(context.Background(), &s3.ListBucketsInput{})
+	if _, listErr := cl.S3.ListBuckets(context.Background(), &s3.ListBucketsInput{}); listErr != nil {
+		t.Log(listErr)
+	}
 	if hits == 0 {
 		t.Fatal("request left the allowlisted endpoint")
 	}

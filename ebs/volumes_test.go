@@ -25,23 +25,32 @@ func TestMakeVolRetriesWhenTagsAreUnsupported(t *testing.T) {
 	const run = "conf-20261015T120000Z-abc123"
 	var tagged, plain atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
+		b, readErr := io.ReadAll(r.Body)
+		if readErr != nil {
+			panic(readErr)
+		}
 		body := string(b)
 		w.Header().Set("Content-Type", "text/xml")
 		if strings.Contains(body, "DescribeVolumes") {
-			_, _ = io.WriteString(w, describeVolumeXML("available"))
+			if _, writeErr := io.WriteString(w, describeVolumeXML("available")); writeErr != nil {
+				panic(writeErr)
+			}
 			return
 		}
 		if strings.Contains(body, "TagSpecification") {
 			tagged.Add(1)
 			w.WriteHeader(http.StatusBadRequest)
-			_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+			if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
 				`<Response><Errors><Error><Code>InvalidParameterValue</Code>`+
-				`<Message>unsupported</Message></Error></Errors><RequestID>r</RequestID></Response>`)
+				`<Message>unsupported</Message></Error></Errors><RequestID>r</RequestID></Response>`); writeErr != nil {
+				panic(writeErr)
+			}
 			return
 		}
 		plain.Add(1)
-		_, _ = io.WriteString(w, volumeXML("available"))
+		if _, writeErr := io.WriteString(w, volumeXML("available")); writeErr != nil {
+			panic(writeErr)
+		}
 	}))
 	defer srv.Close()
 	rt := harness.NewRuntime(harness.Config{RunID: run, OutDir: t.TempDir(), Region: "vws-1"}, nil)
@@ -67,19 +76,27 @@ func TestCreateVolumeRecordsTheTaggedRejection(t *testing.T) {
 	const run = "conf-20261015T120000Z-abc123"
 	var tagged, plain atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
+		b, readErr := io.ReadAll(r.Body)
+		if readErr != nil {
+			panic(readErr)
+		}
 		body := string(b)
 		w.Header().Set("Content-Type", "text/xml")
 		if strings.Contains(body, "TagSpecification") {
 			tagged.Add(1)
 			w.WriteHeader(http.StatusBadRequest)
-			_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+			if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
 				`<Response><Errors><Error><Code>InvalidParameterValue</Code>`+
-				`<Message>unsupported</Message></Error></Errors><RequestID>r</RequestID></Response>`)
+				`<Message>unsupported</Message></Error></Errors><RequestID>r</RequestID></Response>`); writeErr != nil {
+				panic(writeErr)
+			}
 			return
 		}
 		plain.Add(1)
-		_, _ = io.WriteString(w, strings.Replace(volumeXML("available"), "vol-1", "vol-0123456789abcdef0", 1))
+		if _, writeErr := io.WriteString(w, strings.Replace(volumeXML("available"), "vol-1", "vol-0123456789abcdef0",
+			1)); writeErr != nil {
+			panic(writeErr)
+		}
 	}))
 	defer srv.Close()
 	cfg := harness.Config{
@@ -112,14 +129,21 @@ func TestMakeVolTagsTheRun(t *testing.T) {
 	const run = "conf-20261015T120000Z-abc123"
 	var body string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
+		b, readErr := io.ReadAll(r.Body)
+		if readErr != nil {
+			panic(readErr)
+		}
 		w.Header().Set("Content-Type", "text/xml")
 		if strings.Contains(string(b), "DescribeVolumes") {
-			_, _ = io.WriteString(w, describeVolumeXML("available"))
+			if _, writeErr := io.WriteString(w, describeVolumeXML("available")); writeErr != nil {
+				panic(writeErr)
+			}
 			return
 		}
 		body = string(b)
-		_, _ = io.WriteString(w, volumeXML("available"))
+		if _, writeErr := io.WriteString(w, volumeXML("available")); writeErr != nil {
+			panic(writeErr)
+		}
 	}))
 	defer srv.Close()
 	rt := harness.NewRuntime(harness.Config{
@@ -153,7 +177,10 @@ func TestMakeVolTagsTheRun(t *testing.T) {
 func TestMakeVolWaitsUntilAvailable(t *testing.T) {
 	var describes atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
+		b, readErr := io.ReadAll(r.Body)
+		if readErr != nil {
+			panic(readErr)
+		}
 		body := string(b)
 		w.Header().Set("Content-Type", "text/xml")
 		if strings.Contains(body, "DescribeVolumes") {
@@ -162,10 +189,14 @@ func TestMakeVolWaitsUntilAvailable(t *testing.T) {
 			if n >= 2 {
 				status = "available"
 			}
-			_, _ = io.WriteString(w, describeVolumeXML(status))
+			if _, writeErr := io.WriteString(w, describeVolumeXML(status)); writeErr != nil {
+				panic(writeErr)
+			}
 			return
 		}
-		_, _ = io.WriteString(w, volumeXML("creating"))
+		if _, writeErr := io.WriteString(w, volumeXML("creating")); writeErr != nil {
+			panic(writeErr)
+		}
 	}))
 	defer srv.Close()
 	rt := harness.NewRuntime(harness.Config{

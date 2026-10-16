@@ -19,11 +19,36 @@ func Listings() bind.Group {
 	return bind.Group{
 		Service: "s3", Name: "listings", Run: runListings,
 		Cases: []cases.Case{
-			{ID: "S3-LO-001", Service: "s3", Group: "listings", Op: "ListObjects", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocS3("ListObjects"), Expect: cases.Expect{HTTP: 200, Patterns: map[string]string{"keys": "a/x,a/y"}}, Impl: "yes"},
-			{ID: "S3-LO-002", Service: "s3", Group: "listings", Op: "ListObjectsV2", Kind: cases.KindPagination, Suite: cases.SuiteSDK, DocURL: cases.DocS3("ListObjectsV2"), Expect: cases.Expect{HTTP: 200, Patterns: map[string]string{"keys": "^a/x,a/y,b$", "pages": "^[2-9]"}}, Impl: "yes"},
-			{ID: "S3-LO-003", Service: "s3", Group: "listings", Op: "ListObjectsV2", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocS3("ListObjectsV2"), Expect: cases.Expect{HTTP: 200, Patterns: map[string]string{"prefix": "a/"}}, Impl: "yes"},
-			{ID: "S3-LO-101", Service: "s3", Group: "listings", Op: "ListObjectsV2", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocS3Errors, Expect: cases.Expect{HTTP: 404, Code: "NoSuchBucket"}, Impl: "yes"},
-			{ID: "S3-LO-102", Service: "s3", Group: "listings", Op: "ListObjects", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocS3Errors, Expect: cases.Expect{HTTP: 404, Code: "NoSuchBucket"}, Impl: "yes"},
+			{
+				ID: "S3-LO-001", Service: "s3", Group: "listings", Op: "ListObjects", Kind: cases.KindHappy, Suite: cases.SuiteSDK,
+				DocURL: cases.DocS3("ListObjects"), Expect: cases.Expect{
+					HTTP:     200,
+					Patterns: map[string]string{"keys": "a/x,a/y"},
+				}, Impl: "yes",
+			},
+			{
+				ID: "S3-LO-002", Service: "s3", Group: "listings", Op: "ListObjectsV2", Kind: cases.KindPagination,
+				Suite: cases.SuiteSDK, DocURL: cases.DocS3("ListObjectsV2"), Expect: cases.Expect{
+					HTTP:     200,
+					Patterns: map[string]string{"keys": "^a/x,a/y,b$", "pages": "^[2-9]"},
+				}, Impl: "yes",
+			},
+			{
+				ID: "S3-LO-003", Service: "s3", Group: "listings", Op: "ListObjectsV2", Kind: cases.KindHappy,
+				Suite: cases.SuiteSDK, DocURL: cases.DocS3("ListObjectsV2"), Expect: cases.Expect{
+					HTTP:     200,
+					Patterns: map[string]string{"prefix": "a/"},
+				}, Impl: "yes",
+			},
+			{
+				ID: "S3-LO-101", Service: "s3", Group: "listings", Op: "ListObjectsV2", Kind: cases.KindError,
+				Suite: cases.SuiteSDK, DocURL: cases.DocS3Errors, Expect: cases.Expect{HTTP: 404, Code: "NoSuchBucket"},
+				Impl: "yes",
+			},
+			{
+				ID: "S3-LO-102", Service: "s3", Group: "listings", Op: "ListObjects", Kind: cases.KindError, Suite: cases.SuiteSDK,
+				DocURL: cases.DocS3Errors, Expect: cases.Expect{HTTP: 404, Code: "NoSuchBucket"}, Impl: "yes",
+			},
 		},
 	}
 }
@@ -39,7 +64,10 @@ func runListings(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.
 			return cases.Outcome{}, err
 		}
 		for _, key := range []string{"a/x", "a/y", "b"} {
-			if _, err := api.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(name), Key: aws.String(key), Body: bytesReader("v")}); err != nil {
+			if _, err := api.PutObject(ctx, &s3.PutObjectInput{
+				Bucket: aws.String(name), Key: aws.String(key),
+				Body: bytesReader("v"),
+			}); err != nil {
 				return cases.Outcome{}, fmt.Errorf("put %s: %w", key, err)
 			}
 		}
@@ -48,10 +76,10 @@ func runListings(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.
 	case "S3-LO-001":
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
 			_, err := api.ListObjects(ctx, &s3.ListObjectsInput{Bucket: aws.String(name), Delimiter: aws.String("/")})
-			return err
+			return wrapErr("runListings", err)
 		})
 		if err != nil {
-			return o, err
+			return o, wrapErr("runListings", err)
 		}
 		out, err := api.ListObjects(ctx, &s3.ListObjectsInput{Bucket: aws.String(name), Prefix: aws.String("a/")})
 		if err != nil {
@@ -78,14 +106,14 @@ func runListings(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.
 			if err == nil {
 				_ = out
 			}
-			return err
+			return wrapErr("runListings", err)
 		})
 		if err != nil {
-			return o, err
+			return o, wrapErr("runListings", err)
 		}
 		out, err := api.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(name), Delimiter: aws.String("/")})
 		if err != nil {
-			return o, err
+			return o, wrapErr("runListings", err)
 		}
 		if len(out.CommonPrefixes) == 0 {
 			o.Fields["prefix"] = ""
@@ -94,15 +122,21 @@ func runListings(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.
 		}
 		return o, nil
 	case "S3-LO-101":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(name)})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(name)})
+				return wrapErr("runListings", err)
+			})
+			return callOut, wrapErr("runListings", callErr)
+		}
 	case "S3-LO-102":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.ListObjects(ctx, &s3.ListObjectsInput{Bucket: aws.String(name)})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.ListObjects(ctx, &s3.ListObjectsInput{Bucket: aws.String(name)})
+				return wrapErr("runListings", err)
+			})
+			return callOut, wrapErr("runListings", callErr)
+		}
 	default:
 		return cases.Outcome{}, fmt.Errorf("no runner for %s", c.ID)
 	}

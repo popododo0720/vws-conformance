@@ -40,14 +40,20 @@ func TestPinRefusesChangedResolution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
+	defer func() {
+		if closeErr := p.Close(); closeErr != nil {
+			panic(closeErr)
+		}
+	}()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.URL+"/probe", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if resp != nil {
-		resp.Body.Close()
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			panic(closeErr)
+		}
 	}
 	if err == nil && (resp == nil || resp.StatusCode < 500) {
 		t.Fatal("changed resolution was proxied")
@@ -81,12 +87,22 @@ func TestPinDialsApprovedAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
-	resp, err := http.Get(p.URL + "/probe")
+	defer func() {
+		if closeErr := p.Close(); closeErr != nil {
+			panic(closeErr)
+		}
+	}()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, p.URL+"/probe", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closeErr := resp.Body.Close(); closeErr != nil {
+		panic(closeErr)
+	}
 	if resp.StatusCode != http.StatusOK || hits != 1 {
 		t.Fatalf("status %d hits %d", resp.StatusCode, hits)
 	}
@@ -104,7 +120,12 @@ func TestRealCLIUsesPinnedOrigin(t *testing.T) {
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits++
 		w.Header().Set("Content-Type", "application/xml")
-		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><ListAllMyBucketsResult><Owner><ID>x</ID><DisplayName>x</DisplayName></Owner><Buckets></Buckets></ListAllMyBucketsResult>`))
+		raw := `<?xml version="1.0" encoding="UTF-8"?>` +
+			`<ListAllMyBucketsResult><Owner><ID>x</ID><DisplayName>x</DisplayName></Owner>` +
+			`<Buckets></Buckets></ListAllMyBucketsResult>`
+		if _, writeErr := w.Write([]byte(raw)); writeErr != nil {
+			panic(writeErr)
+		}
 	}))
 	defer origin.Close()
 	proxyHits := 0
@@ -128,7 +149,11 @@ func TestRealCLIUsesPinnedOrigin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
+	defer func() {
+		if closeErr := p.Close(); closeErr != nil {
+			panic(closeErr)
+		}
+	}()
 	if !strings.HasPrefix(p.URL, "http://127.0.0.1:") {
 		t.Fatalf("pin url %s", p.URL)
 	}
@@ -233,7 +258,11 @@ func TestPinKeepsSignedHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
+	defer func() {
+		if closeErr := p.Close(); closeErr != nil {
+			panic(closeErr)
+		}
+	}()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.URL+"/probe", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -247,7 +276,9 @@ func TestPinKeepsSignedHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	if closeErr := resp.Body.Close(); closeErr != nil {
+		panic(closeErr)
+	}
 	if resp.StatusCode != http.StatusOK || gotAuth == "" || gotDate == "" {
 		t.Fatalf("status %d auth %q date %q", resp.StatusCode, gotAuth, gotDate)
 	}
@@ -255,7 +286,7 @@ func TestPinKeepsSignedHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := http.NewRequest(http.MethodGet, "http://"+gotHost+gotPath, nil)
+	again, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+gotHost+gotPath, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +315,8 @@ func TestChildEnvDropsProxy(t *testing.T) {
 	})
 	for _, e := range env {
 		switch {
-		case strings.HasPrefix(e, "HTTP_PROXY="), strings.HasPrefix(e, "HTTPS_PROXY="), strings.HasPrefix(e, "ALL_PROXY="), strings.HasPrefix(e, "AWS_PROFILE="), strings.HasPrefix(e, "AWS_ENDPOINT_URL="):
+		case strings.HasPrefix(e, "HTTP_PROXY="), strings.HasPrefix(e, "HTTPS_PROXY="), strings.HasPrefix(e,
+			"ALL_PROXY="), strings.HasPrefix(e, "AWS_PROFILE="), strings.HasPrefix(e, "AWS_ENDPOINT_URL="):
 			t.Fatalf("kept %s", e)
 		}
 	}

@@ -17,8 +17,18 @@ func Images() bind.Group {
 	return bind.Group{
 		Service: "ec2", Name: "images", Run: runImages,
 		Cases: []cases.Case{
-			{ID: "EC2-DIMG-001", Service: "ec2", Group: "images", Op: "DescribeImages", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocEC2("DescribeImages"), Expect: cases.Expect{HTTP: 200, Patterns: map[string]string{"id": expect.ImageID}}, Impl: "yes"},
-			{ID: "EC2-DIMG-101", Service: "ec2", Group: "images", Op: "DescribeImages", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidAMIID.NotFound"}, Impl: "yes"},
+			{
+				ID: "EC2-DIMG-001", Service: "ec2", Group: "images", Op: "DescribeImages", Kind: cases.KindHappy,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2("DescribeImages"), Expect: cases.Expect{
+					HTTP:     200,
+					Patterns: map[string]string{"id": expect.ImageID},
+				}, Impl: "yes",
+			},
+			{
+				ID: "EC2-DIMG-101", Service: "ec2", Group: "images", Op: "DescribeImages", Kind: cases.KindError,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidAMIID.NotFound"},
+				Impl: "yes",
+			},
 		},
 	}
 }
@@ -32,23 +42,26 @@ func runImages(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Ou
 	case "EC2-DIMG-001":
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
 			_, err := api.DescribeImages(ctx, &awsec2.DescribeImagesInput{})
-			return err
+			return wrapErr("runImages", err)
 		})
 		if err != nil {
-			return o, err
+			return o, wrapErr("runImages", err)
 		}
 		out, err := api.DescribeImages(ctx, &awsec2.DescribeImagesInput{ImageIds: []string{"ami-0123456789abcdef0"}})
 		if err != nil || len(out.Images) == 0 {
 			o.Fields["id"] = ""
-			return o, err
+			return o, wrapErr("runImages", err)
 		}
 		o.Fields["id"] = aws.ToString(out.Images[0].ImageId)
 		return o, nil
 	case "EC2-DIMG-101":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.DescribeImages(ctx, &awsec2.DescribeImagesInput{ImageIds: []string{"ami-0123456789abcdef1"}})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.DescribeImages(ctx, &awsec2.DescribeImagesInput{ImageIds: []string{"ami-0123456789abcdef1"}})
+				return wrapErr("runImages", err)
+			})
+			return callOut, wrapErr("runImages", callErr)
+		}
 	default:
 		return cases.Outcome{}, fmt.Errorf("no runner for %s", c.ID)
 	}

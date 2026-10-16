@@ -136,12 +136,23 @@ func runClaimChild() {
 func assertOneClaim(t *testing.T, dir, id, seed string) {
 	t.Helper()
 	path := filepath.Join(dir, id)
-	_ = os.Remove(path)
-	_ = os.Remove(filepath.Join(dir, "claim-go"))
-	_ = os.Remove(filepath.Join(dir, "claim-release"))
-	oldWins, _ := filepath.Glob(filepath.Join(dir, "won-*"))
+	if callErr := os.Remove(path); callErr != nil && !os.IsNotExist(callErr) {
+		panic(callErr)
+	}
+	if callErr := os.Remove(filepath.Join(dir, "claim-go")); callErr != nil && !os.IsNotExist(callErr) {
+		panic(callErr)
+	}
+	if callErr := os.Remove(filepath.Join(dir, "claim-release")); callErr != nil && !os.IsNotExist(callErr) {
+		panic(callErr)
+	}
+	oldWins, globErr := filepath.Glob(filepath.Join(dir, "won-*"))
+	if globErr != nil {
+		panic(globErr)
+	}
 	for _, name := range oldWins {
-		_ = os.Remove(name)
+		if callErr := os.Remove(name); callErr != nil && !os.IsNotExist(callErr) {
+			panic(callErr)
+		}
 	}
 	switch seed {
 	case "":
@@ -161,7 +172,9 @@ func assertOneClaim(t *testing.T, dir, id, seed string) {
 	outs := make([]*bytes.Buffer, n)
 	for i := 0; i < n; i++ {
 		ready := filepath.Join(dir, "ready-"+strconv.Itoa(i))
-		_ = os.Remove(ready)
+		if callErr := os.Remove(ready); callErr != nil && !os.IsNotExist(callErr) {
+			panic(callErr)
+		}
 		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestConcurrentClaimants$", "-test.count=1")
 		cmd.Env = append(os.Environ(),
 			"CONF_CLAIM_CHILD=1",
@@ -205,7 +218,12 @@ func assertOneClaim(t *testing.T, dir, id, seed string) {
 	var exited atomic.Int32
 	for i := range cmds {
 		go func(i int) {
-			_ = cmds[i].Wait()
+			if callErr := cmds[i].Wait(); callErr != nil {
+				// A losing claimant exits non-zero. One winner is the assertion.
+				if _, writeErr := outs[i].WriteString(callErr.Error()); writeErr != nil {
+					panic(writeErr)
+				}
+			}
 			exited.Add(1)
 		}(i)
 	}
@@ -213,7 +231,10 @@ func assertOneClaim(t *testing.T, dir, id, seed string) {
 	var winners []string
 	for time.Now().Before(deadline) {
 		winners = nil
-		matches, _ := filepath.Glob(filepath.Join(dir, "won-*"))
+		matches, globErr := filepath.Glob(filepath.Join(dir, "won-*"))
+		if globErr != nil {
+			panic(globErr)
+		}
 		for _, name := range matches {
 			b, readErr := os.ReadFile(name)
 			if readErr == nil {
@@ -227,7 +248,10 @@ func assertOneClaim(t *testing.T, dir, id, seed string) {
 	}
 	body, err := os.ReadFile(path)
 	if len(winners) != 1 || err != nil || string(body) != winners[0]+"\n" {
-		_ = os.WriteFile(filepath.Join(dir, "claim-release"), []byte("1\n"), 0o644)
+		if callErr := os.WriteFile(filepath.Join(dir, "claim-release"), []byte("1\n"), 0o644); callErr != nil &&
+			!os.IsNotExist(callErr) {
+			panic(callErr)
+		}
 		var logs []string
 		for _, buf := range outs {
 			if s := strings.TrimSpace(buf.String()); s != "" {

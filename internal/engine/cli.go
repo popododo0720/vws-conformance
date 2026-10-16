@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -57,7 +58,7 @@ func RunCLI(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	defer pin.Close()
+	defer closeChecked(pin)
 	if !strings.HasPrefix(pin.URL, "http://127.0.0.1:") {
 		fmt.Fprintln(os.Stderr, "pinned endpoint is not loopback")
 		return 1
@@ -79,7 +80,8 @@ func RunCLI(args []string) int {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		if exit, ok := err.(*exec.ExitError); ok {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
 			return exit.ExitCode()
 		}
 		fmt.Fprintln(os.Stderr, err)

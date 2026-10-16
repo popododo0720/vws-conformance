@@ -116,12 +116,16 @@ func runProcessCleanup() error {
 func RunMain(m interface{ Run() int }, sig <-chan os.Signal, exit func(int)) int {
 	go func() {
 		<-sig
-		_ = runProcessCleanup()
+		if err := runProcessCleanup(); err != nil {
+			fmt.Fprintf(os.Stderr, "cleanup: %v\n", err)
+		}
 		exit(1)
 	}()
 	defer func() {
 		if recover() != nil {
-			_ = runProcessCleanup()
+			if err := runProcessCleanup(); err != nil {
+				fmt.Fprintf(os.Stderr, "cleanup: %v\n", err)
+			}
 			panic("recovered")
 		}
 	}()

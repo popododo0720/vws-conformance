@@ -67,10 +67,10 @@ func (rt *Runtime) Track(kind, id, name string) error {
 	if err != nil {
 		return fmt.Errorf("ledger: %w", err)
 	}
-	defer f.Close()
+	defer closeChecked(f)
 	b, err := json.Marshal(row)
 	if err != nil {
-		return err
+		return wrapErr("Track", err)
 	}
 	if _, err := f.Write(append(b, '\n')); err != nil {
 		return fmt.Errorf("ledger write: %w", err)
@@ -103,7 +103,7 @@ func (rt *Runtime) EnsureNet(ctx context.Context) (string, string, error) {
 		rt.netMu.Unlock()
 		select {
 		case <-ctx.Done():
-			return "", "", ctx.Err()
+			return "", "", wrapErr("EnsureNet", ctx.Err())
 		case <-flight.done:
 			return flight.vpc, flight.subnet, flight.err
 		}
@@ -256,13 +256,13 @@ func (rt *Runtime) sweepGiveUp(ctx context.Context, last []sweepItem, err error)
 	return err
 }
 
-// ForeignLeftover is a sweep that still sees resources owned by a finished run
+// ForeignLeftoverError is a sweep that still sees resources owned by a finished run
 // other than the caller. The caller's own leftovers stay a plain error.
-type ForeignLeftover struct {
+type ForeignLeftoverError struct {
 	msg string
 }
 
-func (e *ForeignLeftover) Error() string {
+func (e *ForeignLeftoverError) Error() string {
 	if e == nil {
 		return ""
 	}
@@ -272,7 +272,7 @@ func (e *ForeignLeftover) Error() string {
 func (rt *Runtime) leftover(items []sweepItem) error {
 	base := leftoverError(items)
 	if foreignOnly(items, rt.Cfg.RunID) {
-		return &ForeignLeftover{msg: base.Error()}
+		return &ForeignLeftoverError{msg: base.Error()}
 	}
 	return base
 }
@@ -579,7 +579,8 @@ func describeEC2(ctx context.Context, c *ec2.Client) (ec2View, error) {
 			return c.DescribeInternetGateways(ctx, &ec2.DescribeInternetGatewaysInput{NextToken: token})
 		})
 		if unsupportedAction(err) {
-			return nil, nil
+			// An empty token ends the page walk. A nil token is an invalid value.
+			return aws.String(""), nil
 		}
 		if err != nil {
 			return nil, fmt.Errorf("describe internet gateways: %w", err)
@@ -804,9 +805,12 @@ func deleteEC2(ctx context.Context, rt *Runtime, items []sweepItem) error {
 		var err error
 		switch item.kind {
 		case "volume":
-			_, _ = withDeadline(ctx, func(ctx context.Context) (*ec2.DetachVolumeOutput, error) {
+			if _, detachErr := withDeadline(ctx, func(ctx context.Context) (*ec2.DetachVolumeOutput, error) {
 				return c.DetachVolume(ctx, &ec2.DetachVolumeInput{VolumeId: aws.String(item.id)})
-			})
+			}); detachErr != nil {
+				// Detach is best-effort. DeleteVolume is what decides the volume is gone.
+				fmt.Fprintf(os.Stderr, "detach volume %s: %v\n", item.id, detachErr)
+			}
 			_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteVolumeOutput, error) {
 				return c.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(item.id)})
 			})
@@ -822,9 +826,12 @@ func deleteEC2(ctx context.Context, rt *Runtime, items []sweepItem) error {
 			}
 		case "address":
 			if item.assoc != "" {
-				_, _ = withDeadline(ctx, func(ctx context.Context) (*ec2.DisassociateAddressOutput, error) {
+				if _, assocErr := withDeadline(ctx, func(ctx context.Context) (*ec2.DisassociateAddressOutput, error) {
 					return c.DisassociateAddress(ctx, &ec2.DisassociateAddressInput{AssociationId: aws.String(item.assoc)})
-				})
+				}); assocErr != nil {
+					// Disassociate is best-effort. ReleaseAddress is what decides the address is gone.
+					fmt.Fprintf(os.Stderr, "disassociate address %s: %v\n", item.id, assocErr)
+				}
 			}
 			_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.ReleaseAddressOutput, error) {
 				return c.ReleaseAddress(ctx, &ec2.ReleaseAddressInput{AllocationId: aws.String(item.id)})
@@ -848,9 +855,14 @@ func deleteEC2(ctx context.Context, rt *Runtime, items []sweepItem) error {
 			}
 		case "internet-gateway":
 			for _, vpc := range item.vpcs {
-				_, _ = withDeadline(ctx, func(ctx context.Context) (*ec2.DetachInternetGatewayOutput, error) {
-					return c.DetachInternetGateway(ctx, &ec2.DetachInternetGatewayInput{InternetGatewayId: aws.String(item.id), VpcId: aws.String(vpc)})
-				})
+				if _, gwErr := withDeadline(ctx, func(ctx context.Context) (*ec2.DetachInternetGatewayOutput, error) {
+					return c.DetachInternetGateway(ctx, &ec2.DetachInternetGatewayInput{
+						InternetGatewayId: aws.String(item.id), VpcId: aws.String(vpc),
+					})
+				}); gwErr != nil {
+					// Detach is best-effort. DeleteInternetGateway is what decides the gateway is gone.
+					fmt.Fprintf(os.Stderr, "detach internet gateway %s: %v\n", item.id, gwErr)
+				}
 			}
 			_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteInternetGatewayOutput, error) {
 				return c.DeleteInternetGateway(ctx, &ec2.DeleteInternetGatewayInput{InternetGatewayId: aws.String(item.id)})

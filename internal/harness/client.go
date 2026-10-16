@@ -65,13 +65,19 @@ func withCapture(ctx context.Context, c *Capture) context.Context {
 }
 
 func captureFrom(ctx context.Context) *Capture {
-	c, _ := ctx.Value(captureKey{}).(*Capture)
+	c, ok := ctx.Value(captureKey{}).(*Capture)
+	if !ok {
+		return nil
+	}
 	return c
 }
 
 func captureOption() func(*middleware.Stack) error {
 	return func(stack *middleware.Stack) error {
-		if err := stack.Finalize.Add(middleware.FinalizeMiddlewareFunc("confCaptureReq", func(ctx context.Context, in middleware.FinalizeInput, next middleware.FinalizeHandler) (middleware.FinalizeOutput, middleware.Metadata, error) {
+		if err := stack.Finalize.Add(middleware.FinalizeMiddlewareFunc("confCaptureReq", func(ctx context.Context,
+			in middleware.FinalizeInput, next middleware.FinalizeHandler) (middleware.FinalizeOutput, middleware.Metadata,
+			error,
+		) {
 			if c := captureFrom(ctx); c != nil {
 				if req, ok := in.Request.(*smithyhttp.Request); ok && req.Request != nil {
 					c.mu.Lock()
@@ -83,13 +89,19 @@ func captureOption() func(*middleware.Stack) error {
 			}
 			return next.HandleFinalize(ctx, in)
 		}), middleware.Before); err != nil {
-			return err
+			return wrapErr("unknown", err)
 		}
-		return stack.Deserialize.Add(middleware.DeserializeMiddlewareFunc("confCaptureResp", func(ctx context.Context, in middleware.DeserializeInput, next middleware.DeserializeHandler) (middleware.DeserializeOutput, middleware.Metadata, error) {
+		return stack.Deserialize.Add(middleware.DeserializeMiddlewareFunc("confCaptureResp", func(ctx context.Context,
+			in middleware.DeserializeInput, next middleware.DeserializeHandler) (middleware.DeserializeOutput,
+			middleware.Metadata, error,
+		) {
 			out, md, err := next.HandleDeserialize(ctx, in)
 			if c := captureFrom(ctx); c != nil {
 				if resp, ok := out.RawResponse.(*smithyhttp.Response); ok && resp != nil && resp.Response != nil {
-					body, _ := io.ReadAll(resp.Body)
+					body, readErr := io.ReadAll(resp.Body)
+					if readErr != nil {
+						return out, md, fmt.Errorf("read response: %w", readErr)
+					}
 					resp.Body = io.NopCloser(bytes.NewReader(body))
 					c.mu.Lock()
 					c.Status = resp.StatusCode
@@ -98,7 +110,7 @@ func captureOption() func(*middleware.Stack) error {
 					c.mu.Unlock()
 				}
 			}
-			return out, md, err
+			return out, md, wrapErr("unknown", err)
 		}), middleware.After)
 	}
 }
@@ -121,7 +133,9 @@ func Load(ctx context.Context, cfg Config) (*Clients, error) {
 	if os.Getenv("AWS_PROFILE") != "" || os.Getenv("AWS_DEFAULT_PROFILE") != "" {
 		return nil, fmt.Errorf("AWS_PROFILE is refused; set VWS_CONF_ACCESS_KEY_ID and VWS_CONF_SECRET_ACCESS_KEY")
 	}
-	_ = os.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+	if err := os.Setenv("AWS_EC2_METADATA_DISABLED", "true"); err != nil {
+		return nil, fmt.Errorf("disable instance metadata: %w", err)
+	}
 	httpClient := NewHTTPClient(cfg.AllowedHosts, cfg.AllowedCIDRs)
 	awsCfg, err := config.LoadDefaultConfig(ctx,
 		config.WithRegion(cfg.Region),

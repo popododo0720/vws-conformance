@@ -13,7 +13,7 @@ func FromCheckout(root string) ([]Op, error) {
 	var out []Op
 	ec2, err := os.ReadFile(filepath.Join(root, "internal/surface/ec2query/ec2query.go"))
 	if err != nil {
-		return nil, err
+		return nil, wrapErr("FromCheckout", err)
 	}
 	seen := map[string]bool{}
 	add := func(service, name, impl string) {
@@ -44,7 +44,7 @@ func FromCheckout(root string) ([]Op, error) {
 	}
 	s3, err := os.ReadFile(filepath.Join(root, "internal/surface/s3rest/s3rest.go"))
 	if err != nil {
-		return nil, err
+		return nil, wrapErr("FromCheckout", err)
 	}
 	routes := map[string][]string{
 		`mux.HandleFunc("GET /{$}", h.listBuckets)`:                   {"ListBuckets"},
@@ -68,7 +68,7 @@ func FromCheckout(root string) ([]Op, error) {
 	}
 	iam, err := os.ReadFile(filepath.Join(root, "internal/surface/iamquery/actions.go"))
 	if err != nil {
-		return nil, err
+		return nil, wrapErr("FromCheckout", err)
 	}
 	body := string(iam)
 	start := strings.Index(body, "func iamActions()")
@@ -110,7 +110,8 @@ func FromCheckout(root string) ([]Op, error) {
 func ec2Service(op string) (string, error) {
 	switch op {
 	case "CreateVpc", "DeleteVpc", "DescribeVpcs", "CreateSubnet", "DeleteSubnet", "DescribeSubnets",
-		"CreateSecurityGroup", "DeleteSecurityGroup", "AuthorizeSecurityGroupIngress", "DescribeSecurityGroups", "ImportKeyPair":
+		"CreateSecurityGroup", "DeleteSecurityGroup", "AuthorizeSecurityGroupIngress",
+		"DescribeSecurityGroups", "ImportKeyPair":
 		if op == "ImportKeyPair" {
 			return "ec2", nil
 		}

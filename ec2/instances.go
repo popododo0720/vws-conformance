@@ -19,23 +19,111 @@ func Instances() bind.Group {
 	return bind.Group{
 		Service: "ec2", Name: "instances", Run: runInstances,
 		Cases: []cases.Case{
-			{ID: "EC2-RUN-001", Service: "ec2", Group: "instances", Op: "RunInstances", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocEC2("RunInstances"), Expect: cases.Expect{HTTP: 200, Patterns: map[string]string{"id": expect.InstanceID}}, Impl: "yes", Slow: true},
-			{ID: "EC2-DI-001", Service: "ec2", Group: "instances", Op: "DescribeInstances", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocEC2("DescribeInstances"), Expect: cases.Expect{HTTP: 200, Patterns: map[string]string{"id": expect.InstanceID}}, Impl: "yes", Slow: true},
-			{ID: "EC2-DIA-001", Service: "ec2", Group: "instances", Op: "DescribeInstanceAttribute", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocEC2("DescribeInstanceAttribute"), Expect: cases.Expect{HTTP: 200}, Impl: "yes", Slow: true},
-			{ID: "EC2-STOP-001", Service: "ec2", Group: "instances", Op: "StopInstances", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocEC2("StopInstances"), Expect: cases.Expect{HTTP: 200}, Impl: "yes", Slow: true},
-			{ID: "EC2-START-001", Service: "ec2", Group: "instances", Op: "StartInstances", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocEC2("StartInstances"), Expect: cases.Expect{HTTP: 200}, Impl: "yes", Slow: true},
-			{ID: "EC2-TERM-001", Service: "ec2", Group: "instances", Op: "TerminateInstances", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocEC2("TerminateInstances"), Expect: cases.Expect{HTTP: 200}, Impl: "yes", Slow: true},
-			{ID: "EC2-RUN-101", Service: "ec2", Group: "instances", Op: "RunInstances", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "MissingParameter"}, Impl: "yes"},
-			{ID: "EC2-DI-101", Service: "ec2", Group: "instances", Op: "DescribeInstances", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidInstanceID.NotFound"}, Impl: "yes"},
-			{ID: "EC2-DI-102", Service: "ec2", Group: "instances", Op: "DescribeInstances", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidInstanceID.Malformed"}, Impl: "yes"},
-			{ID: "EC2-RUN-110", Service: "ec2", Group: "instances", Op: "RunInstances", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocEC2("RunInstances"), Expect: cases.Expect{HTTP: 200}, Impl: "yes", Slow: true},
-			{ID: "EC2-RUN-201", Service: "ec2", Group: "instances", Op: "RunInstances", Kind: cases.KindIdempotency, Suite: cases.SuiteSDK, DocURL: cases.DocEC2("RunInstances"), Expect: cases.Expect{HTTP: 200, Patterns: map[string]string{"same": "yes"}}, Impl: "yes", Slow: true},
-			{ID: "EC2-RUN-202", Service: "ec2", Group: "instances", Op: "RunInstances", Kind: cases.KindIdempotency, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "IdempotentParameterMismatch"}, Impl: "yes", Slow: true},
-			{ID: "EC2-DI-201", Service: "ec2", Group: "instances", Op: "DescribeInstances", Kind: cases.KindFilter, Suite: cases.SuiteSDK, DocURL: cases.DocEC2("DescribeInstances"), Expect: cases.Expect{HTTP: 200}, Impl: "yes", Slow: true},
-			{ID: "EC2-STOP-101", Service: "ec2", Group: "instances", Op: "StopInstances", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidInstanceID.NotFound"}, Impl: "yes"},
-			{ID: "EC2-START-101", Service: "ec2", Group: "instances", Op: "StartInstances", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidInstanceID.NotFound"}, Impl: "yes"},
-			{ID: "EC2-TERM-101", Service: "ec2", Group: "instances", Op: "TerminateInstances", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidInstanceID.NotFound"}, Impl: "yes"},
-			{ID: "EC2-DIA-101", Service: "ec2", Group: "instances", Op: "DescribeInstanceAttribute", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidInstanceID.NotFound"}, Impl: "yes"},
+			{
+				ID: "EC2-RUN-001", Service: "ec2", Group: "instances", Op: "RunInstances", Kind: cases.KindHappy,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2("RunInstances"), Expect: cases.Expect{
+					HTTP:     200,
+					Patterns: map[string]string{"id": expect.InstanceID},
+				}, Impl: "yes", Slow: true,
+			},
+			{
+				ID: "EC2-DI-001", Service: "ec2", Group: "instances", Op: "DescribeInstances", Kind: cases.KindHappy,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2("DescribeInstances"), Expect: cases.Expect{
+					HTTP:     200,
+					Patterns: map[string]string{"id": expect.InstanceID},
+				}, Impl: "yes", Slow: true,
+			},
+			{
+				ID: "EC2-DIA-001", Service: "ec2", Group: "instances", Op: "DescribeInstanceAttribute", Kind: cases.KindHappy,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2("DescribeInstanceAttribute"), Expect: cases.Expect{HTTP: 200},
+				Impl: "yes", Slow: true,
+			},
+			{
+				ID: "EC2-STOP-001", Service: "ec2", Group: "instances", Op: "StopInstances", Kind: cases.KindHappy,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2("StopInstances"), Expect: cases.Expect{HTTP: 200}, Impl: "yes",
+				Slow: true,
+			},
+			{
+				ID: "EC2-START-001", Service: "ec2", Group: "instances", Op: "StartInstances", Kind: cases.KindHappy,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2("StartInstances"), Expect: cases.Expect{HTTP: 200}, Impl: "yes",
+				Slow: true,
+			},
+			{
+				ID: "EC2-TERM-001", Service: "ec2", Group: "instances", Op: "TerminateInstances", Kind: cases.KindHappy,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2("TerminateInstances"), Expect: cases.Expect{HTTP: 200}, Impl: "yes",
+				Slow: true,
+			},
+			{
+				ID: "EC2-RUN-101", Service: "ec2", Group: "instances", Op: "RunInstances", Kind: cases.KindError,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "MissingParameter"},
+				Impl: "yes",
+			},
+			{
+				ID: "EC2-DI-101", Service: "ec2", Group: "instances", Op: "DescribeInstances", Kind: cases.KindError,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{
+					HTTP: 400,
+					Code: "InvalidInstanceID.NotFound",
+				}, Impl: "yes",
+			},
+			{
+				ID: "EC2-DI-102", Service: "ec2", Group: "instances", Op: "DescribeInstances", Kind: cases.KindError,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{
+					HTTP: 400,
+					Code: "InvalidInstanceID.Malformed",
+				}, Impl: "yes",
+			},
+			{
+				ID: "EC2-RUN-110", Service: "ec2", Group: "instances", Op: "RunInstances", Kind: cases.KindHappy,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2("RunInstances"), Expect: cases.Expect{HTTP: 200}, Impl: "yes",
+				Slow: true,
+			},
+			{
+				ID: "EC2-RUN-201", Service: "ec2", Group: "instances", Op: "RunInstances", Kind: cases.KindIdempotency,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2("RunInstances"), Expect: cases.Expect{
+					HTTP:     200,
+					Patterns: map[string]string{"same": "yes"},
+				}, Impl: "yes", Slow: true,
+			},
+			{
+				ID: "EC2-RUN-202", Service: "ec2", Group: "instances", Op: "RunInstances", Kind: cases.KindIdempotency,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{
+					HTTP: 400,
+					Code: "IdempotentParameterMismatch",
+				}, Impl: "yes", Slow: true,
+			},
+			{
+				ID: "EC2-DI-201", Service: "ec2", Group: "instances", Op: "DescribeInstances", Kind: cases.KindFilter,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2("DescribeInstances"), Expect: cases.Expect{HTTP: 200}, Impl: "yes",
+				Slow: true,
+			},
+			{
+				ID: "EC2-STOP-101", Service: "ec2", Group: "instances", Op: "StopInstances", Kind: cases.KindError,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{
+					HTTP: 400,
+					Code: "InvalidInstanceID.NotFound",
+				}, Impl: "yes",
+			},
+			{
+				ID: "EC2-START-101", Service: "ec2", Group: "instances", Op: "StartInstances", Kind: cases.KindError,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{
+					HTTP: 400,
+					Code: "InvalidInstanceID.NotFound",
+				}, Impl: "yes",
+			},
+			{
+				ID: "EC2-TERM-101", Service: "ec2", Group: "instances", Op: "TerminateInstances", Kind: cases.KindError,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{
+					HTTP: 400,
+					Code: "InvalidInstanceID.NotFound",
+				}, Impl: "yes",
+			},
+			{
+				ID: "EC2-DIA-101", Service: "ec2", Group: "instances", Op: "DescribeInstanceAttribute", Kind: cases.KindError,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{
+					HTTP: 400,
+					Code: "InvalidInstanceID.NotFound",
+				}, Impl: "yes",
+			},
 		},
 	}
 }
@@ -62,40 +150,55 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 	api := rt.Clients.EC2
 	switch c.ID {
 	case "EC2-RUN-101":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.RunInstances(ctx, &awsec2.RunInstancesInput{MinCount: aws.Int32(1), MaxCount: aws.Int32(1)})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.RunInstances(ctx, &awsec2.RunInstancesInput{MinCount: aws.Int32(1), MaxCount: aws.Int32(1)})
+				return wrapErr("runInstances", err)
+			})
+			return callOut, wrapErr("runInstances", callErr)
+		}
 	case "EC2-DI-101":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.DescribeInstances(ctx, &awsec2.DescribeInstancesInput{InstanceIds: []string{"i-0123456789abcdef0"}})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.DescribeInstances(ctx, &awsec2.DescribeInstancesInput{InstanceIds: []string{"i-0123456789abcdef0"}})
+				return wrapErr("runInstances", err)
+			})
+			return callOut, wrapErr("runInstances", callErr)
+		}
 	case "EC2-DI-102":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.DescribeInstances(ctx, &awsec2.DescribeInstancesInput{InstanceIds: []string{"i-xyz"}})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.DescribeInstances(ctx, &awsec2.DescribeInstancesInput{InstanceIds: []string{"i-xyz"}})
+				return wrapErr("runInstances", err)
+			})
+			return callOut, wrapErr("runInstances", callErr)
+		}
 	case "EC2-STOP-101", "EC2-START-101", "EC2-TERM-101", "EC2-DIA-101":
 		id := "i-0123456789abcdef0"
-		return rt.Call(ctx, func(ctx context.Context) error {
-			var err error
-			switch c.ID {
-			case "EC2-STOP-101":
-				_, err = api.StopInstances(ctx, &awsec2.StopInstancesInput{InstanceIds: []string{id}})
-			case "EC2-START-101":
-				_, err = api.StartInstances(ctx, &awsec2.StartInstancesInput{InstanceIds: []string{id}})
-			case "EC2-TERM-101":
-				_, err = api.TerminateInstances(ctx, &awsec2.TerminateInstancesInput{InstanceIds: []string{id}})
-			default:
-				_, err = api.DescribeInstanceAttribute(ctx, &awsec2.DescribeInstanceAttributeInput{InstanceId: aws.String(id), Attribute: types.InstanceAttributeNameUserData})
-			}
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				var err error
+				switch c.ID {
+				case "EC2-STOP-101":
+					_, err = api.StopInstances(ctx, &awsec2.StopInstancesInput{InstanceIds: []string{id}})
+				case "EC2-START-101":
+					_, err = api.StartInstances(ctx, &awsec2.StartInstancesInput{InstanceIds: []string{id}})
+				case "EC2-TERM-101":
+					_, err = api.TerminateInstances(ctx, &awsec2.TerminateInstancesInput{InstanceIds: []string{id}})
+				default:
+					_, err = api.DescribeInstanceAttribute(ctx, &awsec2.DescribeInstanceAttributeInput{
+						InstanceId: aws.String(id),
+						Attribute:  types.InstanceAttributeNameUserData,
+					})
+				}
+				return wrapErr("runInstances", err)
+			})
+			return callOut, wrapErr("runInstances", callErr)
+		}
 	}
 	_, subnet, err := rt.EnsureNet(ctx)
 	if err != nil {
-		return cases.Outcome{}, err
+		return cases.Outcome{}, wrapErr("runInstances", err)
 	}
 	switch c.ID {
 	case "EC2-RUN-001":
@@ -109,10 +212,10 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
 			var callErr error
 			out, callErr = api.DescribeInstances(ctx, &awsec2.DescribeInstancesInput{InstanceIds: []string{id}})
-			return callErr
+			return wrapErr("runInstances", callErr)
 		})
 		if err != nil {
-			return o, err
+			return o, wrapErr("runInstances", err)
 		}
 		got, err := describedInstance(out, id, o.HTTP)
 		if err != nil {
@@ -127,50 +230,72 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 		if err != nil {
 			return cases.Outcome{}, err
 		}
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.DescribeInstanceAttribute(ctx, &awsec2.DescribeInstanceAttributeInput{InstanceId: aws.String(id), Attribute: types.InstanceAttributeNameUserData})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.DescribeInstanceAttribute(ctx, &awsec2.DescribeInstanceAttributeInput{
+					InstanceId: aws.String(id),
+					Attribute:  types.InstanceAttributeNameUserData,
+				})
+				return wrapErr("runInstances", err)
+			})
+			return callOut, wrapErr("runInstances", callErr)
+		}
 	case "EC2-STOP-001":
 		id, err := launch(ctx, rt, api, subnet, rt.Token("stop"))
 		if err != nil {
 			return cases.Outcome{}, err
 		}
-		_, _ = api.DescribeInstances(ctx, &awsec2.DescribeInstancesInput{InstanceIds: []string{id}})
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.StopInstances(ctx, &awsec2.StopInstancesInput{InstanceIds: []string{id}})
-			return err
-		})
+		if _, err := api.DescribeInstances(ctx, &awsec2.DescribeInstancesInput{InstanceIds: []string{id}}); err != nil {
+			return cases.Outcome{}, fmt.Errorf("describe instance: %w", err)
+		}
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.StopInstances(ctx, &awsec2.StopInstancesInput{InstanceIds: []string{id}})
+				return wrapErr("runInstances", err)
+			})
+			return callOut, wrapErr("runInstances", callErr)
+		}
 	case "EC2-START-001":
 		id, err := launch(ctx, rt, api, subnet, rt.Token("start"))
 		if err != nil {
 			return cases.Outcome{}, err
 		}
-		_, _ = api.DescribeInstances(ctx, &awsec2.DescribeInstancesInput{InstanceIds: []string{id}})
+		if _, err := api.DescribeInstances(ctx, &awsec2.DescribeInstancesInput{InstanceIds: []string{id}}); err != nil {
+			return cases.Outcome{}, fmt.Errorf("describe instance: %w", err)
+		}
 		if _, err := api.StopInstances(ctx, &awsec2.StopInstancesInput{InstanceIds: []string{id}}); err != nil {
 			return cases.Outcome{}, fmt.Errorf("stop: %w", err)
 		}
 		if err := waitStopped(ctx, api, id); err != nil {
 			return cases.Outcome{}, err
 		}
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.StartInstances(ctx, &awsec2.StartInstancesInput{InstanceIds: []string{id}})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.StartInstances(ctx, &awsec2.StartInstancesInput{InstanceIds: []string{id}})
+				return wrapErr("runInstances", err)
+			})
+			return callOut, wrapErr("runInstances", callErr)
+		}
 	case "EC2-TERM-001":
 		id, err := launch(ctx, rt, api, subnet, rt.Token("term"))
 		if err != nil {
 			return cases.Outcome{}, err
 		}
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.TerminateInstances(ctx, &awsec2.TerminateInstancesInput{InstanceIds: []string{id}})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.TerminateInstances(ctx, &awsec2.TerminateInstancesInput{InstanceIds: []string{id}})
+				return wrapErr("runInstances", err)
+			})
+			return callOut, wrapErr("runInstances", callErr)
+		}
 	case "EC2-RUN-110":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.RunInstances(ctx, LaunchRequest(rt, subnet, ""))
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.RunInstances(ctx, LaunchRequest(rt, subnet, ""))
+				return wrapErr("runInstances", err)
+			})
+			return callOut, wrapErr("runInstances", callErr)
+		}
 	case "EC2-RUN-201":
 		token := rt.Token("idem")
 		first, err := api.RunInstances(ctx, LaunchRequest(rt, subnet, token))
@@ -178,17 +303,19 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 			return cases.Outcome{}, fmt.Errorf("first run: %w", err)
 		}
 		id1 := aws.ToString(first.Instances[0].InstanceId)
-		_ = rt.Track("instance", id1, rt.Name("idem"))
+		if err := rt.Track("instance", id1, rt.Name("idem")); err != nil {
+			return cases.Outcome{}, wrapErr("runInstances", err)
+		}
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
 			_, err := api.RunInstances(ctx, LaunchRequest(rt, subnet, token))
-			return err
+			return wrapErr("runInstances", err)
 		})
 		if err != nil {
-			return o, err
+			return o, wrapErr("runInstances", err)
 		}
 		second, err := api.RunInstances(ctx, LaunchRequest(rt, subnet, token))
 		if err != nil {
-			return o, err
+			return o, wrapErr("runInstances", err)
 		}
 		id2 := aws.ToString(second.Instances[0].InstanceId)
 		o.Fields["id"] = id2
@@ -205,20 +332,26 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 			return cases.Outcome{}, fmt.Errorf("first run: %w", err)
 		}
 		in.ImageId = aws.String("ami-0000000000000001")
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.RunInstances(ctx, in)
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.RunInstances(ctx, in)
+				return wrapErr("runInstances", err)
+			})
+			return callOut, wrapErr("runInstances", callErr)
+		}
 	case "EC2-DI-201":
 		if _, err := launch(ctx, rt, api, subnet, rt.Token("filt")); err != nil {
 			return cases.Outcome{}, err
 		}
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.DescribeInstances(ctx, &awsec2.DescribeInstancesInput{Filters: []types.Filter{{
-				Name: aws.String("instance-state-name"), Values: []string{"pending", "running"},
-			}}})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.DescribeInstances(ctx, &awsec2.DescribeInstancesInput{Filters: []types.Filter{{
+					Name: aws.String("instance-state-name"), Values: []string{"pending", "running"},
+				}}})
+				return wrapErr("runInstances", err)
+			})
+			return callOut, wrapErr("runInstances", callErr)
+		}
 	default:
 		return cases.Outcome{}, fmt.Errorf("no runner for %s", c.ID)
 	}
@@ -255,17 +388,19 @@ func runOne(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, subnet
 		if err == nil && len(out.Instances) > 0 {
 			id = aws.ToString(out.Instances[0].InstanceId)
 		}
-		return err
+		return wrapErr("runOne", err)
 	})
 	o.Fields["id"] = id
 	if id != "" {
-		_ = rt.Track("instance", id, rt.Name("i"))
+		if err := rt.Track("instance", id, rt.Name("i")); err != nil {
+			return o, wrapErr("runOne", err)
+		}
 		rt.Cleanup(func(ctx context.Context) error {
 			_, err := api.TerminateInstances(ctx, &awsec2.TerminateInstancesInput{InstanceIds: []string{id}})
 			return harness.IgnoreCleanup(err)
 		})
 	}
-	return o, err
+	return o, wrapErr("runOne", err)
 }
 
 func launch(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, subnet, token string) (string, error) {
@@ -275,7 +410,7 @@ func launch(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, subnet
 	}
 	id := aws.ToString(out.Instances[0].InstanceId)
 	if err := rt.Track("instance", id, rt.Name("i")); err != nil {
-		return "", err
+		return "", wrapErr("launch", err)
 	}
 	rt.Cleanup(func(ctx context.Context) error {
 		_, err := api.TerminateInstances(ctx, &awsec2.TerminateInstancesInput{InstanceIds: []string{id}})

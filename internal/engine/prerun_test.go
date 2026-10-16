@@ -150,34 +150,46 @@ func stuckVolumeServer(tag string) http.HandlerFunc {
 func serveStuckVolume(w http.ResponseWriter, r *http.Request, tag string) {
 	if r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "") {
 		w.Header().Set("Content-Type", "application/xml")
-		_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+		if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
 			`<ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`+
-			`<Owner><ID>owner</ID></Owner><Buckets></Buckets></ListAllMyBucketsResult>`)
+			`<Owner><ID>owner</ID></Owner><Buckets></Buckets></ListAllMyBucketsResult>`); writeErr != nil {
+			panic(writeErr)
+		}
 		return
 	}
 	action := formAction(r)
 	if action == "GetCallerIdentity" {
 		w.Header().Set("Content-Type", "text/xml")
-		_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+		if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
 			`<GetCallerIdentityResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">`+
 			`<GetCallerIdentityResult><Account>123456789012</Account>`+
 			`<Arn>arn:aws:iam::123456789012:root</Arn><UserId>AIDEXAMPLE</UserId>`+
 			`</GetCallerIdentityResult><ResponseMetadata><RequestId>r</RequestId></ResponseMetadata>`+
-			`</GetCallerIdentityResponse>`)
+			`</GetCallerIdentityResponse>`); writeErr != nil {
+			panic(writeErr)
+		}
 		return
 	}
 	status, body := stuckEC2(action, tag)
 	w.Header().Set("Content-Type", "text/xml")
 	w.WriteHeader(status)
-	_, _ = io.WriteString(w, body)
+	if _, writeErr := io.WriteString(w, body); writeErr != nil {
+		panic(writeErr)
+	}
 }
 
 func formAction(r *http.Request) string {
 	if a := r.URL.Query().Get("Action"); a != "" {
 		return a
 	}
-	b, _ := io.ReadAll(r.Body)
-	vals, _ := url.ParseQuery(string(b))
+	b, readErr := io.ReadAll(r.Body)
+	if readErr != nil {
+		panic(readErr)
+	}
+	vals, queryErr := url.ParseQuery(string(b))
+	if queryErr != nil {
+		panic(queryErr)
+	}
 	return vals.Get("Action")
 }
 

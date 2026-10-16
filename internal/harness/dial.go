@@ -86,7 +86,11 @@ func refuseResolved(ctx context.Context, host string, cidrs []string) ([]net.IP,
 }
 
 func NewHTTPClient(allowed, cidrs []string) *http.Client {
-	base := http.DefaultTransport.(*http.Transport).Clone()
+	baseTransport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		baseTransport = &http.Transport{}
+	}
+	base := baseTransport.Clone()
 	base.Proxy = nil
 	base.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		return DialAllowed(ctx, network, addr, allowed, cidrs)

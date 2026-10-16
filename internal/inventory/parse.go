@@ -16,7 +16,7 @@ type Op struct {
 func Load(path string) ([]Op, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, wrapErr("Load", err)
 	}
 	return Parse(string(b))
 }
@@ -24,7 +24,7 @@ func Load(path string) ([]Op, error) {
 func Find() (string, error) {
 	dir, err := os.Getwd()
 	if err != nil {
-		return "", err
+		return "", wrapErr("Find", err)
 	}
 	for i := 0; i < 8; i++ {
 		p := filepath.Join(dir, "inventory", "inventory.yaml")

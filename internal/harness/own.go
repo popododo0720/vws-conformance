@@ -58,11 +58,15 @@ func withActivityLock(fn func() error) error {
 	if err != nil {
 		return fmt.Errorf("active run: %w", err)
 	}
-	defer f.Close()
+	defer closeChecked(f)
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
 		return fmt.Errorf("active run: %w", err)
 	}
-	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	defer func() {
+		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
+			fmt.Fprintf(os.Stderr, "unlock activity: %v\n", err)
+		}
+	}()
 	return fn()
 }
 
@@ -76,12 +80,12 @@ func publishActivity(id, body string) error {
 	_, werr := f.Write([]byte(body + "\n"))
 	cerr := f.Close()
 	if werr != nil || cerr != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("active run: %w", errors.Join(werr, cerr))
+		rmErr := os.Remove(tmp)
+		return fmt.Errorf("active run: %w", errors.Join(werr, cerr, rmErr))
 	}
 	if err := os.Rename(tmp, filepath.Join(dir, id)); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("active run: %w", err)
+		rmErr := os.Remove(tmp)
+		return fmt.Errorf("active run: %w", errors.Join(err, rmErr))
 	}
 	return nil
 }

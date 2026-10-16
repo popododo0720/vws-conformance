@@ -22,16 +22,47 @@ func Buckets() bind.Group {
 		Name:    "buckets",
 		Run:     runBuckets,
 		Cases: []cases.Case{
-			{ID: "S3-LB-001", Service: "s3", Group: "buckets", Op: "ListBuckets", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocS3("ListBuckets"), Expect: cases.Expect{HTTP: 200}, Impl: "yes"},
-			{ID: "S3-LB-101", Service: "s3", Group: "buckets", Op: "ListBuckets", Kind: cases.KindError, Suite: cases.SuiteRaw, DocURL: cases.DocS3Errors, Expect: cases.Expect{HTTP: 403, Code: "AccessDenied"}, Impl: "yes"},
-			{ID: "S3-BKT-001", Service: "s3", Group: "buckets", Op: "CreateBucket", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocS3("CreateBucket"), Expect: cases.Expect{HTTP: 200}, Impl: "yes"},
-			{ID: "S3-BKT-002", Service: "s3", Group: "buckets", Op: "HeadBucket", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocS3("HeadBucket"), Expect: cases.Expect{HTTP: 200}, Impl: "yes"},
-			{ID: "S3-BKT-003", Service: "s3", Group: "buckets", Op: "DeleteBucket", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocS3("DeleteBucket"), Expect: cases.Expect{HTTP: 204}, Impl: "yes"},
-			{ID: "S3-BKT-101", Service: "s3", Group: "buckets", Op: "CreateBucket", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocS3Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidBucketName"}, Impl: "yes"},
-			{ID: "S3-BKT-102", Service: "s3", Group: "buckets", Op: "HeadBucket", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocS3Errors, Expect: cases.Expect{HTTP: 404, Head: true}, Impl: "yes"},
-			{ID: "S3-BKT-103", Service: "s3", Group: "buckets", Op: "DeleteBucket", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocS3Errors, Expect: cases.Expect{HTTP: 409, Code: "BucketNotEmpty"}, Impl: "yes"},
-			{ID: "S3-BKT-104", Service: "s3", Group: "buckets", Op: "CreateBucket", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocS3("CreateBucket"), Expect: cases.Expect{HTTP: 409, Code: "BucketAlreadyOwnedByYou"}, Impl: "yes"},
-			{ID: "S3-BKT-105", Service: "s3", Group: "buckets", Op: "DeleteBucket", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocS3Errors, Expect: cases.Expect{HTTP: 404, Code: "NoSuchBucket"}, Impl: "yes"},
+			{
+				ID: "S3-LB-001", Service: "s3", Group: "buckets", Op: "ListBuckets", Kind: cases.KindHappy, Suite: cases.SuiteSDK,
+				DocURL: cases.DocS3("ListBuckets"), Expect: cases.Expect{HTTP: 200}, Impl: "yes",
+			},
+			{
+				ID: "S3-LB-101", Service: "s3", Group: "buckets", Op: "ListBuckets", Kind: cases.KindError, Suite: cases.SuiteRaw,
+				DocURL: cases.DocS3Errors, Expect: cases.Expect{HTTP: 403, Code: "AccessDenied"}, Impl: "yes",
+			},
+			{
+				ID: "S3-BKT-001", Service: "s3", Group: "buckets", Op: "CreateBucket", Kind: cases.KindHappy, Suite: cases.SuiteSDK,
+				DocURL: cases.DocS3("CreateBucket"), Expect: cases.Expect{HTTP: 200}, Impl: "yes",
+			},
+			{
+				ID: "S3-BKT-002", Service: "s3", Group: "buckets", Op: "HeadBucket", Kind: cases.KindHappy, Suite: cases.SuiteSDK,
+				DocURL: cases.DocS3("HeadBucket"), Expect: cases.Expect{HTTP: 200}, Impl: "yes",
+			},
+			{
+				ID: "S3-BKT-003", Service: "s3", Group: "buckets", Op: "DeleteBucket", Kind: cases.KindHappy, Suite: cases.SuiteSDK,
+				DocURL: cases.DocS3("DeleteBucket"), Expect: cases.Expect{HTTP: 204}, Impl: "yes",
+			},
+			{
+				ID: "S3-BKT-101", Service: "s3", Group: "buckets", Op: "CreateBucket", Kind: cases.KindError, Suite: cases.SuiteSDK,
+				DocURL: cases.DocS3Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidBucketName"}, Impl: "yes",
+			},
+			{
+				ID: "S3-BKT-102", Service: "s3", Group: "buckets", Op: "HeadBucket", Kind: cases.KindError, Suite: cases.SuiteSDK,
+				DocURL: cases.DocS3Errors, Expect: cases.Expect{HTTP: 404, Head: true}, Impl: "yes",
+			},
+			{
+				ID: "S3-BKT-103", Service: "s3", Group: "buckets", Op: "DeleteBucket", Kind: cases.KindError, Suite: cases.SuiteSDK,
+				DocURL: cases.DocS3Errors, Expect: cases.Expect{HTTP: 409, Code: "BucketNotEmpty"}, Impl: "yes",
+			},
+			{
+				ID: "S3-BKT-104", Service: "s3", Group: "buckets", Op: "CreateBucket", Kind: cases.KindError, Suite: cases.SuiteSDK,
+				DocURL: cases.DocS3("CreateBucket"), Expect: cases.Expect{HTTP: 409, Code: "BucketAlreadyOwnedByYou"},
+				Impl: "yes",
+			},
+			{
+				ID: "S3-BKT-105", Service: "s3", Group: "buckets", Op: "DeleteBucket", Kind: cases.KindError, Suite: cases.SuiteSDK,
+				DocURL: cases.DocS3Errors, Expect: cases.Expect{HTTP: 404, Code: "NoSuchBucket"}, Impl: "yes",
+			},
 		},
 	}
 }
@@ -43,97 +74,130 @@ func runBuckets(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.O
 	api := rt.Clients.S3
 	switch c.ID {
 	case "S3-LB-001":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.ListBuckets(ctx, &s3.ListBucketsInput{})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.ListBuckets(ctx, &s3.ListBucketsInput{})
+				return wrapErr("runBuckets", err)
+			})
+			return callOut, wrapErr("runBuckets", callErr)
+		}
 	case "S3-LB-101":
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rt.Cfg.S3Endpoint+"/", nil)
 		if err != nil {
-			return cases.Outcome{}, err
+			return cases.Outcome{}, wrapErr("runBuckets", err)
 		}
 		resp, err := rt.Clients.Raw.Do(req)
 		if err != nil {
 			return cases.Outcome{}, fmt.Errorf("unsigned list: %w", err)
 		}
-		defer resp.Body.Close()
+		defer closeChecked(resp.Body)
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return cases.Outcome{}, err
+			return cases.Outcome{}, wrapErr("runBuckets", err)
 		}
-		return cases.Outcome{HTTP: resp.StatusCode, Code: xmlTag(body, "Code"), Message: xmlTag(body, "Message"), Fields: map[string]string{}}, nil
+		return cases.Outcome{
+			HTTP: resp.StatusCode, Code: xmlTag(body, "Code"), Message: xmlTag(body, "Message"),
+			Fields: map[string]string{},
+		}, nil
 	case "S3-BKT-001":
 		name := rt.Name("b1")
 		if err := rt.Track("bucket", name, name); err != nil {
-			return cases.Outcome{}, err
+			return cases.Outcome{}, wrapErr("runBuckets", err)
 		}
 		rt.Cleanup(func(ctx context.Context) error {
 			_, err := api.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(name)})
 			return ignoreNoSuch(err)
 		})
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.CreateBucket(ctx, &s3.CreateBucketInput{
-				Bucket: aws.String(name),
-				CreateBucketConfiguration: &types.CreateBucketConfiguration{
-					LocationConstraint: types.BucketLocationConstraint(rt.Region()),
-				},
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.CreateBucket(ctx, &s3.CreateBucketInput{
+					Bucket: aws.String(name),
+					CreateBucketConfiguration: &types.CreateBucketConfiguration{
+						LocationConstraint: types.BucketLocationConstraint(rt.Region()),
+					},
+				})
+				return wrapErr("runBuckets", err)
 			})
-			return err
-		})
+			return callOut, wrapErr("runBuckets", callErr)
+		}
 	case "S3-BKT-002":
 		name := rt.Name("b2")
 		if err := createFresh(ctx, rt, api, name); err != nil {
 			return cases.Outcome{}, err
 		}
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(name)})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(name)})
+				return wrapErr("runBuckets", err)
+			})
+			return callOut, wrapErr("runBuckets", callErr)
+		}
 	case "S3-BKT-003":
 		name := rt.Name("b3")
 		if err := createFresh(ctx, rt, api, name); err != nil {
 			return cases.Outcome{}, err
 		}
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(name)})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(name)})
+				return wrapErr("runBuckets", err)
+			})
+			return callOut, wrapErr("runBuckets", callErr)
+		}
 	case "S3-BKT-101":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String("NO")})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String("NO")})
+				return wrapErr("runBuckets", err)
+			})
+			return callOut, wrapErr("runBuckets", callErr)
+		}
 	case "S3-BKT-102":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(rt.Name("missing"))})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(rt.Name("missing"))})
+				return wrapErr("runBuckets", err)
+			})
+			return callOut, wrapErr("runBuckets", callErr)
+		}
 	case "S3-BKT-103":
 		name := rt.Name("b4")
 		if err := createFresh(ctx, rt, api, name); err != nil {
 			return cases.Outcome{}, err
 		}
-		if _, err := api.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(name), Key: aws.String("k"), Body: bytesReader("x")}); err != nil {
+		if _, err := api.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(name), Key: aws.String("k"),
+			Body: bytesReader("x"),
+		}); err != nil {
 			return cases.Outcome{}, fmt.Errorf("put object: %w", err)
 		}
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(name)})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(name)})
+				return wrapErr("runBuckets", err)
+			})
+			return callOut, wrapErr("runBuckets", callErr)
+		}
 	case "S3-BKT-104":
 		name := rt.Name("b5")
 		if err := createFresh(ctx, rt, api, name); err != nil {
 			return cases.Outcome{}, err
 		}
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(name)})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(name)})
+				return wrapErr("runBuckets", err)
+			})
+			return callOut, wrapErr("runBuckets", callErr)
+		}
 	case "S3-BKT-105":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(rt.Name("missing"))})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(rt.Name("missing"))})
+				return wrapErr("runBuckets", err)
+			})
+			return callOut, wrapErr("runBuckets", callErr)
+		}
 	default:
 		return cases.Outcome{}, fmt.Errorf("no runner for %s", c.ID)
 	}

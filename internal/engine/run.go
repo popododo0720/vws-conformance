@@ -83,14 +83,15 @@ func Main() int {
 		fmt.Fprintf(os.Stderr, "harness errors %d\n", rep.Summary.Error)
 		return 1
 	}
-	fmt.Printf("pass %d fail %d skip %d error %d\n", rep.Summary.Pass, rep.Summary.Fail, rep.Summary.Skip, rep.Summary.Error)
+	fmt.Printf("pass %d fail %d skip %d error %d\n", rep.Summary.Pass, rep.Summary.Fail, rep.Summary.Skip,
+		rep.Summary.Error)
 	return 0
 }
 
 func loadConfig() (harness.Config, error) {
 	cfg, err := harness.FromEnv()
 	if err != nil {
-		return harness.Config{}, err
+		return harness.Config{}, wrapErr("loadConfig", err)
 	}
 	if *flagService != "" {
 		cfg.Service = *flagService
@@ -109,7 +110,7 @@ func loadConfig() (harness.Config, error) {
 		cfg.RunID = id
 	}
 	if err := harness.ValidateRunID(cfg.RunID); err != nil {
-		return harness.Config{}, err
+		return harness.Config{}, wrapErr("loadConfig", err)
 	}
 	return cfg, nil
 }
@@ -153,7 +154,9 @@ func runtime(ctx context.Context, cfg harness.Config) (*harness.Runtime, error) 
 		claimed := true
 		defer func() {
 			if claimed {
-				_ = harness.ReleaseRun(cfg.RunID)
+				if err := harness.ReleaseRun(cfg.RunID); err != nil && gate.err == nil {
+					gate.err = fmt.Errorf("release run: %w", err)
+				}
 			}
 		}()
 		account, err := rt.Identify(ctx)
@@ -166,7 +169,7 @@ func runtime(ctx context.Context, cfg harness.Config) (*harness.Runtime, error) 
 			return
 		}
 		if err := rt.Sweep(ctx); err != nil {
-			var foreign *harness.ForeignLeftover
+			var foreign *harness.ForeignLeftoverError
 			if errors.As(err, &foreign) {
 				gate.foreign = err
 			} else {
@@ -174,6 +177,7 @@ func runtime(ctx context.Context, cfg harness.Config) (*harness.Runtime, error) 
 				return
 			}
 		}
+		//nolint:contextcheck // process cleanup runs after the run context is finished
 		harness.SetProcessCleanup(func() error {
 			cctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
@@ -261,7 +265,9 @@ func runGroups(ctx context.Context, cfg harness.Config, onlyService, onlyGroup s
 	}
 	publishReport(rep, cfg, file)
 	if gate.foreign != nil {
-		_ = noteCleanup(gate.foreign)
+		if cleanErr := noteCleanup(gate.foreign); cleanErr != nil && !errors.Is(cleanErr, gate.foreign) {
+			return rep, cleanErr
+		}
 	}
 	return rep, nil
 }
@@ -286,7 +292,9 @@ func noteCleanup(err error) error {
 			Status: "error", DocURL: cases.DocEC2("DeleteVpc"), Reason: err.Error(),
 		})
 		published.rep.Finish()
-		_ = writeReport(published.cfg, published.rep, published.file)
+		if writeErr := writeReport(published.cfg, published.rep, published.file); writeErr != nil {
+			return fmt.Errorf("write report: %w", writeErr)
+		}
 	}
 	return err
 }
@@ -331,8 +339,9 @@ func runOne(ctx context.Context, rt *harness.Runtime, g bind.Group, c cases.Case
 	res.Reason = reason
 	if got.Raw != "" {
 		ref := filepath.Join(rt.Cfg.OutDir, rt.Cfg.RunID, "raw", c.ID+".txt")
-		_ = os.MkdirAll(filepath.Dir(ref), 0o755)
-		if writeErr := os.WriteFile(ref, []byte(got.Raw), 0o644); writeErr == nil {
+		if mkdirErr := os.MkdirAll(filepath.Dir(ref), 0o755); mkdirErr != nil {
+			res.Reason = mkdirErr.Error()
+		} else if writeErr := os.WriteFile(ref, []byte(got.Raw), 0o644); writeErr == nil {
 			res.RawRef = ref
 		}
 	}
@@ -342,21 +351,22 @@ func runOne(ctx context.Context, rt *harness.Runtime, g bind.Group, c cases.Case
 func writeReport(cfg harness.Config, rep *report.Report, name string) error {
 	dir := filepath.Join(cfg.OutDir, cfg.RunID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
+		return wrapErr("writeReport", err)
 	}
 	b, err := rep.JSON()
 	if err != nil {
-		return err
+		return wrapErr("writeReport", err)
 	}
 	if schema := findSchema(); schema != "" {
 		if err := report.Validate(schema, b); err != nil {
-			return err
+			return wrapErr("writeReport", err)
 		}
 	}
 	if err := os.WriteFile(filepath.Join(dir, name), b, 0o644); err != nil {
-		return err
+		return wrapErr("writeReport", err)
 	}
-	return os.WriteFile(filepath.Join(dir, stringsTrim(name, ".json")+".md"), []byte(report.Markdown(rep)), 0o644)
+	return wrapErr("writeReport", os.WriteFile(filepath.Join(dir, stringsTrim(name, ".json")+".md"),
+		[]byte(report.Markdown(rep)), 0o644))
 }
 
 func findSchema() string {

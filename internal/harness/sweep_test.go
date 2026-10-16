@@ -191,7 +191,9 @@ func TestSweepKeepsForeignAndActiveResources(t *testing.T) {
 			body := listBucketsXML(buckets)
 			mu.Unlock()
 			w.Header().Set("Content-Type", "application/xml")
-			_, _ = io.WriteString(w, body)
+			if _, writeErr := io.WriteString(w, body); writeErr != nil {
+				panic(writeErr)
+			}
 			return
 		}
 		vals := ec2Form(r)
@@ -297,7 +299,9 @@ func TestSweepKeepsForeignRunAcrossOutDirs(t *testing.T) {
 			body := listBucketsXML(buckets)
 			mu.Unlock()
 			w.Header().Set("Content-Type", "application/xml")
-			_, _ = io.WriteString(w, body)
+			if _, writeErr := io.WriteString(w, body); writeErr != nil {
+				panic(writeErr)
+			}
 			return
 		}
 		vals := ec2Form(r)
@@ -368,7 +372,9 @@ func TestSweepRespectsLiveMarkerForItsOwnRunID(t *testing.T) {
 			body := listBucketsXML(buckets)
 			mu.Unlock()
 			w.Header().Set("Content-Type", "application/xml")
-			_, _ = io.WriteString(w, body)
+			if _, writeErr := io.WriteString(w, body); writeErr != nil {
+				panic(writeErr)
+			}
 			return
 		}
 		vals := ec2Form(r)
@@ -440,7 +446,9 @@ func TestSweepUsesSharedActivity(t *testing.T) {
 			body := listBucketsXML(buckets)
 			mu.Unlock()
 			w.Header().Set("Content-Type", "application/xml")
-			_, _ = io.WriteString(w, body)
+			if _, writeErr := io.WriteString(w, body); writeErr != nil {
+				panic(writeErr)
+			}
 			return
 		}
 		vals := ec2Form(r)
@@ -475,7 +483,7 @@ func TestSweepUsesSharedActivity(t *testing.T) {
 
 func deadPID(t *testing.T) string {
 	t.Helper()
-	cmd := exec.Command("true")
+	cmd := exec.CommandContext(t.Context(), "true")
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -513,12 +521,16 @@ func TestSweepReadsTheSecondBucketPage(t *testing.T) {
 				next = ""
 			}
 			w.Header().Set("Content-Type", "application/xml")
-			_, _ = io.WriteString(w, listBucketsPage(names, next))
+			if _, writeErr := io.WriteString(w, listBucketsPage(names, next)); writeErr != nil {
+				panic(writeErr)
+			}
 			return
 		}
 		if r.Method == http.MethodGet {
 			w.Header().Set("Content-Type", "application/xml")
-			_, _ = io.WriteString(w, listBucketsXML(nil))
+			if _, writeErr := io.WriteString(w, listBucketsXML(nil)); writeErr != nil {
+				panic(writeErr)
+			}
 			return
 		}
 		vals := ec2Form(r)
@@ -547,7 +559,9 @@ func TestSweepReadsTheSecondDescribePage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			w.Header().Set("Content-Type", "application/xml")
-			_, _ = io.WriteString(w, listBucketsXML(nil))
+			if _, writeErr := io.WriteString(w, listBucketsXML(nil)); writeErr != nil {
+				panic(writeErr)
+			}
 			return
 		}
 		vals := ec2Form(r)
@@ -680,8 +694,14 @@ func ec2Form(r *http.Request) url.Values {
 	if a := r.URL.Query().Get("Action"); a != "" {
 		return r.URL.Query()
 	}
-	b, _ := io.ReadAll(r.Body)
-	vals, _ := url.ParseQuery(string(b))
+	b, readErr := io.ReadAll(r.Body)
+	if readErr != nil {
+		panic(readErr)
+	}
+	vals, queryErr := url.ParseQuery(string(b))
+	if queryErr != nil {
+		panic(queryErr)
+	}
 	return vals
 }
 
@@ -745,15 +765,23 @@ func ec2Action(r *http.Request) string {
 	if a := r.URL.Query().Get("Action"); a != "" {
 		return a
 	}
-	b, _ := io.ReadAll(r.Body)
-	vals, _ := url.ParseQuery(string(b))
+	b, readErr := io.ReadAll(r.Body)
+	if readErr != nil {
+		panic(readErr)
+	}
+	vals, queryErr := url.ParseQuery(string(b))
+	if queryErr != nil {
+		panic(queryErr)
+	}
 	return vals.Get("Action")
 }
 
 func writeEC2(w http.ResponseWriter, status int, body string) {
 	w.Header().Set("Content-Type", "text/xml")
 	w.WriteHeader(status)
-	_, _ = io.WriteString(w, body)
+	if _, writeErr := io.WriteString(w, body); writeErr != nil {
+		panic(writeErr)
+	}
 }
 
 func ec2Err(code, msg string) string {

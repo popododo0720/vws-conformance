@@ -37,7 +37,10 @@ func ec2Gap(id, op string) cases.Case {
 	if op == "DeregisterImage" {
 		exp = cases.Expect{HTTP: 400, Code: "InvalidAMIID.NotFound"}
 	}
-	return cases.Case{ID: id, Service: "ec2", Group: "gaps", Op: op, Kind: cases.KindGap, Suite: cases.SuiteSDK, DocURL: cases.DocEC2(op), Expect: exp, Impl: "gap"}
+	return cases.Case{
+		ID: id, Service: "ec2", Group: "gaps", Op: op, Kind: cases.KindGap, Suite: cases.SuiteSDK,
+		DocURL: cases.DocEC2(op), Expect: exp, Impl: "gap",
+	}
 }
 
 func runEC2Gaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcome, error) {
@@ -48,45 +51,78 @@ func runEC2Gaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.O
 	id := "i-0123456789abcdef0"
 	switch c.ID {
 	case "EC2-GAP-001":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.RebootInstances(ctx, &awsec2.RebootInstancesInput{InstanceIds: []string{id}})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.RebootInstances(ctx, &awsec2.RebootInstancesInput{InstanceIds: []string{id}})
+				return wrapErr("runEC2Gaps", err)
+			})
+			return callOut, wrapErr("runEC2Gaps", callErr)
+		}
 	case "EC2-GAP-002":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.ModifyInstanceAttribute(ctx, &awsec2.ModifyInstanceAttributeInput{InstanceId: aws.String(id), InstanceType: &types.AttributeValue{Value: aws.String("t2.nano")}})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.ModifyInstanceAttribute(ctx, &awsec2.ModifyInstanceAttributeInput{
+					InstanceId:   aws.String(id),
+					InstanceType: &types.AttributeValue{Value: aws.String("t2.nano")},
+				})
+				return wrapErr("runEC2Gaps", err)
+			})
+			return callOut, wrapErr("runEC2Gaps", callErr)
+		}
 	case "EC2-GAP-003":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.DescribeInstanceStatus(ctx, &awsec2.DescribeInstanceStatusInput{})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.DescribeInstanceStatus(ctx, &awsec2.DescribeInstanceStatusInput{})
+				return wrapErr("runEC2Gaps", err)
+			})
+			return callOut, wrapErr("runEC2Gaps", callErr)
+		}
 	case "EC2-GAP-004":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.DescribeInstanceTypes(ctx, &awsec2.DescribeInstanceTypesInput{})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.DescribeInstanceTypes(ctx, &awsec2.DescribeInstanceTypesInput{})
+				return wrapErr("runEC2Gaps", err)
+			})
+			return callOut, wrapErr("runEC2Gaps", callErr)
+		}
 	case "EC2-GAP-005":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.CreateImage(ctx, &awsec2.CreateImageInput{InstanceId: aws.String(id), Name: aws.String(rt.Name("img"))})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.CreateImage(ctx, &awsec2.CreateImageInput{
+					InstanceId: aws.String(id),
+					Name:       aws.String(rt.Name("img")),
+				})
+				return wrapErr("runEC2Gaps", err)
+			})
+			return callOut, wrapErr("runEC2Gaps", callErr)
+		}
 	case "EC2-GAP-006":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.DeregisterImage(ctx, &awsec2.DeregisterImageInput{ImageId: aws.String("ami-0123456789abcdef1")})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.DeregisterImage(ctx, &awsec2.DeregisterImageInput{ImageId: aws.String("ami-0123456789abcdef1")})
+				return wrapErr("runEC2Gaps", err)
+			})
+			return callOut, wrapErr("runEC2Gaps", callErr)
+		}
 	case "EC2-GAP-007":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.DeleteTags(ctx, &awsec2.DeleteTagsInput{Resources: []string{id}, Tags: []types.Tag{{Key: aws.String("Name")}}})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.DeleteTags(ctx, &awsec2.DeleteTagsInput{
+					Resources: []string{id},
+					Tags:      []types.Tag{{Key: aws.String("Name")}},
+				})
+				return wrapErr("runEC2Gaps", err)
+			})
+			return callOut, wrapErr("runEC2Gaps", callErr)
+		}
 	case "EC2-GAP-008":
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.DescribeTags(ctx, &awsec2.DescribeTagsInput{})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.DescribeTags(ctx, &awsec2.DescribeTagsInput{})
+				return wrapErr("runEC2Gaps", err)
+			})
+			return callOut, wrapErr("runEC2Gaps", callErr)
+		}
 	default:
 		return cases.Outcome{}, fmt.Errorf("no runner for %s", c.ID)
 	}

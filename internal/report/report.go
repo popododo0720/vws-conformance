@@ -110,7 +110,10 @@ func (r *Report) Finish() {
 }
 
 func (r *Report) JSON() ([]byte, error) {
-	return json.MarshalIndent(r, "", "  ")
+	{
+		callOut, callErr := json.MarshalIndent(r, "", "  ")
+		return callOut, wrapErr("JSON", callErr)
+	}
 }
 
 func Validate(schemaPath string, doc []byte) error {
@@ -123,13 +126,13 @@ func Validate(schemaPath string, doc []byte) error {
 	if err != nil {
 		return fmt.Errorf("schema: %w", err)
 	}
-	defer f.Close()
+	defer closeChecked(f)
 	schDoc, err := jsonschema.UnmarshalJSON(f)
 	if err != nil {
 		return fmt.Errorf("schema json: %w", err)
 	}
 	if err := c.AddResource("report.schema.json", schDoc); err != nil {
-		return err
+		return wrapErr("Validate", err)
 	}
 	sch, err := c.Compile("report.schema.json")
 	if err != nil {
@@ -144,9 +147,11 @@ func Validate(schemaPath string, doc []byte) error {
 func Markdown(r *Report) string {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "# Conformance %s\n\n", r.RunID)
-	fmt.Fprintf(&b, "Target %s, region %s, console-api %s.\n\n", r.Target.Name, r.Target.Region, r.Target.ConsoleAPIVersion)
+	fmt.Fprintf(&b, "Target %s, region %s, console-api %s.\n\n", r.Target.Name, r.Target.Region,
+		r.Target.ConsoleAPIVersion)
 	fmt.Fprintf(&b, "Go %s, aws-sdk-go-v2 %s, aws cli %s.\n\n", r.ToolVersions.Go, r.ToolVersions.SDK, r.ToolVersions.CLI)
-	fmt.Fprintf(&b, "Pass %d, fail %d, skip %d, error %d, total %d.\n\n", r.Summary.Pass, r.Summary.Fail, r.Summary.Skip, r.Summary.Error, r.Summary.Total)
+	fmt.Fprintf(&b, "Pass %d, fail %d, skip %d, error %d, total %d.\n\n", r.Summary.Pass, r.Summary.Fail, r.Summary.Skip,
+		r.Summary.Error, r.Summary.Total)
 	by := map[string][]Result{}
 	for _, res := range r.Results {
 		by[res.Service] = append(by[res.Service], res)
@@ -179,7 +184,8 @@ func Markdown(r *Report) string {
 	b.WriteString("| ID | Operation | Status | Reason |\n| --- | --- | --- | --- |\n")
 	for _, res := range r.Results {
 		if res.Kind == "gap" {
-			fmt.Fprintf(&b, "| %s | %s | %s | %s |\n", res.ID, res.Operation, res.Status, strings.ReplaceAll(res.Reason, "|", "/"))
+			fmt.Fprintf(&b, "| %s | %s | %s | %s |\n", res.ID, res.Operation, res.Status, strings.ReplaceAll(res.Reason, "|",
+				"/"))
 		}
 	}
 	b.WriteString("\n")
@@ -190,7 +196,10 @@ func cell(m map[string]any) string {
 	if len(m) == 0 {
 		return ""
 	}
-	b, _ := json.Marshal(m)
+	b, err := json.Marshal(m)
+	if err != nil {
+		return ""
+	}
 	s := string(b)
 	s = strings.ReplaceAll(s, "|", "/")
 	s = strings.ReplaceAll(s, "\n", " ")
@@ -202,7 +211,8 @@ func IssueText(r *Report, res Result) string {
 	fmt.Fprintf(&b, "Title: [parity] %s %s: %s (%s)\n\n", res.Service, res.Operation, oneLine(res.Reason), res.ID)
 	fmt.Fprintf(&b, "Case: %s (suite %s)\n", res.ID, res.Suite)
 	fmt.Fprintf(&b, "AWS reference: %s\n", res.DocURL)
-	fmt.Fprintf(&b, "Run: %s on %s, console-api %s, aws-sdk-go-v2 %s, aws-cli %s\n\n", r.RunID, r.Target.Name, r.Target.ConsoleAPIVersion, r.ToolVersions.SDK, r.ToolVersions.CLI)
+	fmt.Fprintf(&b, "Run: %s on %s, console-api %s, aws-sdk-go-v2 %s, aws-cli %s\n\n", r.RunID, r.Target.Name,
+		r.Target.ConsoleAPIVersion, r.ToolVersions.SDK, r.ToolVersions.CLI)
 	fmt.Fprintf(&b, "Expected (AWS): %s\n", cell(res.Expected))
 	fmt.Fprintf(&b, "Actual (VWS): %s\n\n", cell(res.Actual))
 	fmt.Fprintf(&b, "Redacted request/response: %s\n", res.RawRef)

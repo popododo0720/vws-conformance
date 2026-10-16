@@ -112,7 +112,7 @@ func ignoreNoSuch(err error) error {
 
 func createFresh(ctx context.Context, rt *harness.Runtime, api *s3.Client, name string) error {
 	if err := rt.Track("bucket", name, name); err != nil {
-		return err
+		return wrapErr("createFresh", err)
 	}
 	_, err := api.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(name)})
 	if err != nil {

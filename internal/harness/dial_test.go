@@ -30,11 +30,17 @@ func TestDialConnectsToResolvedIP(t *testing.T) {
 	}
 	t.Cleanup(func() { lookupHost = prev })
 	cl := NewHTTPClient([]string{"lab.internal"}, nil)
-	resp, err := cl.Get("http://lab.internal:" + port + "/x")
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://lab.internal:"+port+"/x", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closeErr := resp.Body.Close(); closeErr != nil {
+		panic(closeErr)
+	}
 	if hits != 1 || resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("hits %d status %d", hits, resp.StatusCode)
 	}
@@ -65,7 +71,9 @@ func TestDialRefusesMixedAnswers(t *testing.T) {
 	}
 	resp, err := cl.Do(req)
 	if resp != nil {
-		resp.Body.Close()
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			panic(closeErr)
+		}
 	}
 	if err == nil || hits != 0 {
 		t.Fatalf("err %v hits %d", err, hits)

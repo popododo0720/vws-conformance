@@ -78,12 +78,20 @@ func TestDocURLsReturn200(t *testing.T) {
 	}
 	client := &http.Client{Timeout: 20 * time.Second}
 	for _, u := range urls {
-		resp, err := client.Get(u)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, u, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, _ = io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, writeErr := io.Copy(io.Discard, resp.Body); writeErr != nil {
+			panic(writeErr)
+		}
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			panic(closeErr)
+		}
 		if resp.StatusCode != 200 {
 			t.Fatalf("%s status %d", u, resp.StatusCode)
 		}

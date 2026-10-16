@@ -24,14 +24,20 @@ func TestEC2InventoryIncludesDryRunKinds(t *testing.T) {
 			{SubnetId: aws.String("subnet-1"), Tags: tag},
 			{SubnetId: aws.String("subnet-foreign")},
 		},
-		vpcs:     []ec2types.Vpc{{VpcId: aws.String("vpc-1"), Tags: tag}},
-		gateways: []ec2types.InternetGateway{{InternetGatewayId: aws.String("igw-1"), Tags: tag, Attachments: []ec2types.InternetGatewayAttachment{{VpcId: aws.String("vpc-1")}}}},
+		vpcs: []ec2types.Vpc{{VpcId: aws.String("vpc-1"), Tags: tag}},
+		gateways: []ec2types.InternetGateway{{
+			InternetGatewayId: aws.String("igw-1"), Tags: tag,
+			Attachments: []ec2types.InternetGatewayAttachment{{VpcId: aws.String("vpc-1")}},
+		}},
 	}
 	got := map[string]bool{}
 	for _, item := range ec2Items(view, rows) {
 		got[item.kind+" "+item.id] = true
 	}
-	for _, want := range []string{"address eipalloc-1", "security-group sg-1", "subnet subnet-1", "vpc vpc-1", "internet-gateway igw-1"} {
+	for _, want := range []string{
+		"address eipalloc-1", "security-group sg-1", "subnet subnet-1", "vpc vpc-1",
+		"internet-gateway igw-1",
+	} {
 		if !got[want] {
 			t.Fatalf("missing %s in %v", want, got)
 		}

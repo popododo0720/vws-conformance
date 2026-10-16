@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -24,7 +25,7 @@ func (p *Pinned) Close() error {
 		return nil
 	}
 	p.cancel()
-	return p.srv.Close()
+	return wrapErr("Close", p.srv.Close())
 }
 
 var pinDial = func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -34,7 +35,7 @@ var pinDial = func(ctx context.Context, network, addr string) (net.Conn, error) 
 func PinEndpoint(ctx context.Context, raw string, allowed, cidrs []string) (*Pinned, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return nil, err
+		return nil, wrapErr("PinEndpoint", err)
 	}
 	host, port, err := splitEndpoint(u)
 	if err != nil {
@@ -47,7 +48,7 @@ func PinEndpoint(ctx context.Context, raw string, allowed, cidrs []string) (*Pin
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithCancel(ctx)
+	_, cancel := context.WithCancel(ctx)
 	transport := &http.Transport{
 		Proxy: nil,
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -71,13 +72,18 @@ func PinEndpoint(ctx context.Context, raw string, allowed, cidrs []string) (*Pin
 		},
 		Transport: transport,
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:0")
 	if err != nil {
 		cancel()
-		return nil, err
+		return nil, wrapErr("PinEndpoint", err)
 	}
 	srv := &http.Server{Handler: proxy}
-	go func() { _ = srv.Serve(ln) }()
+	go func() {
+		serveErr := srv.Serve(ln)
+		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			fmt.Fprintf(os.Stderr, "pinned proxy: %v\n", serveErr)
+		}
+	}()
 	return &Pinned{URL: "http://" + ln.Addr().String(), srv: srv, cancel: cancel}, nil
 }
 
@@ -167,29 +173,31 @@ func ChildEnv(base []string) []string {
 var (
 	cliConfigOnce sync.Once
 	cliConfigPath string
-	cliConfigErr  error
+	errCLIConfig  error
 )
 
 func childConfigFile() (string, error) {
 	cliConfigOnce.Do(func() {
 		f, err := os.CreateTemp("", "vws-aws-config-*")
 		if err != nil {
-			cliConfigErr = err
+			errCLIConfig = err
 			return
 		}
 		_, err = f.WriteString("[default]\ncli_follow_urlparam = false\n")
 		if err == nil {
 			err = f.Close()
 		} else {
-			_ = f.Close()
+			if closeErr := f.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
 		}
 		if err != nil {
-			cliConfigErr = err
+			errCLIConfig = err
 			return
 		}
 		cliConfigPath = f.Name()
 	})
-	return cliConfigPath, cliConfigErr
+	return cliConfigPath, errCLIConfig
 }
 
 func CLIConfigReady(env []string) error {

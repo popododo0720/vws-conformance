@@ -16,14 +16,46 @@ import (
 
 func SecurityGroups() bind.Group {
 	return bind.Group{Service: "vpc", Name: "securitygroups", Run: runSG, Cases: []cases.Case{
-		{ID: "VPC-SG-001", Service: "vpc", Group: "securitygroups", Op: "CreateSecurityGroup", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocEC2("CreateSecurityGroup"), Expect: cases.Expect{HTTP: 200}, Impl: "yes"},
-		{ID: "VPC-SG-002", Service: "vpc", Group: "securitygroups", Op: "AuthorizeSecurityGroupIngress", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocEC2("AuthorizeSecurityGroupIngress"), Expect: cases.Expect{HTTP: 200}, Impl: "yes"},
-		{ID: "VPC-SG-003", Service: "vpc", Group: "securitygroups", Op: "DescribeSecurityGroups", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocEC2("DescribeSecurityGroups"), Expect: cases.Expect{HTTP: 200}, Impl: "yes"},
-		{ID: "VPC-SG-004", Service: "vpc", Group: "securitygroups", Op: "DeleteSecurityGroup", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocEC2("DeleteSecurityGroup"), Expect: cases.Expect{HTTP: 200}, Impl: "yes"},
-		{ID: "VPC-SG-101", Service: "vpc", Group: "securitygroups", Op: "CreateSecurityGroup", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidGroup.Duplicate"}, Impl: "yes"},
-		{ID: "VPC-SG-102", Service: "vpc", Group: "securitygroups", Op: "DeleteSecurityGroup", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidGroup.NotFound"}, Impl: "yes"},
-		{ID: "VPC-SG-103", Service: "vpc", Group: "securitygroups", Op: "AuthorizeSecurityGroupIngress", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidPermission.Duplicate"}, Impl: "yes"},
-		{ID: "VPC-SG-104", Service: "vpc", Group: "securitygroups", Op: "DescribeSecurityGroups", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidGroup.NotFound"}, Impl: "yes"},
+		{
+			ID: "VPC-SG-001", Service: "vpc", Group: "securitygroups", Op: "CreateSecurityGroup", Kind: cases.KindHappy,
+			Suite: cases.SuiteSDK, DocURL: cases.DocEC2("CreateSecurityGroup"), Expect: cases.Expect{HTTP: 200}, Impl: "yes",
+		},
+		{
+			ID: "VPC-SG-002", Service: "vpc", Group: "securitygroups", Op: "AuthorizeSecurityGroupIngress",
+			Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocEC2("AuthorizeSecurityGroupIngress"),
+			Expect: cases.Expect{HTTP: 200}, Impl: "yes",
+		},
+		{
+			ID: "VPC-SG-003", Service: "vpc", Group: "securitygroups", Op: "DescribeSecurityGroups", Kind: cases.KindHappy,
+			Suite: cases.SuiteSDK, DocURL: cases.DocEC2("DescribeSecurityGroups"), Expect: cases.Expect{HTTP: 200},
+			Impl: "yes",
+		},
+		{
+			ID: "VPC-SG-004", Service: "vpc", Group: "securitygroups", Op: "DeleteSecurityGroup", Kind: cases.KindHappy,
+			Suite: cases.SuiteSDK, DocURL: cases.DocEC2("DeleteSecurityGroup"), Expect: cases.Expect{HTTP: 200}, Impl: "yes",
+		},
+		{
+			ID: "VPC-SG-101", Service: "vpc", Group: "securitygroups", Op: "CreateSecurityGroup", Kind: cases.KindError,
+			Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidGroup.Duplicate"},
+			Impl: "yes",
+		},
+		{
+			ID: "VPC-SG-102", Service: "vpc", Group: "securitygroups", Op: "DeleteSecurityGroup", Kind: cases.KindError,
+			Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidGroup.NotFound"},
+			Impl: "yes",
+		},
+		{
+			ID: "VPC-SG-103", Service: "vpc", Group: "securitygroups", Op: "AuthorizeSecurityGroupIngress",
+			Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{
+				HTTP: 400,
+				Code: "InvalidPermission.Duplicate",
+			}, Impl: "yes",
+		},
+		{
+			ID: "VPC-SG-104", Service: "vpc", Group: "securitygroups", Op: "DescribeSecurityGroups", Kind: cases.KindError,
+			Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidGroup.NotFound"},
+			Impl: "yes",
+		},
 	}}
 }
 
@@ -33,15 +65,20 @@ func runSG(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcom
 		return cases.Outcome{}, err
 	}
 	if c.ID == "VPC-SG-102" || c.ID == "VPC-SG-104" {
-		return rt.Call(ctx, func(ctx context.Context) error {
-			var err error
-			if c.ID == "VPC-SG-104" {
-				_, err = api.DescribeSecurityGroups(ctx, &awsec2.DescribeSecurityGroupsInput{GroupIds: []string{"sg-0123456789abcdef0"}})
-			} else {
-				_, err = api.DeleteSecurityGroup(ctx, &awsec2.DeleteSecurityGroupInput{GroupId: aws.String("sg-0123456789abcdef0")})
-			}
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				var err error
+				if c.ID == "VPC-SG-104" {
+					_, err = api.DescribeSecurityGroups(ctx,
+						&awsec2.DescribeSecurityGroupsInput{GroupIds: []string{"sg-0123456789abcdef0"}})
+				} else {
+					_, err = api.DeleteSecurityGroup(ctx,
+						&awsec2.DeleteSecurityGroupInput{GroupId: aws.String("sg-0123456789abcdef0")})
+				}
+				return wrapErr("runSG", err)
+			})
+			return callOut, wrapErr("runSG", callErr)
+		}
 	}
 	vpcID, err := makeVpc(ctx, rt, api, "10.13.0.0/16", "sgvpc")
 	if err != nil {
@@ -52,11 +89,14 @@ func runSG(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcom
 	case "VPC-SG-001":
 		var id string
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
-			out, err := api.CreateSecurityGroup(ctx, &awsec2.CreateSecurityGroupInput{GroupName: aws.String(name), Description: aws.String("conformance"), VpcId: aws.String(vpcID)})
+			out, err := api.CreateSecurityGroup(ctx, &awsec2.CreateSecurityGroupInput{
+				GroupName:   aws.String(name),
+				Description: aws.String("conformance"), VpcId: aws.String(vpcID),
+			})
 			if err == nil && out != nil {
 				id = aws.ToString(out.GroupId)
 			}
-			return err
+			return wrapErr("runSG", err)
 		})
 		if id != "" {
 			rt.Cleanup(func(ctx context.Context) error {
@@ -64,55 +104,83 @@ func runSG(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcom
 				return ignoreGone(err)
 			})
 		}
-		return o, err
+		return o, wrapErr("runSG", err)
 	case "VPC-SG-002", "VPC-SG-103":
 		id, err := makeSG(ctx, rt, api, vpcID, name)
 		if err != nil {
 			return cases.Outcome{}, err
 		}
-		ip := types.IpPermission{IpProtocol: aws.String("tcp"), FromPort: aws.Int32(22), ToPort: aws.Int32(22), IpRanges: []types.IpRange{{CidrIp: aws.String("10.0.0.0/8")}}}
+		ip := types.IpPermission{
+			IpProtocol: aws.String("tcp"), FromPort: aws.Int32(22), ToPort: aws.Int32(22),
+			IpRanges: []types.IpRange{{CidrIp: aws.String("10.0.0.0/8")}},
+		}
 		if c.ID == "VPC-SG-103" {
-			if _, err := api.AuthorizeSecurityGroupIngress(ctx, &awsec2.AuthorizeSecurityGroupIngressInput{GroupId: aws.String(id), IpPermissions: []types.IpPermission{ip}}); err != nil {
+			if _, err := api.AuthorizeSecurityGroupIngress(ctx,
+				&awsec2.AuthorizeSecurityGroupIngressInput{
+					GroupId:       aws.String(id),
+					IpPermissions: []types.IpPermission{ip},
+				}); err != nil {
 				return cases.Outcome{}, fmt.Errorf("first authorize: %w", err)
 			}
 		}
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.AuthorizeSecurityGroupIngress(ctx, &awsec2.AuthorizeSecurityGroupIngressInput{GroupId: aws.String(id), IpPermissions: []types.IpPermission{ip}})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.AuthorizeSecurityGroupIngress(ctx, &awsec2.AuthorizeSecurityGroupIngressInput{
+					GroupId:       aws.String(id),
+					IpPermissions: []types.IpPermission{ip},
+				})
+				return wrapErr("runSG", err)
+			})
+			return callOut, wrapErr("runSG", callErr)
+		}
 	case "VPC-SG-003":
 		id, err := makeSG(ctx, rt, api, vpcID, name)
 		if err != nil {
 			return cases.Outcome{}, err
 		}
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.DescribeSecurityGroups(ctx, &awsec2.DescribeSecurityGroupsInput{GroupIds: []string{id}})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.DescribeSecurityGroups(ctx, &awsec2.DescribeSecurityGroupsInput{GroupIds: []string{id}})
+				return wrapErr("runSG", err)
+			})
+			return callOut, wrapErr("runSG", callErr)
+		}
 	case "VPC-SG-004":
 		id, err := makeSG(ctx, rt, api, vpcID, name)
 		if err != nil {
 			return cases.Outcome{}, err
 		}
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.DeleteSecurityGroup(ctx, &awsec2.DeleteSecurityGroupInput{GroupId: aws.String(id)})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.DeleteSecurityGroup(ctx, &awsec2.DeleteSecurityGroupInput{GroupId: aws.String(id)})
+				return wrapErr("runSG", err)
+			})
+			return callOut, wrapErr("runSG", callErr)
+		}
 	case "VPC-SG-101":
 		if _, err := makeSG(ctx, rt, api, vpcID, name); err != nil {
 			return cases.Outcome{}, err
 		}
-		return rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.CreateSecurityGroup(ctx, &awsec2.CreateSecurityGroupInput{GroupName: aws.String(name), Description: aws.String("conformance"), VpcId: aws.String(vpcID)})
-			return err
-		})
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.CreateSecurityGroup(ctx, &awsec2.CreateSecurityGroupInput{
+					GroupName:   aws.String(name),
+					Description: aws.String("conformance"), VpcId: aws.String(vpcID),
+				})
+				return wrapErr("runSG", err)
+			})
+			return callOut, wrapErr("runSG", callErr)
+		}
 	default:
 		return cases.Outcome{}, fmt.Errorf("no runner for %s", c.ID)
 	}
 }
 
 func makeSG(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, vpcID, name string) (string, error) {
-	out, err := api.CreateSecurityGroup(ctx, &awsec2.CreateSecurityGroupInput{GroupName: aws.String(name), Description: aws.String("conformance"), VpcId: aws.String(vpcID)})
+	out, err := api.CreateSecurityGroup(ctx, &awsec2.CreateSecurityGroupInput{
+		GroupName:   aws.String(name),
+		Description: aws.String("conformance"), VpcId: aws.String(vpcID),
+	})
 	if err != nil {
 		return "", fmt.Errorf("create security group: %w", err)
 	}
