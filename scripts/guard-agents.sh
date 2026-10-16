@@ -997,6 +997,34 @@ GH
   sed -i '/^Head: /a Result: PASS' "$tmp/resultpass.md"
   expect_pass "Result: PASS and a nonempty actor list" env GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
     "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$tmp/resultpass.md"
+  cp .github/workflows/repo-guard.yml "$tmp/shelltrue.yml"
+  sed -i '/- name: Approved for this head/a\        shell: /bin/true' "$tmp/shelltrue.yml"
+  expect_fail "shell /bin/true on Approved for this head" \
+    env GUARD_WORKFLOW_FILE="$tmp/shelltrue.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  cp .github/workflows/repo-guard.yml "$tmp/repoatk.yml"
+  sed -i '/persist-credentials: false/i\          repository: attacker/x' "$tmp/repoatk.yml"
+  expect_fail "checkout with.repository attacker/x" \
+    env GUARD_WORKFLOW_FILE="$tmp/repoatk.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  cp .github/workflows/repo-guard.yml "$tmp/rebind.yml"
+  sed -i \
+    -e 's|GUARD_VERIFY_ACTORS: ${{ vars.VWS_VERIFY_ACTORS }}|GUARD_VERIFY_ACTORS: ${{ github.event.pull_request.user.login }}|' \
+    -e 's|GUARD_VERIFY_IDENTITY: ${{ vars.VWS_VERIFY_IDENTITY }}|GUARD_VERIFY_IDENTITY: ${{ github.event.pull_request.user.login }}|' \
+    "$tmp/rebind.yml"
+  expect_fail "GUARD_VERIFY_ACTORS rebound to the PR author" \
+    env GUARD_WORKFLOW_FILE="$tmp/rebind.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  cp .github/workflows/repo-guard.yml "$tmp/wrap.yml"
+  awk '
+    /set -euo pipefail/ && !w { print; print "          if false; then"; w = 1; next }
+    /scripts\/guard-agents.sh verify-gate/ && !done { print; print "          fi"; done = 1; next }
+    { print }
+  ' "$tmp/wrap.yml" >"$tmp/wrap2.yml"
+  mv "$tmp/wrap2.yml" "$tmp/wrap.yml"
+  expect_fail "if false around the approval body" \
+    env GUARD_WORKFLOW_FILE="$tmp/wrap.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
   printf 'name: repo-guard\njobs:\n  verify-gate:\n    steps:\n      - run: exit 0\n' >"$tmp/weak.yml"
   expect_fail "a workflow that drops the verify-gate steps" \
     env GUARD_WORKFLOW_FILE="$tmp/weak.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
