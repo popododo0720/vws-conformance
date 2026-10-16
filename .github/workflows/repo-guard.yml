@@ -8,9 +8,11 @@ on:
   pull_request:
     # labeled/unlabeled re-run verify-gate when vws-verify approves or the label is removed (#249).
     types: [opened, edited, reopened, synchronize, labeled, unlabeled]
-  # A verdict comment that is added, edited or deleted re-runs verify-gate (verify-rerun below).
-  issue_comment:
-    types: [created, edited, deleted]
+  # The same job on pull_request_target runs this file from the default branch. A pull request
+  # cannot replace those steps. It checks out the base commit and reads the pull request workflow
+  # as data. It does not check out or run the pull request tree.
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled]
 
 permissions:
   contents: read
@@ -51,12 +53,9 @@ jobs:
   # author and whoever last added the label must be in it. The PR author and the head commit's pusher
   # (GUARD_VERIFY_EXCLUDE) never approve, unless the login is the vws-verify identity
   # (repo variable VWS_VERIFY_IDENTITY).
-  # On pull_request GitHub runs this YAML from the merge commit, so a PR can replace these steps.
-  # The guard script, pinned by its sha256, rejects a workflow that drops the required step text.
-  # pull_request_target is not used. The script comes from the base commit. When that commit has no
-  # scripts/guard-agents.sh, the job uses the PR head copy only if its sha256 matches the script bytes.
+  # This job has no if. An if can skip the gate. issue_comment re-runs live in verify-rerun.yml, so this
+  # file does not need an event if on the gate. pull_request_target is what a pull request cannot replace.
   verify-gate:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -66,6 +65,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
       - name: Approved for this head
         env:
           GH_TOKEN: ${{ github.token }}
@@ -104,42 +104,27 @@ jobs:
           committer=$(gh api "repos/${REPO}/commits/${HEAD_SHA}" --jq '.committer.login // ""')
           GUARD_VERIFY_EXCLUDE="${PR_AUTHOR},${pusher},${committer}"
           export GUARD_VERIFY_LABELER GUARD_VERIFY_EXCLUDE
-          # The merge commit holds the workflow file this run executed. Fetch it so the guard can read it.
-          if ! git cat-file -e "${GITHUB_SHA}^{commit}" 2>/dev/null; then
+          # pull_request_target runs this file from the default branch. Read the pull request
+          # workflow as data. A pull_request run's workflow file is the merge commit.
+          gh auth setup-git
+          if [[ ${GITHUB_EVENT_NAME:-} == pull_request_target ]]; then
+            git fetch --depth=1 origin "refs/pull/${NUMBER}/head"
+            tmpw=$(mktemp)
+            git show "FETCH_HEAD:.github/workflows/repo-guard.yml" >"$tmpw"
+            export GUARD_WORKFLOW_FILE=$tmpw
+          elif ! git cat-file -e "${GITHUB_SHA}^{commit}" 2>/dev/null; then
             git fetch --depth=1 origin "$GITHUB_SHA"
           fi
           # bootstrap-guard-start
           guard=scripts/guard-agents.sh
-          if [[ ! -f $guard ]]; then
-            # The base commit has no guard script. Use the PR head copy only when its sha256 matches.
-            if ! git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null; then
-              git fetch --depth=1 origin "$HEAD_SHA"
-            fi
-            tmpg=$(mktemp -d)
-            if ! git cat-file -e "${HEAD_SHA}:scripts/guard-agents.sh" 2>/dev/null ||
-              ! git cat-file -e "${HEAD_SHA}:scripts/guard-agents.sh.sha256" 2>/dev/null; then
-              rm -rf "$tmpg"
-              echo "verify-gate: base has no scripts/guard-agents.sh and the PR head copy sha256 does not match the script bytes" >&2
-              exit 1
-            fi
-            git show "${HEAD_SHA}:scripts/guard-agents.sh" >"$tmpg/guard-agents.sh"
-            git show "${HEAD_SHA}:scripts/guard-agents.sh.sha256" >"$tmpg/guard-agents.sh.sha256"
-            want=$(awk 'NR == 1 { print $1 }' "$tmpg/guard-agents.sh.sha256")
-            got=$(sha256sum "$tmpg/guard-agents.sh" | cut -d' ' -f1)
-            if [[ ! $want =~ ^[0-9a-f]{64}$ || $got != "$want" ]]; then
-              rm -rf "$tmpg"
-              echo "verify-gate: base has no scripts/guard-agents.sh and the PR head copy sha256 does not match the script bytes" >&2
-              exit 1
-            fi
-            chmod +x "$tmpg/guard-agents.sh"
-            guard=$tmpg/guard-agents.sh
+          sum=scripts/guard-agents.sh.sha256
+          if [[ ! -f $guard || ! -f $sum ]]; then
+            echo "verify-gate: base has no scripts/guard-agents.sh; refusing the PR head copy" >&2
+            exit 1
           fi
           # bootstrap-guard-end
-          if [[ -f scripts/guard-agents.sh ]]; then
-            scripts/guard-agents.sh verify-gate "$HEAD_SHA" "$LABELS" "$text"
-          else
-            "$guard" verify-gate "$HEAD_SHA" "$LABELS" "$text"
-          fi
+          scripts/guard-agents.sh identity "$sum"
+          scripts/guard-agents.sh verify-gate "$HEAD_SHA" "$LABELS" "$text"
 
   # A new push drops the approval label as well; the head check above already fails without it.
   # Only this job may write, and only labels (issues: write). It checks out nothing and runs no PR code.
@@ -168,41 +153,3 @@ jobs:
               exit 1
             fi
           fi
-
-  # A comment event runs on the default branch, and its check would not attach to the PR head. So this job
-  # re-runs the verify-gate job of the newest pull_request run for the PR's current head; that job reads
-  # the comments again. It checks out nothing and runs no PR code; it may only re-run jobs (actions: write).
-  verify-rerun:
-    if: github.event_name == 'issue_comment' && github.event.issue.pull_request
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      pull-requests: read
-    steps:
-      - name: Re-run verify-gate for the PR head
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          NUMBER: ${{ github.event.issue.number }}
-        run: |
-          set -euo pipefail
-          head=$(gh api "repos/${REPO}/pulls/${NUMBER}" --jq '.head.sha')
-          # Several PRs can share a head SHA: prefer the newest run linked to this PR number. Fork PRs list no
-          # pull_requests on the run, so the newest run for the head is the fallback.
-          run=$(gh api "repos/${REPO}/actions/workflows/repo-guard.yml/runs?event=pull_request&head_sha=${head}&per_page=100" \
-            --jq "([.workflow_runs[] | select(any(.pull_requests[]?; .number == ${NUMBER}))][0].id) // .workflow_runs[0].id // empty")
-          if [[ -z $run ]]; then echo "no pull_request run for ${head} yet"; exit 0; fi
-          job=$(gh api "repos/${REPO}/actions/runs/${run}/jobs" --jq '.jobs[] | select(.name == "verify-gate") | .id')
-          if [[ -z $job ]]; then echo "run ${run} has no verify-gate job"; exit 0; fi
-          status=
-          # A job that is still running cannot be re-run yet: wait for it (up to 15 minutes), then re-run.
-          # Giving up fails this job, so a changed verdict is never silently left unchecked.
-          for _ in $(seq 1 30); do
-            status=$(gh api "repos/${REPO}/actions/jobs/${job}" --jq '.status')
-            if [[ $status == completed ]] && gh api -X POST "repos/${REPO}/actions/jobs/${job}/rerun" >/dev/null; then
-              echo "verify-gate job ${job} re-run"; exit 0
-            fi
-            sleep 30
-          done
-          echo "verify-gate job ${job} could not be re-run (status ${status})" >&2
-          exit 1
