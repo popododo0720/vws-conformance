@@ -52,6 +52,7 @@ jobs:
       contents: read
       pull-requests: read
       issues: read
+      checks: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -77,19 +78,10 @@ jobs:
             exit 1
           fi
           LABELS=$(jq -r '.[].name' <<<"$label_json")
-          text=$(mktemp)
-          comments=$(mktemp)
-          gh api --paginate "repos/${REPO}/issues/${NUMBER}/comments" \
-            --jq '.[] | {login: .user.login, body: .body, created_at, updated_at, edits, userContentEdits, user_content_edits} | @json' >"$comments"
-          : >"$text"
-          while IFS= read -r row; do
-            [[ -n $row ]] || continue
-            login=$(jq -r '.login' <<<"$row")
-            body=$(jq -r '.body // ""' <<<"$row")
-            norm=$(printf '%s' "$body" | scripts/guard-agents.sh normalize-comment)
-            printf '@@comment-by: %s\n%s\n' "$login" "$norm" >>"$text"
-          done <"$comments"
-          scripts/guard-agents.sh comment-trust "$HEAD_SHA" <"$comments"
+          runs=$(mktemp)
+          gh api --paginate "repos/${REPO}/commits/${HEAD_SHA}/check-runs" \
+            --jq '.check_runs[] | {name, head_sha, conclusion, completed_at, id, app}' >"$runs"
+          scripts/guard-agents.sh check-run "$HEAD_SHA" <"$runs"
           GUARD_VERIFY_LABELER=$(gh api --paginate "repos/${REPO}/issues/${NUMBER}/events" \
             --jq '.[] | select(.event == "labeled" and .label.name == "verify-approved") | [.created_at, (.id | tostring), .actor.login] | @tsv' \
             | scripts/guard-agents.sh latest-labeler)
@@ -130,7 +122,7 @@ jobs:
           # ALLOWFILE is this checkout. HEAD_SHA is the only commit allow and verify-gate judge.
           scripts/guard-agents.sh allow scripts/guard-allowed.sha256 "$HEAD_SHA"
           scripts/guard-agents.sh identity "$sum"
-          scripts/guard-agents.sh verify-gate "$HEAD_SHA" "$LABELS" "$text"
+          scripts/guard-agents.sh verify-gate "$HEAD_SHA" "$LABELS"
 
   verify-reset:
     if: github.event_name == 'pull_request' && github.event.action == 'synchronize'

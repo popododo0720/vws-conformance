@@ -14,38 +14,29 @@
 #   guard-agents.sh commit-msg FILE         the commit message has no closing keyword (Closes/Fixes/Resolves #N, owner/repo#N or an issue URL) and no Hangul
 #   guard-agents.sh pr-commits BASE HEAD    every commit in BASE..HEAD passes commit-msg
 #   guard-agents.sh push-watch BEFORE AFTER every first-parent commit pushed to main came from a pull request
-#   guard-agents.sh normalize-comment      stdin is a comment body. Control characters are replaced, then a
-#                                           leading @@comment-by: is defanged.
 #   guard-agents.sh latest-labeler         stdin is created_at<TAB>id<TAB>login. Prints the login of the
 #                                           latest row. A later created_at wins. The same second keeps the
 #                                           greater decimal event id. Empty input fails closed.
-#   guard-agents.sh comment-counts         stdin is one comment JSON object. Exit 0 only when created_at
-#                                           equals updated_at and every edit list on the object is empty.
-#                                           A missing timestamp fails closed.
-#   guard-agents.sh comment-trust HEAD     stdin is one comment JSON object per line. Exit 1 when any
-#                                           comment by a verifier, or any comment whose body is a verdict
-#                                           for HEAD, was edited. The message names that comment.
-#   guard-agents.sh check-run HEAD         stdin is one check-run JSON object per line. Exit 0 only when
-#                                           a run named vws-verify from the vws-verify app has head_sha HEAD
-#                                           and conclusion success.
-#   guard-agents.sh verify-gate HEAD LABELS [FILE]
-#                                           the pull request is verify-approved for HEAD: LABELS is one label name
-#                                           per line and one line equals verify-approved. A comment in the text
-#                                           (FILE or $PR_TEXT) has a "Verified-by: vws-verify" section naming HEAD,
-#                                           a line "Result: PASS", evidence for every QUALITY.md item, plus a
-#                                           "Codex review: <full path or URL> blocking=0" line. Each comment starts
-#                                           with a "@@comment-by: LOGIN" line; text outside a comment (such as the
-#                                           PR body) never counts. GUARD_VERIFY_ACTORS must be a nonempty login list.
+#   guard-agents.sh check-run HEAD         stdin is one check-run JSON object per line. Exit 0 only when the
+#                                           latest run named vws-verify from the vws-verify app (slug or
+#                                           GUARD_VERIFY_APP_ID) has head_sha HEAD and conclusion success.
+#   guard-agents.sh verify-gate HEAD LABELS
+#                                           the pull request is verify-approved: LABELS is one label name per
+#                                           line and one line equals verify-approved. The labeler is in
+#                                           GUARD_VERIFY_ACTORS, which must be nonempty. A Verified-by comment
+#                                           is not read.
 #   guard-agents.sh english [ALLOWLIST]     no tracked file has Hangul unless a glob in ALLOWLIST (default
 #                                           .github/english-allowlist, lines "<glob> <reason>") covers it
 #   guard-agents.sh selftest                run the guards on bad inputs; every one must fail
 #
 # Environment: GUARD_MAIN_BRANCH (default main), GUARD_HEADING (default "## Insider-risk guardrails"),
 # GUARD_ITEMS (default 7), GUARD_RULES_HEADING (default: the first of "## Rules" and "## 규칙표" in FILE),
-# GUARD_VERIFY_LABEL (default verify-approved), GUARD_QUALITY_ITEMS (default 9, the QUALITY.md checklist),
-# GUARD_VERIFY_ACTORS (comma list of logins allowed to approve; empty fails closed), GUARD_VERIFY_LABELER
-# (login that last added the label), GUARD_VERIFY_EXCLUDE (PR author and head pusher: never approve),
+# GUARD_VERIFY_LABEL (default verify-approved),
+# GUARD_VERIFY_ACTORS (comma list of logins allowed to add the label; empty fails closed), GUARD_VERIFY_LABELER
+# (login that last added the label), GUARD_VERIFY_EXCLUDE (PR author and head pusher: never label),
 # GUARD_VERIFY_IDENTITY (the vws-verify login, exempt from EXCLUDE),
+# GUARD_VERIFY_APP_SLUG (default vws-verify), GUARD_VERIFY_APP_ID (optional numeric app id),
+# GUARD_VERIFY_CHECK (default vws-verify, the check run name),
 # GUARD_ARCHTEST_PKG (default ./internal/archtest/...), GITHUB_REPOSITORY and an authenticated gh for push-watch.
 set -euo pipefail
 export LC_ALL=C
@@ -54,7 +45,6 @@ MAIN=${GUARD_MAIN_BRANCH:-main}
 HEADING=${GUARD_HEADING:-## Insider-risk guardrails}
 ITEMS=${GUARD_ITEMS:-7}
 VERIFY_LABEL=${GUARD_VERIFY_LABEL:-verify-approved}
-QUALITY_ITEMS=${GUARD_QUALITY_ITEMS:-9}
 # pull_request_target runs this file from the default branch. allow reads the digest list from that
 # checkout, so a pull request cannot authorize its own edits to a locked file.
 die() {
@@ -132,14 +122,6 @@ cmd_allow() {
   done
 }
 
-# Two steps, in this order. A leading CR must become "?" before a line can match the marker.
-cmd_normalize_comment() {
-  local body
-  body=$(cat)
-  body=$(printf '%s' "$body" | sed 's/\r$//' | LC_ALL=C tr '\000-\010\013-\037\177' '?')
-  printf '%s\n' "$body" | sed 's/^@@comment-by:/@ @comment-by:/'
-}
-
 id_gt() {
   local a=$1 b=$2
   while [[ $a == 0* && ${#a} -gt 1 ]]; do a=${a#0}; done
@@ -164,70 +146,43 @@ cmd_latest_labeler() {
   printf '%s\n' "$best_login"
 }
 
-comment_unedited() {
-  jq -e '
-    (.created_at | type) == "string" and
-    (.updated_at | type) == "string" and
-    .created_at == .updated_at and
-    ((.edits // []) | length) == 0 and
-    ((.userContentEdits.nodes // []) | length) == 0 and
-    ((.userContentEdits.totalCount // 0) == 0) and
-    ((.user_content_edits // []) | length) == 0
-  ' <<<"$1" >/dev/null
-}
-
-cmd_comment_counts() {
-  local obj
-  obj=$(cat)
-  comment_unedited "$obj" || {
-    echo "comment-counts: edited comment does not count" >&2
-    return 1
-  }
-}
-
-comment_watched() {
-  local head=$1 login=$2 body=$3 actors=$4
-  if [[ -n $login && ",${actors}," == *",${login},"* ]]; then
-    return 0
-  fi
-  grep -q -E "^[[:space:]]*(- )?Head:[[:space:]]*${head}[[:space:]]*$" <<<"$body" || return 1
-  grep -q -E 'Verified-by:[[:space:]]*vws-verify|^[[:space:]]*(- )?Result:' <<<"$body"
-}
-
-cmd_comment_trust() {
-  local head=${1:-} line login body created actors
-  [[ $head =~ ^[0-9a-f]{40}$ ]] || die "comment-trust: needs the full head commit SHA"
-  actors=${GUARD_VERIFY_ACTORS:-}
+cmd_check_run() {
+  local head=${1:-} line name sha conclusion slug app_id completed id
+  local best_at="" best_id="" best_conclusion="" saw=0
+  local want_slug=${GUARD_VERIFY_APP_SLUG:-vws-verify}
+  local want_id=${GUARD_VERIFY_APP_ID:-}
+  local want_name=${GUARD_VERIFY_CHECK:-vws-verify}
+  [[ $head =~ ^[0-9a-f]{40}$ ]] || die "check-run: needs the full head commit SHA"
   while IFS= read -r line || [[ -n ${line:-} ]]; do
     [[ -n $line ]] || continue
-    if comment_unedited "$line"; then
+    name=$(jq -r '.name // empty' <<<"$line")
+    sha=$(jq -r '.head_sha // empty' <<<"$line")
+    conclusion=$(jq -r '.conclusion // empty' <<<"$line")
+    slug=$(jq -r '.app.slug // empty' <<<"$line")
+    app_id=$(jq -r 'if .app.id == null then empty else (.app.id | tostring) end' <<<"$line")
+    completed=$(jq -r '.completed_at // empty' <<<"$line")
+    id=$(jq -r 'if .id == null then "0" else (.id | tostring) end' <<<"$line")
+    [[ $name == "$want_name" && $sha == "$head" ]] || continue
+    if [[ $slug != "$want_slug" ]] && { [[ -z $want_id ]] || [[ $app_id != "$want_id" ]]; }; then
       continue
     fi
-    login=$(jq -r '.login // empty' <<<"$line")
-    body=$(jq -r '.body // empty' <<<"$line")
-    created=$(jq -r '.created_at // "unknown"' <<<"$line")
-    if comment_watched "$head" "$login" "$body" "$actors"; then
-      die "verify-gate: edited comment by '${login:-unknown}' at ${created}; delete it and post a new verdict"
+    [[ $id =~ ^[0-9]+$ ]] || id=0
+    if [[ $saw -eq 0 ]] || [[ $completed > $best_at ]] || { [[ $completed == "$best_at" ]] && id_gt "$id" "$best_id"; }; then
+      best_at=$completed
+      best_id=$id
+      best_conclusion=$conclusion
+      saw=1
     fi
   done
+  [[ $saw -eq 1 ]] || die "check-run: no ${want_name} check run from the ${want_slug} app on ${head}"
+  [[ $best_conclusion == success ]] ||
+    die "check-run: ${want_name} conclusion is '${best_conclusion:-none}', want success"
 }
 
-cmd_check_run() {
-  cat >/dev/null
-}
-
-# verify-gate: the approval is bound to one head commit. A push changes the head, so the old section no
-# longer matches and the gate is red until vws-verify judges the new head (the label is also removed on
-# synchronize by the workflow). Evidence per checklist item: a URL, a path, or "N/A: <reason>".
 cmd_verify_gate() {
-  local head=${1:-} labels=${2:-} text=${PR_TEXT:-} section n line actors result
+  local head=${1:-} labels=${2:-} actors
   actors=${GUARD_VERIFY_ACTORS:-}
   [[ $head =~ ^[0-9a-f]{40}$ ]] || die "verify-gate: needs the full head commit SHA"
-  if [[ -n ${3:-} ]]; then
-    [[ -f $3 ]] || die "verify-gate: ${3} does not exist"
-    text=$(cat "$3")
-  fi
-  # An empty allow-list used to keep every comment. Outsider approvals fail closed.
   if [[ -z ${actors//[[:space:],]/} ]]; then
     die "verify-gate: GUARD_VERIFY_ACTORS is empty; set VWS_VERIFY_ACTORS to the logins allowed to approve"
   fi
@@ -245,54 +200,6 @@ cmd_verify_gate() {
   if [[ -n $labeler && $labeler != "$identity" && ",${excluded}," == *",${labeler},"* ]]; then
     die "verify-gate: '${VERIFY_LABEL}' was added by '${labeler}', the PR author or pusher"
   fi
-  # Keep only comments ("@@comment-by: LOGIN" blocks) by allowed authors. Each kept block starts with a
-  # "#" line so a section never runs from one comment into the next. The PR body is not a comment.
-  # Control characters become "?" here as well, so a leading CR cannot become a marker line.
-  text=$(sed 's/\r$//' <<<"$text" | LC_ALL=C tr '\000-\010\013-\037\177' '?' | awk -v actors=",${actors}," -v excl=",${excluded}," -v id="$identity" '
-    /^@@comment-by: / { who = substr($0, 15); keep = (index(actors, "," who ",") > 0)
-      if (who != id && index(excl, "," who ",") > 0) keep = 0
-      if (keep) print "#"; next }
-    keep { print }')
-  # The section that names this head: from its "Verified-by: vws-verify" line to the next such line or heading.
-  # Comments come oldest first; when several sections name this head, the newest (last) one is the verdict.
-  section=$(tr -d '`' <<<"$text" | awk -v h="$head" '
-    function done() { if (on && keep) last = buf; on = 0; keep = 0; buf = "" }
-    /Verified-by:[[:space:]]*vws-verify/ { done(); on = 1; next }
-    on && /^#/ { done(); next }
-    on { buf = buf $0 "\n"; if ($0 ~ "^[[:space:]]*Head:[[:space:]]*" h "[[:space:]]*$") keep = 1 }
-    END { done(); printf "%s", last }')
-  [[ -n $section ]] || die "verify-gate: no 'Verified-by: vws-verify' section names the head ${head}; a push after approval needs a new verification"
-  result=$(grep -E '^[[:space:]]*(- )?Result:' <<<"$section" || true)
-  [[ -n $result ]] || die "verify-gate: the Verified-by section for ${head:0:12} has no 'Result: PASS'"
-  [[ $result =~ ^[[:space:]]*(-[[:space:]])?Result:[[:space:]]*PASS[[:space:]]*$ ]] ||
-    die "verify-gate: the Verified-by section for ${head:0:12} must say 'Result: PASS' (got '${result//$'\n'/ }')"
-  for ((n = 1; n <= QUALITY_ITEMS; n++)); do
-    line=$(grep -m1 -E "^[[:space:]]*(- )?${n}\.[[:space:]]" <<<"$section" || true)
-    line=${line#*"${n}."}
-    # "N/A:" needs a reason; otherwise a URL or a file path (dir/file.ext) is the evidence.
-    if grep -q -E '^[[:space:]]*N/A' <<<"$line"; then
-      grep -q -E '^[[:space:]]*N/A:[[:space:]]*[^[:space:]]' <<<"$line"
-    else
-      grep -q -E '(https?://[^[:space:]]+|[A-Za-z0-9._-]+/[A-Za-z0-9._/-]*\.[A-Za-z0-9]+)' <<<"$line"
-    fi ||
-      die "verify-gate: the Verified-by section for ${head:0:12} has no evidence (URL, path or 'N/A: reason') for checklist item ${n}"
-  done
-  # The same section carries the Codex review: "Codex review: <absolute path or http(s) URL> blocking=<N>".
-  # It passes only with blocking=0. Path rule: /workspace/handoff/codex/<repo>-<pr>-<sha7>.md.
-  local codex where blocking
-  codex=$(grep -m1 -E '^[[:space:]]*(- )?Codex review:' <<<"$section" || true)
-  [[ -n $codex ]] || die "verify-gate: no Codex review in the Verified-by section for ${head:0:12}; add 'Codex review: <full path or URL> blocking=<N>'"
-  codex=${codex#*Codex review:}
-  # blocking=<N> is matched as a string, never as bash arithmetic: $((N)) wraps 2^64 to 0, so only
-  # all-zero digits pass; empty, signed, hex, spaced or other non-digit values are rejected.
-  [[ $codex =~ blocking=([^[:space:]]*)[[:space:]]*$ ]] || die "verify-gate: the Codex review line needs 'blocking=<N>' at the end: ${codex}"
-  blocking=${BASH_REMATCH[1]}
-  where=${codex%blocking=*}
-  where=$(sed -E 's/[[:space:]]+$//; s/^[[:space:]]+//' <<<"$where")
-  [[ $where =~ ^(/[^[:space:]]+|https?://[^[:space:]/]+[^[:space:]]*)$ ]] ||
-    die "verify-gate: Codex review needs a full path or URL (an absolute /... path or an http(s) URL), got '${where}'"
-  [[ $blocking =~ ^[0-9]+$ ]] || die "verify-gate: Codex review blocking=<N> must be decimal digits, got '${blocking}' (${where})"
-  [[ $blocking =~ ^0+$ ]] || die "verify-gate: Codex review has ${blocking} blocking findings (${where})"
 }
 
 # The one guard command for the architecture test: the Judgment count line comes first so the CI log
@@ -810,18 +717,13 @@ GH
   git -C "$repo" reset -q --hard "$c5"
   expect_fail "pr-commits on a range git cannot list" bash -c 'cd "$1" && bash "$2" pr-commits no-such-ref HEAD' _ "$repo" "$OLDPWD_SCRIPT"
   expect_pass "pr-commits on an empty clean range" bash -c 'cd "$1" && bash "$2" pr-commits "$3" HEAD' _ "$repo" "$OLDPWD_SCRIPT" "$c5"
-  # verify-gate: label and a section bound to the head with evidence for every item.
   # Direct calls see these shell variables. Subprocess cases pass their own.
-  local h1 h2 ev
+  local h1 h2
   h1=$(printf 'a%.0s' {1..40}); h2=$(printf 'b%.0s' {1..40})
   GUARD_VERIFY_ACTORS=verifier
   GUARD_VERIFY_LABELER=verifier
-  ev="$tmp/ev.md"
-  { echo "@@comment-by: verifier"; echo "## Verified-by: vws-verify"; echo "Head: ${h1}"; echo "Result: PASS"
-    for ((i = 1; i <= QUALITY_ITEMS; i++)); do echo "${i}. https://example.invalid/log/${i}"; done
-    echo "Codex review: /workspace/handoff/codex/vws-deploy-1-aaaaaaa.md blocking=0"; } >"$ev"
-  expect_pass "label and evidence for the head" cmd_verify_gate "$h1" $'bug\n'"${VERIFY_LABEL}" "$ev"
-  expect_fail "a label named x,verify-approved,y" cmd_verify_gate "$h1" "x,${VERIFY_LABEL},y" "$ev"
+  expect_pass "a verify-approved label from an allowed labeler" cmd_verify_gate "$h1" $'bug\n'"${VERIFY_LABEL}"
+  expect_fail "a label named x,verify-approved,y" cmd_verify_gate "$h1" "x,${VERIFY_LABEL},y"
   app_ok=$(jq -nc --arg sha "$h1" '{name:"vws-verify",head_sha:$sha,conclusion:"success",app:{slug:"vws-verify",id:1}}')
   app_other=$(jq -nc --arg sha "$h1" '{name:"vws-verify",head_sha:$sha,conclusion:"success",app:{slug:"other-app",id:2}}')
   other_sha=$(jq -nc --arg sha "$h2" '{name:"vws-verify",head_sha:$sha,conclusion:"success",app:{slug:"vws-verify",id:1}}')
@@ -833,6 +735,29 @@ GH
   expect_fail "a neutral conclusion" "$OLDPWD_SCRIPT" check-run "$h1" <<<"$app_neutral"
   expect_fail "a missing vws-verify check run" "$OLDPWD_SCRIPT" check-run "$h1" </dev/null
   expect_pass "a success check run from the vws-verify app" "$OLDPWD_SCRIPT" check-run "$h1" <<<"$app_ok"
+  other_name=$(jq -nc --arg sha "$h1" '{name:"other",head_sha:$sha,conclusion:"success",app:{slug:"vws-verify",id:1}}')
+  expect_fail "a success run with another name" "$OLDPWD_SCRIPT" check-run "$h1" <<<"$other_name"
+  newer_fail=$(printf '%s\n' \
+    "$(jq -nc --arg sha "$h1" '{name:"vws-verify",head_sha:$sha,conclusion:"success",completed_at:"2024-06-01T00:00:00Z",id:1,app:{slug:"vws-verify",id:1}}')" \
+    "$(jq -nc --arg sha "$h1" '{name:"vws-verify",head_sha:$sha,conclusion:"failure",completed_at:"2024-06-02T00:00:00Z",id:2,app:{slug:"vws-verify",id:1}}')")
+  expect_fail "a newer failure after an older success" "$OLDPWD_SCRIPT" check-run "$h1" <<<"$newer_fail"
+  newer_ok=$(printf '%s\n' \
+    "$(jq -nc --arg sha "$h1" '{name:"vws-verify",head_sha:$sha,conclusion:"failure",completed_at:"2024-06-01T00:00:00Z",id:1,app:{slug:"vws-verify",id:1}}')" \
+    "$(jq -nc --arg sha "$h1" '{name:"vws-verify",head_sha:$sha,conclusion:"success",completed_at:"2024-06-02T00:00:00Z",id:2,app:{slug:"vws-verify",id:1}}')")
+  expect_pass "a newer success after an older failure" "$OLDPWD_SCRIPT" check-run "$h1" <<<"$newer_ok"
+  app_by_id=$(jq -nc --arg sha "$h1" '{name:"vws-verify",head_sha:$sha,conclusion:"success",app:{slug:"other-app",id:9}}')
+  expect_pass "a check run matched by app id" env GUARD_VERIFY_APP_ID=9 "$OLDPWD_SCRIPT" check-run "$h1" <<<"$app_by_id"
+  grep -F -q 'scripts/guard-agents.sh check-run' .github/workflows/repo-guard.yml ||
+    die "selftest: repo-guard.yml does not run check-run"
+  if grep -E -q 'comment-trust|comment-counts|normalize-comment' .github/workflows/repo-guard.yml; then
+    die "selftest: repo-guard.yml still reads issue comments as the verdict"
+  fi
+  echo "ok: the workflow judges the vws-verify check run"
+  run_jq=$(awk -F"'" '/check-runs/ {getline; if ($0 ~ /--jq/) print $2}' .github/workflows/repo-guard.yml)
+  [[ -n $run_jq ]] || die "selftest: repo-guard.yml lost the check-run filter"
+  page=$(jq -n --arg sha "$h1" '{check_runs:[{name:"vws-verify",head_sha:$sha,conclusion:"success",completed_at:"2024-06-01T00:00:00Z",id:1,app:{slug:"vws-verify",id:1}}]}')
+  rows=$(printf '%s\n' "$page" | jq -c "$run_jq")
+  expect_pass "the workflow check-run filter on a success run" "$OLDPWD_SCRIPT" check-run "$h1" <<<"$rows"
   local pinrepo="$tmp/pinrepo" pinblock shaA shaB
   pinblock=$(awk '/# head-pin-start/ { on = 1; next } /# head-pin-end/ { on = 0 } on { sub(/^[[:space:]]*/, ""); print }' \
     .github/workflows/repo-guard.yml)
@@ -872,75 +797,6 @@ ENDGIT
   got=$(printf '%s\n' "$tsv" | "$OLDPWD_SCRIPT" latest-labeler)
   [[ $got == new ]] || die "selftest: latest labeler gave '${got}'"
   echo "ok: the latest labeler is the max created_at"
-  expect_fail "an edited verdict comment" "$OLDPWD_SCRIPT" comment-counts <<'EOF'
-{"created_at":"2020-01-01T00:00:00Z","updated_at":"2020-01-02T00:00:00Z"}
-EOF
-  expect_pass "an unedited verdict comment" "$OLDPWD_SCRIPT" comment-counts <<'EOF'
-{"created_at":"2020-01-01T00:00:00Z","updated_at":"2020-01-01T00:00:00Z","edits":[],"userContentEdits":{"nodes":[],"totalCount":0},"user_content_edits":[]}
-EOF
-  expect_fail "a comment with an edit list" "$OLDPWD_SCRIPT" comment-counts <<'EOF'
-{"created_at":"2020-01-01T00:00:00Z","updated_at":"2020-01-01T00:00:00Z","edits":[{}]}
-EOF
-  expect_fail "a comment with userContentEdits" "$OLDPWD_SCRIPT" comment-counts <<'EOF'
-{"created_at":"2020-01-01T00:00:00Z","updated_at":"2020-01-01T00:00:00Z","userContentEdits":{"nodes":[{}],"totalCount":1}}
-EOF
-  expect_fail "a comment missing updated_at" "$OLDPWD_SCRIPT" comment-counts <<'EOF'
-{"created_at":"2020-01-01T00:00:00Z"}
-EOF
-  pass_body=$(printf '## Verified-by: vws-verify\nHead: %s\nResult: PASS\n' "$h1")
-  fail_body=$(printf '## Verified-by: vws-verify\nHead: %s\nResult: FAIL\n' "$h1")
-  older_pass=$(jq -nc --arg body "$pass_body" '{login:"verifier",body:$body,created_at:"2020-01-01T00:00:00Z",updated_at:"2020-01-01T00:00:00Z"}')
-  newer_fail=$(jq -nc --arg body "$fail_body" '{login:"verifier",body:$body,created_at:"2020-01-02T00:00:00Z",updated_at:"2020-01-03T00:00:00Z"}')
-  expect_fail "an edited newer FAIL with an older PASS" \
-    env GUARD_VERIFY_ACTORS=verifier "$OLDPWD_SCRIPT" comment-trust "$h1" <<EOF
-${older_pass}
-${newer_fail}
-EOF
-  trust_msg=$(env GUARD_VERIFY_ACTORS=verifier "$OLDPWD_SCRIPT" comment-trust "$h1" <<EOF 2>&1 >/dev/null || true
-${older_pass}
-${newer_fail}
-EOF
-)
-  [[ $trust_msg == *"edited comment by 'verifier' at 2020-01-02T00:00:00Z"* ]] ||
-    die "selftest: edited newer FAIL gave '${trust_msg}'"
-  echo "ok: an edited newer FAIL names that comment"
-  older_note=$(jq -nc '{login:"verifier",body:"note",created_at:"2020-01-01T00:00:00Z",updated_at:"2020-01-01T00:00:00Z",edits:[{}]}')
-  newer_pass=$(jq -nc --arg body "$pass_body" '{login:"verifier",body:$body,created_at:"2020-01-05T00:00:00Z",updated_at:"2020-01-05T00:00:00Z"}')
-  expect_fail "an edited older comment" \
-    env GUARD_VERIFY_ACTORS=verifier "$OLDPWD_SCRIPT" comment-trust "$h1" <<EOF
-${older_note}
-${newer_pass}
-EOF
-  trust_msg=$(env GUARD_VERIFY_ACTORS=verifier "$OLDPWD_SCRIPT" comment-trust "$h1" <<EOF 2>&1 >/dev/null || true
-${older_note}
-${newer_pass}
-EOF
-)
-  [[ $trust_msg == *"edited comment by 'verifier' at 2020-01-01T00:00:00Z"* ]] ||
-    die "selftest: edited older comment gave '${trust_msg}'"
-  echo "ok: an edited older comment is named"
-  stranger=$(jq -nc '{login:"stranger",body:"thanks",created_at:"2020-01-04T00:00:00Z",updated_at:"2020-01-06T00:00:00Z"}')
-  expect_pass "a clean comment history" \
-    env GUARD_VERIFY_ACTORS=verifier "$OLDPWD_SCRIPT" comment-trust "$h1" <<EOF
-${older_pass}
-${stranger}
-${newer_pass}
-EOF
-  grep -F -q 'scripts/guard-agents.sh comment-trust' .github/workflows/repo-guard.yml ||
-    die "selftest: repo-guard.yml does not run comment-trust"
-  if grep -F -q 'comment-counts' .github/workflows/repo-guard.yml; then
-    die "selftest: repo-guard.yml still drops comments with comment-counts"
-  fi
-  echo "ok: the workflow keeps every comment and runs comment-trust"
-  forged=$(jq -nc --arg body "$fail_body" '{login:"stranger",body:$body,created_at:"2020-01-08T00:00:00Z",updated_at:"2020-01-09T00:00:00Z"}')
-  expect_fail "an edited verdict by someone who is not a verifier" \
-    env GUARD_VERIFY_ACTORS=verifier "$OLDPWD_SCRIPT" comment-trust "$h1" <<EOF
-${older_pass}
-${forged}
-EOF
-  bare=$(jq -nc '{login:"verifier",body:"note",created_at:"2020-01-01T00:00:00Z"}')
-  expect_fail "a verifier comment missing updated_at" \
-    env GUARD_VERIFY_ACTORS=verifier "$OLDPWD_SCRIPT" comment-trust "$h1" <<<"$bare"
   tsv=$'2024-06-01T00:00:00Z\t9\tnine\n2024-06-01T00:00:00Z\t10\tten'
   got=$(printf '%s\n' "$tsv" | "$OLDPWD_SCRIPT" latest-labeler)
   [[ $got == ten ]] || die "selftest: same-second labeler gave '${got}'"
@@ -960,150 +816,32 @@ EOF
   expect_fail "a non-decimal event id" "$OLDPWD_SCRIPT" latest-labeler <<'EOF'
 2024-06-01T00:00:00Z	nope	who
 EOF
-  comment_jq=$(awk -F"'" '/issues\/\$\{NUMBER\}\/comments/ {getline; if ($0 ~ /--jq/) print $2}' .github/workflows/repo-guard.yml)
   label_jq=$(awk -F"'" '/@tsv/ && /verify-approved/ {print $2}' .github/workflows/repo-guard.yml)
-  [[ -n $comment_jq && -n $label_jq ]] || die "selftest: repo-guard.yml lost the comment or labeler filter"
-  edited_row=$(printf '%s\n' '[{"user":{"login":"verifier"},"body":"Result: PASS","created_at":"2020-01-01T00:00:00Z","updated_at":"2020-01-02T00:00:00Z"}]' | jq -r "$comment_jq")
-  expect_fail "the workflow filter on an edited comment" "$OLDPWD_SCRIPT" comment-counts <<<"$edited_row"
-  fresh_row=$(printf '%s\n' '[{"user":{"login":"verifier"},"body":"Result: PASS","created_at":"2020-01-01T00:00:00Z","updated_at":"2020-01-01T00:00:00Z"}]' | jq -r "$comment_jq")
-  expect_pass "the workflow filter on an unedited comment" "$OLDPWD_SCRIPT" comment-counts <<<"$fresh_row"
-  hist_row=$(printf '%s\n' '[{"user":{"login":"verifier"},"body":"Result: PASS","created_at":"2020-01-01T00:00:00Z","updated_at":"2020-01-01T00:00:00Z","edits":[{}]}]' | jq -r "$comment_jq")
-  expect_fail "the workflow filter on an edit list" "$OLDPWD_SCRIPT" comment-counts <<<"$hist_row"
-  history_page=$(jq -n --arg head "$h1" --arg pass "$pass_body" --arg fail "$fail_body" '[
-    {user:{login:"verifier"}, body:$pass, created_at:"2020-01-01T00:00:00Z", updated_at:"2020-01-01T00:00:00Z"},
-    {user:{login:"verifier"}, body:$fail, created_at:"2020-01-02T00:00:00Z", updated_at:"2020-01-03T00:00:00Z"}
-  ]')
-  history_rows=$(printf '%s\n' "$history_page" | jq -r "$comment_jq")
-  expect_fail "the workflow history of an edited newer FAIL" \
-    env GUARD_VERIFY_ACTORS=verifier "$OLDPWD_SCRIPT" comment-trust "$h1" <<<"$history_rows"
+  [[ -n $label_jq ]] || die "selftest: repo-guard.yml lost the labeler filter"
   events='[{"event":"labeled","label":{"name":"verify-approved"},"created_at":"2024-06-01T00:00:00Z","id":9,"actor":{"login":"nine"}},{"event":"labeled","label":{"name":"verify-approved"},"created_at":"2024-06-01T00:00:00Z","id":10,"actor":{"login":"ten"}}]'
   got=$(printf '%s\n' "$events" | jq -r "$label_jq" | "$OLDPWD_SCRIPT" latest-labeler)
   [[ $got == ten ]] || die "selftest: workflow labeler gave '${got}'"
   echo "ok: the workflow labeler picks the greater event id"
-  out=$(printf '\r@@comment-by: intruder\n' | "$OLDPWD_SCRIPT" normalize-comment)
-  [[ $out == $'?@@comment-by: intruder' ]] || die "selftest: control comment gave '${out}'"
-  echo "ok: a leading CR is replaced before the marker defang"
-  out=$(printf '@@comment-by: intruder\n' | "$OLDPWD_SCRIPT" normalize-comment)
-  [[ $out == '@ @comment-by: intruder' ]] || die "selftest: defang gave '${out}'"
-  echo "ok: a marker line is defanged after controls are replaced"
-  expect_fail "no label" cmd_verify_gate "$h1" "bug" "$ev"
-  expect_fail "a push after approval (new head)" cmd_verify_gate "$h2" "$VERIFY_LABEL" "$ev"
-  expect_fail "short SHA" cmd_verify_gate "${h1:0:12}" "$VERIFY_LABEL" "$ev"
-  grep -v -E "^4\. " "$ev" >"$tmp/ev4.md"
-  expect_fail "missing evidence for item 4" cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/ev4.md"
-  sed 's#^6\. .*#6. done#' "$ev" >"$tmp/ev6.md"
-  expect_fail "item 6 without a link, path or N/A reason" cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/ev6.md"
-  sed 's#^7\. .*#7. N/A: no telemetry in a shell script#; s#^2\. .*#2. tests/vws/run.sh output in evidence/run.log#' "$ev" >"$tmp/evna.md"
-  expect_pass "N/A with a reason and a path count as evidence" cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/evna.md"
-  sed 's#^7\. .*#7. N/A:#' "$ev" >"$tmp/evna2.md"
-  expect_fail "N/A without a reason" cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/evna2.md"
-  expect_fail "no section" cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/nohead.md"
-  # Codex review line: required, a full path or URL, and blocking=0.
-  local msg
-  msg=$("$OLDPWD_SCRIPT" comment-counts <<'EOF' 2>&1 >/dev/null || true
-{"created_at":"2020-01-01T00:00:00Z","updated_at":"2020-01-02T00:00:00Z"}
-EOF
-)
-  [[ $msg == *"edited comment does not count"* ]] || die "selftest: edited verdict gave '${msg}'"
-  echo "ok: an edited verdict names the ignore"
-  grep -v 'Codex review:' "$ev" >"$tmp/nocodex.md"
-  expect_fail "no Codex review line" cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/nocodex.md"
-  msg=$( (cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/nocodex.md") 2>&1 >/dev/null || true)
-  [[ $msg == *"no Codex review"* ]] || die "selftest: no Codex review line gave '${msg}'"
-  sed 's#blocking=0#blocking=2#' "$ev" >"$tmp/codex2.md"
-  expect_fail "a Codex review with blocking=2" cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/codex2.md"
-  msg=$( (cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/codex2.md") 2>&1 >/dev/null || true)
-  [[ $msg == *"Codex review has 2 blocking findings"* ]] || die "selftest: blocking=2 gave '${msg}'"
-  echo "ok: blocking=2 names the count"
-  sed 's#^Codex review: .*#Codex review: https://example.invalid/codex/vws-deploy-1-aaaaaaa.md blocking=0#' "$ev" >"$tmp/codexurl.md"
-  expect_pass "a Codex review with blocking=0 (path)" cmd_verify_gate "$h1" "$VERIFY_LABEL" "$ev"
-  expect_pass "a Codex review with blocking=0 (URL)" cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/codexurl.md"
-  sed 's#^Codex review: .*#Codex review: blocking=0#' "$ev" >"$tmp/codexnopath.md"
-  expect_fail "a Codex review without a path or URL" cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/codexnopath.md"
-  msg=$( (cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/codexnopath.md") 2>&1 >/dev/null || true)
-  [[ $msg == *"Codex review needs a full path or URL"* ]] || die "selftest: no path gave '${msg}'"
-  sed 's#^Codex review: .*#Codex review: codex/vws-deploy-1-aaaaaaa.md blocking=0#' "$ev" >"$tmp/codexrel.md"
-  expect_fail "a Codex review with a relative path" cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/codexrel.md"
-  # blocking=<N> is a string match: only all-zero digits pass, no bash arithmetic (2^64 wrapped to 0).
-  local bv i=0
-  for bv in 18446744073709551616 -0 -1 '' abc 0x0 ' 0' 1; do
-    i=$((i + 1))
-    sed "s#blocking=0#blocking=${bv}#" "$ev" >"$tmp/codexbad$i.md"
-    expect_fail "a Codex review with blocking='${bv}'" cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/codexbad$i.md"
-  done
-  sed 's#blocking=0#blocking=00#' "$ev" >"$tmp/codex00.md"
-  expect_pass "a Codex review with blocking=00" cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/codex00.md"
-  sed 's#^Codex review: .*#Codex review: /workspace/handoff/codex/vws-deploy-1-aaaaaaa.md#' "$ev" >"$tmp/codexnon.md"
-  expect_fail "a Codex review without blocking=<N>" cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/codexnon.md"
-  { echo "@@comment-by: verifier"; echo "## Verified-by: vws-verify"; echo "Head: ${h2}"; echo "1. stale"; cat "$ev"; } >"$tmp/two.md"
-  # Several sections name the head: the newest (last) one is the verdict (vws-deploy guard P2).
-  { cat "$ev"; echo "@@comment-by: verifier"; echo "## Verified-by: vws-verify"; echo "Head: ${h1}"; echo "1. withdrawn"; } >"$tmp/newbad.md"
-  expect_fail "a newer incomplete verdict for the head replaces a complete one" cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/newbad.md"
-  { echo "@@comment-by: verifier"; echo "## Verified-by: vws-verify"; echo "Head: ${h1}"; echo "1. first try"; cat "$ev"; } >"$tmp/newgood.md"
-  expect_pass "a newer complete verdict for the head replaces an incomplete one" cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/newgood.md"
-  expect_pass "a stale section and a current one: the current one counts" cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/two.md"
-  # Only comments count: the same section in the PR body (no @@comment-by block) is ignored.
-  grep -v '^@@comment-by:' "$ev" >"$tmp/body.md"
-  expect_fail "a section in the PR body, not a comment" cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/body.md"
-  # A section split across comments does not count: items 5-9 come from another comment.
-  { head -n 8 "$ev"; echo "@@comment-by: verifier"; tail -n +9 "$ev"; } >"$tmp/split.md"
-  expect_fail "a section split across two comments" cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/split.md"
-  # Allowed actors: the comment author and the labeler must both be in GUARD_VERIFY_ACTORS.
-  expect_pass "allowed author and labeler" env GUARD_VERIFY_ACTORS=bot,verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  sed 's#^@@comment-by: .*#@@comment-by: intruder#' "$ev" >"$tmp/other.md"
-  expect_fail "a comment by an author who may not approve" env GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$tmp/other.md"
-  # A comment line "\r@@comment-by: LOGIN" (or another control character before the marker) escapes the
-  # workflow's "^@@comment-by:" defang; it must not become a marker once control characters are handled.
-  local cc
-  for cc in '\r' '\v' '\f' '\033' '\177'; do
-    { echo "@@comment-by: intruder"; printf "${cc}@@comment-by: verifier\n"; tail -n +2 "$ev"; } >"$tmp/forge.md"
-    expect_fail "a forged '${cc}@@comment-by:' line in a comment" env GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-      "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$tmp/forge.md"
-  done
-  { printf '@@comment-by: verifier\r\n'; sed 's/$/\r/' <(tail -n +2 "$ev"); } >"$tmp/crlf.md"
-  expect_pass "a CRLF verdict comment by an allowed author" env GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$tmp/crlf.md"
+  expect_fail "no label" cmd_verify_gate "$h1" "bug"
+  expect_fail "short SHA" cmd_verify_gate "${h1:0:12}" "$VERIFY_LABEL"
   expect_fail "a label added by someone who may not approve" env GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=intruder \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL"
   expect_fail "an unknown labeler when actors are set" env GUARD_VERIFY_ACTORS=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  # No self-approval: a comment or label by the PR author/pusher never counts, unless it is the vws-verify identity.
-  expect_fail "a verdict comment by the PR author" env GUARD_VERIFY_ACTORS=verifier,other GUARD_VERIFY_LABELER=other \
-    GUARD_VERIFY_EXCLUDE=verifier "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL"
   expect_fail "a label added by the pusher" env GUARD_VERIFY_ACTORS=verifier,pusher GUARD_VERIFY_EXCLUDE=author,pusher \
-    GUARD_VERIFY_LABELER=pusher "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+    GUARD_VERIFY_LABELER=pusher "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL"
   expect_pass "a verdict by someone other than the author" env GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    GUARD_VERIFY_EXCLUDE=author,pusher "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+    GUARD_VERIFY_EXCLUDE=author,pusher "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL"
   expect_pass "the vws-verify identity on the same account (known gap)" env GUARD_VERIFY_ACTORS=verifier \
     GUARD_VERIFY_EXCLUDE=verifier GUARD_VERIFY_IDENTITY=verifier \
-    GUARD_VERIFY_LABELER=verifier "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
-  # Empty allow-list, Result, and a workflow that dropped its steps.
-  grep -v -E '^[[:space:]]*(- )?Result:' "$ev" >"$tmp/outsider.md"
-  sed -i '/^Head: /a Result: PASS' "$tmp/outsider.md"
-  sed -i 's/^@@comment-by: .*/@@comment-by: outsider/' "$tmp/outsider.md"
+    GUARD_VERIFY_LABELER=verifier "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL"
   expect_fail "an empty actor list" env GUARD_VERIFY_ACTORS= GUARD_VERIFY_LABELER=outsider \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$tmp/outsider.md"
-  msg=$( (env GUARD_VERIFY_ACTORS= GUARD_VERIFY_LABELER=outsider "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$tmp/outsider.md") 2>&1 >/dev/null || true)
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL"
+  msg=$( (env GUARD_VERIFY_ACTORS= GUARD_VERIFY_LABELER=outsider "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL") 2>&1 >/dev/null || true)
   [[ $msg == *"GUARD_VERIFY_ACTORS is empty"* ]] || die "selftest: empty actors gave '${msg}'"
   echo "ok: empty actors names the allow-list"
   expect_fail "a whitespace actor list" env GUARD_VERIFY_ACTORS=' , ' GUARD_VERIFY_LABELER=outsider \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$tmp/outsider.md"
-  grep -v -E '^[[:space:]]*(- )?Result:' "$ev" >"$tmp/noresult.md"
-  expect_fail "a verdict with no Result line" env GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$tmp/noresult.md"
-  grep -v -E '^[[:space:]]*(- )?Result:' "$ev" >"$tmp/resultfail.md"
-  sed -i '/^Head: /a Result: FAIL' "$tmp/resultfail.md"
-  expect_fail "Result: FAIL" env GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$tmp/resultfail.md"
-  msg=$( (env GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$tmp/resultfail.md") 2>&1 >/dev/null || true)
-  [[ $msg == *"must say 'Result: PASS'"* ]] || die "selftest: Result FAIL gave '${msg}'"
-  echo "ok: Result FAIL must be Result PASS"
-  grep -v -E '^[[:space:]]*(- )?Result:' "$ev" >"$tmp/resultpass.md"
-  sed -i '/^Head: /a Result: PASS' "$tmp/resultpass.md"
-  expect_pass "Result: PASS and a nonempty actor list" env GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
-    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$tmp/resultpass.md"
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL"
   local arepo="$tmp/arepo" aallow="$tmp/trusted.sha256"
   seed_locked() {
     aallow="$tmp/trusted.sha256"
@@ -1268,10 +1006,7 @@ case "$command_name" in
   verify-gate) cmd_verify_gate "$@" ;;
   identity) cmd_identity "$@" ;;
   allow) cmd_allow "$@" ;;
-  normalize-comment) cmd_normalize_comment "$@" ;;
   latest-labeler) cmd_latest_labeler "$@" ;;
-  comment-counts) cmd_comment_counts "$@" ;;
-  comment-trust) cmd_comment_trust "$@" ;;
   check-run) cmd_check_run "$@" ;;
   commit-msg) cmd_commit_msg "$@" ;;
   pr-commits) cmd_pr_commits "$@" ;;
@@ -1279,5 +1014,5 @@ case "$command_name" in
   correct) cmd_correct "$@" ;;
   english) cmd_english "$@" ;;
   selftest) cmd_selftest ;;
-  *) die "usage: guard-agents.sh <agents [FILE]|pr-base BASE|rules [FILE] [HEADING]|judgment [FILE] [HEADING]|archtest [FILE] [HEADING]|identity [SUMFILE]|allow ALLOWFILE HEADREF|normalize-comment|latest-labeler|comment-counts|comment-trust|check-run|pr-body [FILE]|commit-msg FILE|pr-commits BASE HEAD|push-watch BEFORE AFTER|verify-gate HEAD LABELS [FILE]|correct [DIR]|english [ALLOWLIST]|selftest>" ;;
+  *) die "usage: guard-agents.sh <agents [FILE]|pr-base BASE|rules [FILE] [HEADING]|judgment [FILE] [HEADING]|archtest [FILE] [HEADING]|identity [SUMFILE]|allow ALLOWFILE HEADREF|latest-labeler|check-run|pr-body [FILE]|commit-msg FILE|pr-commits BASE HEAD|push-watch BEFORE AFTER|verify-gate HEAD LABELS|correct [DIR]|english [ALLOWLIST]|selftest>" ;;
 esac
