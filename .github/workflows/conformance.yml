@@ -20,15 +20,16 @@ jobs:
         run: go test -race -count=1 -p 1 ./internal/... ./cmd/...
       - name: fake backend
         run: |
-          git clone --depth 1 https://github.com/popododo0720/vws-console-api.git /tmp/src/vws-console-api
-          base=9ac48e08bc62a7ddff1b34a15a037ca8d48c69c7
+          pin=e6b01b537ff7e55f236064ec04c849a30e5d406d
+          git init /tmp/src/vws-console-api
+          git -C /tmp/src/vws-console-api remote add origin https://github.com/popododo0720/vws-console-api.git
+          git -C /tmp/src/vws-console-api fetch --depth 1 origin "$pin"
+          git -C /tmp/src/vws-console-api checkout --detach FETCH_HEAD
           got=$(git -C /tmp/src/vws-console-api rev-parse HEAD)
-          if [ "$got" != "$base" ]; then
-            echo "console-api main is $got, DetachVolume patch wants $base"
+          if [ "$got" != "$pin" ]; then
+            echo "console-api checkout is $got, want $pin"
             exit 1
           fi
-          git -C /tmp/src/vws-console-api apply --index \
-            "$GITHUB_WORKSPACE/third_party/vws-console-api/detach-volume.patch"
           (cd /tmp/src/vws-console-api && go build -o /tmp/vws-console-api ./cmd/vws-console-api)
           /tmp/vws-console-api -backend fake -iam fake >/tmp/console-api.log 2>&1 &
           echo $! > /tmp/console-api.pid
