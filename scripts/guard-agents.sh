@@ -1114,6 +1114,41 @@ GH
   expect_pass "if inside the run script is not a workflow key" \
     env GUARD_WORKFLOW_FILE="$tmp/runif.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
     "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  # Encoded keys, a non-main base, and marker strings that are not the real steps.
+  cp .github/workflows/repo-guard.yml "$tmp/uif.yml"
+  sed -i '/- name: Approved for this head/a\        "\\u0069f": false' "$tmp/uif.yml"
+  expect_fail "a unicode-escaped if on the gate step" \
+    env GUARD_WORKFLOW_FILE="$tmp/uif.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  cp .github/workflows/repo-guard.yml "$tmp/ucoe.yml"
+  sed -i '/- name: Approved for this head/a\        "\\u0063ontinue-on-error": true' "$tmp/ucoe.yml"
+  expect_fail "a unicode-escaped continue-on-error on the gate step" \
+    env GUARD_WORKFLOW_FILE="$tmp/ucoe.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  cp .github/workflows/repo-guard.yml "$tmp/notrigger.yml"
+  sed -i 's/^  pull_request_target:/  not_a_trigger:/' "$tmp/notrigger.yml"
+  sed -i '/set -euo pipefail/a\          echo pull_request_target' "$tmp/notrigger.yml"
+  expect_fail "pull_request_target only as text" \
+    env GUARD_WORKFLOW_FILE="$tmp/notrigger.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  cp .github/workflows/repo-guard.yml "$tmp/exit0.yml"
+  sed -i '/set -euo pipefail/a\          exit 0' "$tmp/exit0.yml"
+  expect_fail "exit 0 before the approval checks" \
+    env GUARD_WORKFLOW_FILE="$tmp/exit0.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  cp .github/workflows/repo-guard.yml "$tmp/headref.yml"
+  sed -i 's|^          ref: .*|          ref: ${{ github.event.pull_request.head.sha }}|' "$tmp/headref.yml"
+  sed -i '/set -euo pipefail/a\          echo "github.event.pull_request.base.sha"' "$tmp/headref.yml"
+  expect_fail "checkout of the pull request head" \
+    env GUARD_WORKFLOW_FILE="$tmp/headref.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  cp .github/workflows/repo-guard.yml "$tmp/basesha.yml"
+  sed -i 's|^          ref: .*|          ref: ${{ github.event.pull_request.base.sha }}|' "$tmp/basesha.yml"
+  sed -i '/^    branches:/d' "$tmp/basesha.yml"
+  sed -i "/^    if: github.base_ref == 'main'\$/d" "$tmp/basesha.yml"
+  expect_fail "checkout of a pull request base that is not the default branch" \
+    env GUARD_WORKFLOW_FILE="$tmp/basesha.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
   local brepo="$tmp/brepo" bbase="$tmp/bbase" bhead block out got
   block=$(awk '/# bootstrap-guard-start/ { on = 1; next } /# bootstrap-guard-end/ { on = 0 } on { sub(/^[[:space:]]*/, ""); print }' \
     .github/workflows/repo-guard.yml)
