@@ -31,6 +31,18 @@ func Volumes() bind.Group {
 	}}
 }
 
+func createVolume(ctx context.Context, api *awsec2.Client, in *awsec2.CreateVolumeInput) (
+	*awsec2.CreateVolumeOutput, error,
+) {
+	out, err := api.CreateVolume(ctx, in)
+	if err == nil || len(in.TagSpecifications) == 0 || !harness.UnsupportedParameter(err) {
+		return out, err
+	}
+	bare := *in
+	bare.TagSpecifications = nil
+	return api.CreateVolume(ctx, &bare)
+}
+
 func VolumeRequest(zone string, size int32) *awsec2.CreateVolumeInput {
 	return &awsec2.CreateVolumeInput{
 		AvailabilityZone: aws.String(zone),
@@ -51,7 +63,7 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 		in.TagSpecifications = rt.TagSpec(types.ResourceTypeVolume)
 		var id, size string
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
-			out, err := api.CreateVolume(ctx, in)
+			out, err := createVolume(ctx, api, in)
 			if err == nil {
 				id = aws.ToString(out.VolumeId)
 				size = fmt.Sprint(aws.ToInt32(out.Size))
@@ -165,7 +177,7 @@ func makeVol(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, token
 	in := VolumeRequest("vws-1a", harness.VolumeGiB)
 	in.ClientToken = aws.String(rt.Token(token))
 	in.TagSpecifications = rt.TagSpec(types.ResourceTypeVolume)
-	out, err := api.CreateVolume(ctx, in)
+	out, err := createVolume(ctx, api, in)
 	if err != nil {
 		return "", fmt.Errorf("create volume: %w", err)
 	}

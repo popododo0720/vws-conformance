@@ -210,6 +210,14 @@ func (rt *Runtime) Call(ctx context.Context, fn func(context.Context) error) (ca
 	return o, nil
 }
 
+func UnsupportedParameter(err error) bool {
+	var ae smithy.APIError
+	if !errors.As(err, &ae) {
+		return false
+	}
+	return ae.ErrorCode() == "InvalidParameterValue" && ae.ErrorMessage() == "unsupported"
+}
+
 func PayloadHash(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
