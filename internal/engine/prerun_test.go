@@ -227,7 +227,7 @@ func stuckVolumeConfig(t *testing.T, opt stuckOpts) harness.Config {
 	if opt.ledger {
 		row := sweep.Resource{
 			Kind: "volume", ID: stuckVolume, Name: "conf-vol", LedgerRunID: opt.owner,
-			Target: "local-fake",
+			Target: "local-fake", Account: "123456789012",
 		}
 		b, err := json.Marshal(row)
 		if err != nil {

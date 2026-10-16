@@ -48,6 +48,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	if err := rt.BindAccount(account); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	if err := rt.Sweep(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

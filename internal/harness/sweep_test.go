@@ -28,6 +28,8 @@ import (
 	"github.com/popododo0720/vws-conformance/internal/sweep"
 )
 
+const testAccount = "123456789012"
+
 func TestSweepReportsVolumeThatStaysInUse(t *testing.T) {
 	var deletes atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -130,9 +132,9 @@ func TestSweepLeavesLiveForeignAndOtherTargetVolumes(t *testing.T) {
 	dir := t.TempDir()
 	var lines []string
 	for _, row := range []sweep.Resource{
-		{Kind: "volume", ID: "vol-foreign", LedgerRunID: current, Target: "local-fake"},
+		{Kind: "volume", ID: "vol-foreign", LedgerRunID: current, Target: "local-fake", Account: testAccount},
 		{Kind: "volume", ID: "vol-reused", LedgerRunID: current, Target: "vws-test", Account: "999999999999"},
-		{Kind: "volume", ID: "vol-mine", LedgerRunID: current, Target: "local-fake"},
+		{Kind: "volume", ID: "vol-mine", LedgerRunID: current, Target: "local-fake", Account: testAccount},
 	} {
 		b, err := json.Marshal(row)
 		if err != nil {
@@ -798,7 +800,7 @@ func runtimeAt(t *testing.T, endpoint, dir, runID string) *Runtime {
 		o.UsePathStyle = true
 	})
 	return NewRuntime(Config{
-		Region: "vws-1", OutDir: dir, RunID: runID, Target: "local-fake",
+		Region: "vws-1", OutDir: dir, RunID: runID, Target: "local-fake", AccountID: testAccount,
 	}, &Clients{EC2: ec2c, S3: s3c})
 }
 
@@ -808,7 +810,7 @@ func runtimeOn(t *testing.T, endpoint, volume string) *Runtime {
 	row := sweep.Resource{
 		Kind: "volume", ID: volume, Name: "conf-vol",
 		LedgerRunID: "conf-20261015T120000Z-abc123",
-		Target:      "local-fake",
+		Target:      "local-fake", Account: testAccount,
 	}
 	b, err := json.Marshal(row)
 	if err != nil {
@@ -832,7 +834,7 @@ func runtimeOn(t *testing.T, endpoint, volume string) *Runtime {
 		o.BaseEndpoint = aws.String(endpoint)
 	})
 	return NewRuntime(Config{
-		Region: "vws-1", OutDir: dir, RunID: row.LedgerRunID, Target: "local-fake",
+		Region: "vws-1", OutDir: dir, RunID: row.LedgerRunID, Target: "local-fake", AccountID: testAccount,
 	}, &Clients{EC2: client})
 }
 

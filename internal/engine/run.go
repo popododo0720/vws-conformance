@@ -168,6 +168,10 @@ func runtime(ctx context.Context, cfg harness.Config) (*harness.Runtime, error) 
 			gate.err = err
 			return
 		}
+		if err := rt.BindAccount(account); err != nil {
+			gate.err = err
+			return
+		}
 		if err := rt.Sweep(ctx); err != nil {
 			var foreign *harness.ForeignLeftoverError
 			if errors.As(err, &foreign) {

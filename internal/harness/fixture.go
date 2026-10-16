@@ -94,6 +94,17 @@ func (rt *Runtime) Identify(ctx context.Context) (string, error) {
 	return aws.ToString(out.Account), nil
 }
 
+func (rt *Runtime) BindAccount(account string) error {
+	if account == "" {
+		return fmt.Errorf("verified account is empty")
+	}
+	if rt.Cfg.AccountID != "" && rt.Cfg.AccountID != account {
+		return fmt.Errorf("configured account %s does not match verified account %s", rt.Cfg.AccountID, account)
+	}
+	rt.Cfg.AccountID = account
+	return nil
+}
+
 func (rt *Runtime) EnsureNet(ctx context.Context) (string, string, error) {
 	rt.netMu.Lock()
 	if rt.net.vpc != "" {
@@ -197,6 +208,9 @@ func IgnoreCleanup(err error) error {
 }
 
 func (rt *Runtime) Sweep(ctx context.Context) error {
+	if rt.Cfg.AccountID == "" {
+		return fmt.Errorf("ledger account is empty")
+	}
 	rows, err := readLedger(rt.Cfg.OutDir)
 	if err != nil {
 		return err
