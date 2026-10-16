@@ -310,6 +310,75 @@ func TestSweepKeepsForeignRunAcrossOutDirs(t *testing.T) {
 	}
 }
 
+func TestSweepRespectsLiveMarkerForItsOwnRunID(t *testing.T) {
+	const (
+		mine = "conf-20261015T120000Z-abc123"
+		done = "conf-20261015T170000Z-ddd444"
+	)
+	mineName := "conf-20261015t120000z-abc123"
+	doneName := "conf-20261015t170000z-ddd444"
+	var mu sync.Mutex
+	buckets := map[string]bool{mineName: true, doneName: true}
+	volumes := map[string]string{"vol-mine": mine}
+	deleted := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete && r.URL.Path != "/" {
+			name := strings.Trim(r.URL.Path, "/")
+			mu.Lock()
+			delete(buckets, name)
+			deleted["bucket "+name] = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method == http.MethodGet {
+			mu.Lock()
+			body := listBucketsXML(buckets)
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = io.WriteString(w, body)
+			return
+		}
+		vals := ec2Form(r)
+		action := vals.Get("Action")
+		mu.Lock()
+		defer mu.Unlock()
+		switch action {
+		case "DeleteVolume":
+			id := vals.Get("VolumeId")
+			delete(volumes, id)
+			deleted["volume "+id] = true
+			writeEC2(w, 200, ec2OK("DeleteVolumeResponse", "<return>true</return>"))
+		case "DetachVolume":
+			writeEC2(w, 200, ec2OK("DetachVolumeResponse", "<volumeId>"+vals.Get("VolumeId")+"</volumeId>"))
+		default:
+			status, body := ownedDescribe(action, buckets, nil, volumes, nil)
+			writeEC2(w, status, body)
+		}
+	}))
+	defer srv.Close()
+	activity := t.TempDir()
+	t.Setenv("VWS_CONF_ACTIVITY_DIR", activity)
+	if err := os.WriteFile(filepath.Join(activity, mine), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(activity, done), []byte("0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt := runtimeAt(t, srv.URL, t.TempDir(), mine)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := rt.Sweep(ctx); err != nil {
+		t.Fatalf("sweep: %v deleted %v", err, deleted)
+	}
+	if deleted["volume vol-mine"] || deleted["bucket "+mineName] {
+		t.Fatalf("deleted the live run %v", deleted)
+	}
+	if !deleted["bucket "+doneName] {
+		t.Fatalf("kept a finished run %v", deleted)
+	}
+}
+
 func TestSweepUsesSharedActivity(t *testing.T) {
 	const (
 		mine     = "conf-20261015T120000Z-abc123"
