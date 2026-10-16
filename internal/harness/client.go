@@ -170,7 +170,6 @@ type Runtime struct {
 	netMu     sync.Mutex
 	netFlight *netFlight
 	net       netIDs
-	abandoned map[string]bool
 }
 
 func NewRuntime(cfg Config, cl *Clients) *Runtime {

@@ -436,28 +436,7 @@ func (rt *Runtime) collectInventory(ctx context.Context, rows []sweep.Resource, 
 		}
 		items = append(items, collectEC2(view, rows, ghosts, rt.keepRun)...)
 	}
-	return rt.withoutAbandoned(items), nil
-}
-
-func (rt *Runtime) withoutAbandoned(items []sweepItem) []sweepItem {
-	if len(rt.abandoned) == 0 {
-		return items
-	}
-	kept := make([]sweepItem, 0, len(items))
-	for _, item := range items {
-		if rt.abandoned[item.kind+" "+item.id] {
-			continue
-		}
-		kept = append(kept, item)
-	}
-	return kept
-}
-
-func (rt *Runtime) abandon(kind, id string) {
-	if rt.abandoned == nil {
-		rt.abandoned = map[string]bool{}
-	}
-	rt.abandoned[kind+" "+id] = true
+	return items, nil
 }
 
 func describeEC2(ctx context.Context, c *ec2.Client) (ec2View, error) {
@@ -692,41 +671,6 @@ func unsupportedAction(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "InvalidAction")
 }
 
-func detachUnavailable(err error) bool {
-	return unsupportedAction(err) || UnsupportedParameter(err)
-}
-
-func dropLedger(dir, kind, id string) error {
-	rows, err := readLedger(dir)
-	if err != nil {
-		return err
-	}
-	var b strings.Builder
-	for _, row := range rows {
-		if row.Kind == kind && row.ID == id {
-			continue
-		}
-		line, err := json.Marshal(row)
-		if err != nil {
-			return fmt.Errorf("ledger line: %w", err)
-		}
-		b.Write(line)
-		b.WriteByte('\n')
-	}
-	path := filepath.Join(dir, "ledger.jsonl")
-	if b.Len() == 0 {
-		err := os.Remove(path)
-		if err == nil || os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("ledger: %w", err)
-	}
-	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
-		return fmt.Errorf("ledger: %w", err)
-	}
-	return nil
-}
-
 func reportDry(items []sweepItem) error {
 	for _, item := range items {
 		fmt.Println("leftover", item.kind, item.id)
@@ -778,19 +722,12 @@ func deleteEC2(ctx context.Context, rt *Runtime, items []sweepItem) error {
 		var err error
 		switch item.kind {
 		case "volume":
-			_, detachErr := withDeadline(ctx, func(ctx context.Context) (*ec2.DetachVolumeOutput, error) {
+			_, _ = withDeadline(ctx, func(ctx context.Context) (*ec2.DetachVolumeOutput, error) {
 				return c.DetachVolume(ctx, &ec2.DetachVolumeInput{VolumeId: aws.String(item.id)})
 			})
 			_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteVolumeOutput, error) {
 				return c.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(item.id)})
 			})
-			if err != nil && strings.Contains(err.Error(), "IncorrectState") && detachUnavailable(detachErr) {
-				rt.abandon("volume", item.id)
-				if derr := dropLedger(rt.Cfg.OutDir, "volume", item.id); derr != nil {
-					return derr
-				}
-				continue
-			}
 			if err != nil && !strings.Contains(err.Error(), "NotFound") && !strings.Contains(err.Error(), "IncorrectState") {
 				return fmt.Errorf("delete volume %s: %w", item.id, err)
 			}
