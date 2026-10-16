@@ -720,12 +720,18 @@ func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool, keep func(stri
 	}
 	for _, k := range view.keys {
 		name := aws.ToString(k.KeyName)
+		if ownerOutsideKeep(k.Tags, []string{name}, keep) {
+			continue
+		}
 		if ownedName(name, keep) {
 			add(sweepItem{kind: "key-pair", id: name, owners: resourceOwners(k.Tags, nil, "", "", ledgerScope{}, name)})
 		}
 	}
 	for _, g := range view.groups {
 		name := aws.ToString(g.GroupName)
+		if ownerOutsideKeep(g.Tags, []string{name}, keep) {
+			continue
+		}
 		if ownedName(name, keep) {
 			add(sweepItem{
 				kind:   "security-group",
@@ -735,12 +741,15 @@ func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool, keep func(stri
 		}
 	}
 	for _, s := range view.subnets {
+		if ownerOutsideKeep(s.Tags, nil, keep) {
+			continue
+		}
 		if ownedTag(s.Tags, keep) {
 			add(sweepItem{kind: "subnet", id: aws.ToString(s.SubnetId), owners: tagOwners(s.Tags)})
 		}
 	}
 	for _, g := range view.gateways {
-		if !ownedTag(g.Tags, keep) {
+		if ownerOutsideKeep(g.Tags, nil, keep) || !ownedTag(g.Tags, keep) {
 			continue
 		}
 		var vpcs []string
@@ -757,6 +766,9 @@ func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool, keep func(stri
 		})
 	}
 	for _, v := range view.vpcs {
+		if ownerOutsideKeep(v.Tags, nil, keep) {
+			continue
+		}
 		if ownedTag(v.Tags, keep) {
 			add(sweepItem{kind: "vpc", id: aws.ToString(v.VpcId), owners: tagOwners(v.Tags)})
 		}
