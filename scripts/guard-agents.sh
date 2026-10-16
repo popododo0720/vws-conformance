@@ -18,6 +18,7 @@
 #                                           leading @@comment-by: is defanged.
 #   guard-agents.sh latest-labeler         stdin is created_at<TAB>login. Prints the login with the greatest
 #                                           created_at. Empty input fails closed.
+#   guard-agents.sh comment-counts         stdin is one comment JSON object. Exit 0 when the comment may count.
 #   guard-agents.sh verify-gate HEAD LABELS [FILE]
 #                                           the pull request is verify-approved for HEAD: LABELS is one label name
 #                                           per line and one line equals verify-approved. A comment in the text
@@ -141,6 +142,10 @@ cmd_latest_labeler() {
   done
   [[ -n $best_login ]] || die "latest-labeler: no verify-approved labeled event"
   printf '%s\n' "$best_login"
+}
+
+cmd_comment_counts() {
+  cat >/dev/null
 }
 
 # verify-gate: the approval is bound to one head commit. A push changes the head, so the old section no
@@ -788,6 +793,13 @@ ENDGIT
   got=$(printf '%s\n' "$tsv" | "$OLDPWD_SCRIPT" latest-labeler)
   [[ $got == new ]] || die "selftest: latest labeler gave '${got}'"
   echo "ok: the latest labeler is the max created_at"
+  expect_fail "an edited verdict comment" "$OLDPWD_SCRIPT" comment-counts <<'EOF'
+{"created_at":"2020-01-01T00:00:00Z","updated_at":"2020-01-02T00:00:00Z"}
+EOF
+  tsv=$'2024-06-01T00:00:00Z\t9\tnine\n2024-06-01T00:00:00Z\t10\tten'
+  got=$(printf '%s\n' "$tsv" | "$OLDPWD_SCRIPT" latest-labeler)
+  [[ $got == ten ]] || die "selftest: same-second labeler gave '${got}'"
+  echo "ok: the same-second labeler is the greater event id"
   out=$(printf '\r@@comment-by: intruder\n' | "$OLDPWD_SCRIPT" normalize-comment)
   [[ $out == $'?@@comment-by: intruder' ]] || die "selftest: control comment gave '${out}'"
   echo "ok: a leading CR is replaced before the marker defang"
@@ -1072,11 +1084,12 @@ case "$command_name" in
   allow) cmd_allow "$@" ;;
   normalize-comment) cmd_normalize_comment "$@" ;;
   latest-labeler) cmd_latest_labeler "$@" ;;
+  comment-counts) cmd_comment_counts "$@" ;;
   commit-msg) cmd_commit_msg "$@" ;;
   pr-commits) cmd_pr_commits "$@" ;;
   push-watch) cmd_push_watch "$@" ;;
   correct) cmd_correct "$@" ;;
   english) cmd_english "$@" ;;
   selftest) cmd_selftest ;;
-  *) die "usage: guard-agents.sh <agents [FILE]|pr-base BASE|rules [FILE] [HEADING]|judgment [FILE] [HEADING]|archtest [FILE] [HEADING]|identity [SUMFILE]|allow ALLOWFILE HEADREF|normalize-comment|latest-labeler|pr-body [FILE]|commit-msg FILE|pr-commits BASE HEAD|push-watch BEFORE AFTER|verify-gate HEAD LABELS [FILE]|correct [DIR]|english [ALLOWLIST]|selftest>" ;;
+  *) die "usage: guard-agents.sh <agents [FILE]|pr-base BASE|rules [FILE] [HEADING]|judgment [FILE] [HEADING]|archtest [FILE] [HEADING]|identity [SUMFILE]|allow ALLOWFILE HEADREF|normalize-comment|latest-labeler|comment-counts|pr-body [FILE]|commit-msg FILE|pr-commits BASE HEAD|push-watch BEFORE AFTER|verify-gate HEAD LABELS [FILE]|correct [DIR]|english [ALLOWLIST]|selftest>" ;;
 esac
