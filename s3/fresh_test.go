@@ -137,3 +137,55 @@ func TestDuplicateCreateSendsLocationConstraint(t *testing.T) {
 		t.Fatalf("second create uses us-east-1: %s", second)
 	}
 }
+
+func TestFirstCreateSendsLocationConstraint(t *testing.T) {
+	var mu sync.Mutex
+	var creates []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			panic(err)
+		}
+		w.Header().Set("Content-Type", "application/xml")
+		if r.Method == http.MethodPut && !strings.Contains(strings.Trim(r.URL.Path, "/"), "/") {
+			mu.Lock()
+			creates = append(creates, string(body))
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Method == http.MethodHead || r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusNotFound)
+			if _, err := io.WriteString(w, `<?xml version="1.0"?><Error><Code>NoSuchBucket</Code></Error>`); err != nil {
+				panic(err)
+			}
+			return
+		}
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer srv.Close()
+	cfg := harness.Config{
+		AccessKey: "AKIDEXAMPLE", Secret: "secret", Region: "vws-1",
+		S3Endpoint: srv.URL, AllowedHosts: []string{"127.0.0.1"},
+		AllowedAccounts: []string{"123456789012"},
+		Target:          "local-fake", RunID: "conf-20261015T120000Z-abc123",
+		OutDir: t.TempDir(), AccountID: "123456789012",
+	}
+	cl, err := harness.Load(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := harness.NewRuntime(cfg, cl)
+	if err := createFresh(context.Background(), rt, cl.S3, rt.Name("loc")); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(creates) == 0 || !strings.Contains(creates[0], "LocationConstraint") || !strings.Contains(creates[0], "vws-1") {
+		t.Fatalf("first create %q", creates)
+	}
+}

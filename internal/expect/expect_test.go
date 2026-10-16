@@ -18,6 +18,20 @@ func TestJudgeKeepsAWSCode(t *testing.T) {
 	}
 }
 
+func TestJudgeRejectsUndocumentedMessage(t *testing.T) {
+	exp := cases.Expect{HTTP: 400, Code: "InvalidVolume.NotFound"}
+	bad := cases.Outcome{HTTP: 400, Code: "InvalidVolume.NotFound", Message: "not found"}
+	status, reason := Judge(exp, bad)
+	if status == "pass" {
+		t.Fatalf("undocumented message passed: %s", reason)
+	}
+	good := cases.Outcome{HTTP: 400, Code: "InvalidVolume.NotFound", Message: "The volume 'vol-abc' does not exist."}
+	status, reason = Judge(exp, good)
+	if status != "pass" || reason != "" {
+		t.Fatalf("documented message status %s reason %q", status, reason)
+	}
+}
+
 func TestJudgePass(t *testing.T) {
 	exp := cases.Expect{HTTP: 200, Patterns: map[string]string{"id": `^i-[0-9a-f]{8,17}$`}}
 	got := cases.Outcome{HTTP: 200, Fields: map[string]string{"id": "i-0123456789abcdef0"}}
