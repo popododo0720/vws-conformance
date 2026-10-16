@@ -32,6 +32,10 @@ func TestSweepReportsVolumeThatStaysInUse(t *testing.T) {
 	var deletes atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		action := ec2Action(r)
+		if action == "DetachVolume" {
+			writeEC2(w, 200, ec2OK("DetachVolumeResponse", "<volumeId>vol-1</volumeId>"))
+			return
+		}
 		if action == "DeleteVolume" {
 			deletes.Add(1)
 			writeEC2(w, 400, ec2Err("IncorrectState", "volume is in use"))
