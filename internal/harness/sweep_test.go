@@ -85,6 +85,34 @@ func TestSweepDropsAVolumeWhenDetachIsMissing(t *testing.T) {
 	}
 }
 
+func TestSweepKeepsAnUndetachableVolume(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		action := ec2Action(r)
+		if action == "DetachVolume" {
+			writeEC2(w, 400, ec2Err("InvalidAction", "DetachVolume"))
+			return
+		}
+		if action == "DeleteVolume" {
+			writeEC2(w, 400, ec2Err("IncorrectState", "volume is in use"))
+			return
+		}
+		status, body := ec2Describe(action, true)
+		writeEC2(w, status, body)
+	}))
+	defer srv.Close()
+	rt := runtimeOn(t, srv.URL, "vol-1")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err := rt.Sweep(ctx)
+	if err == nil || !strings.Contains(err.Error(), "volume vol-1") {
+		t.Fatalf("sweep error %v", err)
+	}
+	ledger, readErr := os.ReadFile(filepath.Join(rt.Cfg.OutDir, "ledger.jsonl"))
+	if readErr != nil || !strings.Contains(string(ledger), "vol-1") || !strings.Contains(string(ledger), rt.Cfg.RunID) {
+		t.Fatalf("ledger %q err %v", ledger, readErr)
+	}
+}
+
 func TestSweepDetachesAnAttachedVolume(t *testing.T) {
 	var detached atomic.Bool
 	var deletes atomic.Int32
