@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -111,11 +112,24 @@ func runClaimChild() {
 			break
 		}
 	}
-	if err := ClaimRun(os.Getenv("CONF_CLAIM_ID")); err != nil {
+	id := os.Getenv("CONF_CLAIM_ID")
+	if err := ClaimRun(id); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	fmt.Println(os.Getpid())
+	pid := strconv.Itoa(os.Getpid())
+	dir := os.Getenv("VWS_CONF_ACTIVITY_DIR")
+	if err := os.WriteFile(filepath.Join(dir, "won-"+pid), []byte(pid+"\n"), 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	release := filepath.Join(dir, "claim-release")
+	for {
+		if _, err := os.Stat(release); err == nil {
+			break
+		}
+	}
+	fmt.Println(pid)
 	os.Exit(0)
 }
 
@@ -124,6 +138,11 @@ func assertOneClaim(t *testing.T, dir, id, seed string) {
 	path := filepath.Join(dir, id)
 	_ = os.Remove(path)
 	_ = os.Remove(filepath.Join(dir, "claim-go"))
+	_ = os.Remove(filepath.Join(dir, "claim-release"))
+	oldWins, _ := filepath.Glob(filepath.Join(dir, "won-*"))
+	for _, name := range oldWins {
+		_ = os.Remove(name)
+	}
 	switch seed {
 	case "":
 	case "empty":
@@ -183,14 +202,49 @@ func assertOneClaim(t *testing.T, dir, id, seed string) {
 	if err := os.WriteFile(filepath.Join(dir, "claim-go"), []byte("1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	var exited atomic.Int32
+	for i := range cmds {
+		go func(i int) {
+			_ = cmds[i].Wait()
+			exited.Add(1)
+		}(i)
+	}
+	deadline = time.Now().Add(15 * time.Second)
 	var winners []string
-	for i := 0; i < n; i++ {
-		if err := cmds[i].Wait(); err == nil {
-			winners = append(winners, strings.TrimSpace(outs[i].String()))
+	for time.Now().Before(deadline) {
+		winners = nil
+		matches, _ := filepath.Glob(filepath.Join(dir, "won-*"))
+		for _, name := range matches {
+			b, readErr := os.ReadFile(name)
+			if readErr == nil {
+				winners = append(winners, strings.TrimSpace(string(b)))
+			}
 		}
+		if len(winners)+int(exited.Load()) >= n {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 	body, err := os.ReadFile(path)
 	if len(winners) != 1 || err != nil || string(body) != winners[0]+"\n" {
-		t.Fatalf("seed %q winners %q marker %q read %v", seed, winners, body, err)
+		_ = os.WriteFile(filepath.Join(dir, "claim-release"), []byte("1\n"), 0o644)
+		var logs []string
+		for _, buf := range outs {
+			if s := strings.TrimSpace(buf.String()); s != "" {
+				logs = append(logs, s)
+			}
+		}
+		t.Fatalf("seed %q winners %q marker %q read %v logs %q", seed, winners, body, err, logs)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "claim-release"), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitDeadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(waitDeadline) {
+		if int(exited.Load()) == n {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("claim children did not exit")
 }
