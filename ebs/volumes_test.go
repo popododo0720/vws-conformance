@@ -5,8 +5,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -283,6 +285,107 @@ func TestMakeVolReturnsLedgerErrorAndKeepsCleanup(t *testing.T) {
 	}
 	if deletes.Load() != 1 {
 		t.Fatalf("deletes %d", deletes.Load())
+	}
+}
+
+func TestDeleteMissingVolumeLeavesThePlantedID(t *testing.T) {
+	const (
+		planted = "vol-0123456789abcdef0"
+		owned   = "vol-ownedgone0000001"
+		run     = "conf-20261016T090000Z-aabbcc"
+	)
+	var mu sync.Mutex
+	var deleted []string
+	gone := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, readErr := io.ReadAll(r.Body)
+		if readErr != nil {
+			panic(readErr)
+		}
+		vals, queryErr := url.ParseQuery(string(b))
+		if queryErr != nil {
+			panic(queryErr)
+		}
+		action := vals.Get("Action")
+		w.Header().Set("Content-Type", "text/xml")
+		const ns = `xmlns="http://ec2.amazonaws.com/doc/2016-11-15/"`
+		notFound := func() {
+			w.WriteHeader(http.StatusBadRequest)
+			if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+				`<Response><Errors><Error><Code>InvalidVolume.NotFound</Code>`+
+				`<Message>volume is gone</Message></Error></Errors><RequestID>r</RequestID></Response>`); writeErr != nil {
+				panic(writeErr)
+			}
+		}
+		switch action {
+		case "CreateVolume":
+			if _, writeErr := io.WriteString(w, strings.Replace(volumeXML("available"), "vol-1", owned, 1)); writeErr != nil {
+				panic(writeErr)
+			}
+		case "DescribeVolumes":
+			id := vals.Get("VolumeId.1")
+			mu.Lock()
+			missing := gone[id]
+			mu.Unlock()
+			if id == "" || missing {
+				notFound()
+				return
+			}
+			if _, writeErr := io.WriteString(w, strings.Replace(describeVolumeXML("available"), "vol-1", id, 1)); writeErr != nil {
+				panic(writeErr)
+			}
+		case "DeleteVolume":
+			id := vals.Get("VolumeId")
+			mu.Lock()
+			deleted = append(deleted, id)
+			already := gone[id]
+			gone[id] = true
+			mu.Unlock()
+			if already {
+				notFound()
+				return
+			}
+			if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+				`<DeleteVolumeResponse `+ns+`><requestId>r</requestId><return>true</return></DeleteVolumeResponse>`); writeErr != nil {
+				panic(writeErr)
+			}
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+			if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+				`<Response><Errors><Error><Code>InvalidAction</Code><Message>`+action+
+				`</Message></Error></Errors><RequestID>r</RequestID></Response>`); writeErr != nil {
+				panic(writeErr)
+			}
+		}
+	}))
+	defer srv.Close()
+	cfg := harness.Config{
+		AccessKey: "AKIDEXAMPLE", Secret: "secret", Region: "vws-1",
+		EC2Endpoint: srv.URL, AllowedHosts: []string{"127.0.0.1"},
+		AllowedAccounts: []string{"123456789012"},
+		Target:          "local-fake", RunID: run, OutDir: t.TempDir(), AccountID: "123456789012",
+	}
+	cl, err := harness.Load(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := harness.NewRuntime(cfg, cl)
+	var spec cases.Case
+	for _, c := range Volumes().Cases {
+		if c.ID == "EBS-VOL-101" {
+			spec = c
+		}
+	}
+	got, err := runVol(context.Background(), rt, spec)
+	mu.Lock()
+	defer mu.Unlock()
+	for _, id := range deleted {
+		if id == planted {
+			t.Fatalf("deleted planted %s outcome http %d code %q err %v", planted, got.HTTP, got.Code, err)
+		}
+	}
+	if err != nil || got.HTTP != 400 || got.Code != "InvalidVolume.NotFound" {
+		t.Fatalf("http %d code %q err %v deleted %v", got.HTTP, got.Code, err, deleted)
 	}
 }
 
