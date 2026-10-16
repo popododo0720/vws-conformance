@@ -84,14 +84,12 @@ jobs:
           : >"$text"
           while IFS= read -r row; do
             [[ -n $row ]] || continue
-            if ! printf '%s\n' "$row" | scripts/guard-agents.sh comment-counts >/dev/null; then
-              continue
-            fi
             login=$(jq -r '.login' <<<"$row")
             body=$(jq -r '.body // ""' <<<"$row")
             norm=$(printf '%s' "$body" | scripts/guard-agents.sh normalize-comment)
             printf '@@comment-by: %s\n%s\n' "$login" "$norm" >>"$text"
           done <"$comments"
+          scripts/guard-agents.sh comment-trust "$HEAD_SHA" <"$comments"
           GUARD_VERIFY_LABELER=$(gh api --paginate "repos/${REPO}/issues/${NUMBER}/events" \
             --jq '.[] | select(.event == "labeled" and .label.name == "verify-approved") | [.created_at, (.id | tostring), .actor.login] | @tsv' \
             | scripts/guard-agents.sh latest-labeler)

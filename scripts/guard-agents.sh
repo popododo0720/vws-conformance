@@ -161,10 +161,8 @@ cmd_latest_labeler() {
   printf '%s\n' "$best_login"
 }
 
-cmd_comment_counts() {
-  local obj
-  obj=$(cat)
-  if ! jq -e '
+comment_unedited() {
+  jq -e '
     (.created_at | type) == "string" and
     (.updated_at | type) == "string" and
     .created_at == .updated_at and
@@ -172,14 +170,43 @@ cmd_comment_counts() {
     ((.userContentEdits.nodes // []) | length) == 0 and
     ((.userContentEdits.totalCount // 0) == 0) and
     ((.user_content_edits // []) | length) == 0
-  ' <<<"$obj" >/dev/null; then
+  ' <<<"$1" >/dev/null
+}
+
+cmd_comment_counts() {
+  local obj
+  obj=$(cat)
+  comment_unedited "$obj" || {
     echo "comment-counts: edited comment does not count" >&2
     return 1
+  }
+}
+
+comment_watched() {
+  local head=$1 login=$2 body=$3 actors=$4
+  if [[ -n $login && ",${actors}," == *",${login},"* ]]; then
+    return 0
   fi
+  grep -q -E "^[[:space:]]*(- )?Head:[[:space:]]*${head}[[:space:]]*$" <<<"$body" || return 1
+  grep -q -E 'Verified-by:[[:space:]]*vws-verify|^[[:space:]]*(- )?Result:' <<<"$body"
 }
 
 cmd_comment_trust() {
-  cat >/dev/null
+  local head=${1:-} line login body created actors
+  [[ $head =~ ^[0-9a-f]{40}$ ]] || die "comment-trust: needs the full head commit SHA"
+  actors=${GUARD_VERIFY_ACTORS:-}
+  while IFS= read -r line || [[ -n ${line:-} ]]; do
+    [[ -n $line ]] || continue
+    if comment_unedited "$line"; then
+      continue
+    fi
+    login=$(jq -r '.login // empty' <<<"$line")
+    body=$(jq -r '.body // empty' <<<"$line")
+    created=$(jq -r '.created_at // "unknown"' <<<"$line")
+    if comment_watched "$head" "$login" "$body" "$actors"; then
+      die "verify-gate: edited comment by '${login:-unknown}' at ${created}; delete it and post a new verdict"
+    fi
+  done
 }
 
 # verify-gate: the approval is bound to one head commit. A push changes the head, so the old section no
@@ -851,11 +878,11 @@ EOF
 ${older_pass}
 ${newer_fail}
 EOF
-  trust_msg=$(env GUARD_VERIFY_ACTORS=verifier "$OLDPWD_SCRIPT" comment-trust "$h1" <<EOF
+  trust_msg=$(env GUARD_VERIFY_ACTORS=verifier "$OLDPWD_SCRIPT" comment-trust "$h1" <<EOF 2>&1 >/dev/null || true
 ${older_pass}
 ${newer_fail}
 EOF
-2>&1 >/dev/null || true)
+)
   [[ $trust_msg == *"edited comment by 'verifier' at 2020-01-02T00:00:00Z"* ]] ||
     die "selftest: edited newer FAIL gave '${trust_msg}'"
   echo "ok: an edited newer FAIL names that comment"
@@ -866,11 +893,11 @@ EOF
 ${older_note}
 ${newer_pass}
 EOF
-  trust_msg=$(env GUARD_VERIFY_ACTORS=verifier "$OLDPWD_SCRIPT" comment-trust "$h1" <<EOF
+  trust_msg=$(env GUARD_VERIFY_ACTORS=verifier "$OLDPWD_SCRIPT" comment-trust "$h1" <<EOF 2>&1 >/dev/null || true
 ${older_note}
 ${newer_pass}
 EOF
-2>&1 >/dev/null || true)
+)
   [[ $trust_msg == *"edited comment by 'verifier' at 2020-01-01T00:00:00Z"* ]] ||
     die "selftest: edited older comment gave '${trust_msg}'"
   echo "ok: an edited older comment is named"
@@ -881,6 +908,21 @@ ${older_pass}
 ${stranger}
 ${newer_pass}
 EOF
+  grep -F -q 'scripts/guard-agents.sh comment-trust' .github/workflows/repo-guard.yml ||
+    die "selftest: repo-guard.yml does not run comment-trust"
+  if grep -F -q 'comment-counts' .github/workflows/repo-guard.yml; then
+    die "selftest: repo-guard.yml still drops comments with comment-counts"
+  fi
+  echo "ok: the workflow keeps every comment and runs comment-trust"
+  forged=$(jq -nc --arg body "$fail_body" '{login:"stranger",body:$body,created_at:"2020-01-08T00:00:00Z",updated_at:"2020-01-09T00:00:00Z"}')
+  expect_fail "an edited verdict by someone who is not a verifier" \
+    env GUARD_VERIFY_ACTORS=verifier "$OLDPWD_SCRIPT" comment-trust "$h1" <<EOF
+${older_pass}
+${forged}
+EOF
+  bare=$(jq -nc '{login:"verifier",body:"note",created_at:"2020-01-01T00:00:00Z"}')
+  expect_fail "a verifier comment missing updated_at" \
+    env GUARD_VERIFY_ACTORS=verifier "$OLDPWD_SCRIPT" comment-trust "$h1" <<<"$bare"
   tsv=$'2024-06-01T00:00:00Z\t9\tnine\n2024-06-01T00:00:00Z\t10\tten'
   got=$(printf '%s\n' "$tsv" | "$OLDPWD_SCRIPT" latest-labeler)
   [[ $got == ten ]] || die "selftest: same-second labeler gave '${got}'"
@@ -909,6 +951,13 @@ EOF
   expect_pass "the workflow filter on an unedited comment" "$OLDPWD_SCRIPT" comment-counts <<<"$fresh_row"
   hist_row=$(printf '%s\n' '[{"user":{"login":"verifier"},"body":"Result: PASS","created_at":"2020-01-01T00:00:00Z","updated_at":"2020-01-01T00:00:00Z","edits":[{}]}]' | jq -r "$comment_jq")
   expect_fail "the workflow filter on an edit list" "$OLDPWD_SCRIPT" comment-counts <<<"$hist_row"
+  history_page=$(jq -n --arg head "$h1" --arg pass "$pass_body" --arg fail "$fail_body" '[
+    {user:{login:"verifier"}, body:$pass, created_at:"2020-01-01T00:00:00Z", updated_at:"2020-01-01T00:00:00Z"},
+    {user:{login:"verifier"}, body:$fail, created_at:"2020-01-02T00:00:00Z", updated_at:"2020-01-03T00:00:00Z"}
+  ]')
+  history_rows=$(printf '%s\n' "$history_page" | jq -r "$comment_jq")
+  expect_fail "the workflow history of an edited newer FAIL" \
+    env GUARD_VERIFY_ACTORS=verifier "$OLDPWD_SCRIPT" comment-trust "$h1" <<<"$history_rows"
   events='[{"event":"labeled","label":{"name":"verify-approved"},"created_at":"2024-06-01T00:00:00Z","id":9,"actor":{"login":"nine"}},{"event":"labeled","label":{"name":"verify-approved"},"created_at":"2024-06-01T00:00:00Z","id":10,"actor":{"login":"ten"}}]'
   got=$(printf '%s\n' "$events" | jq -r "$label_jq" | "$OLDPWD_SCRIPT" latest-labeler)
   [[ $got == ten ]] || die "selftest: workflow labeler gave '${got}'"
