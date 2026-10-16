@@ -223,11 +223,11 @@ func (rt *Runtime) clearOwned(ctx context.Context, rows []sweep.Resource) error 
 	for {
 		targets, err := rt.inventory(ctx, rows)
 		if err != nil {
-			return sweepGiveUp(ctx, last, err)
+			return rt.sweepGiveUp(ctx, last, rows, err)
 		}
 		live, err := rt.liveInventory(ctx, rows)
 		if err != nil {
-			return sweepGiveUp(ctx, last, err)
+			return rt.sweepGiveUp(ctx, last, rows, err)
 		}
 		if len(live) == 0 {
 			if len(targets) == 0 {
@@ -237,23 +237,66 @@ func (rt *Runtime) clearOwned(ctx context.Context, rows []sweep.Resource) error 
 		}
 		last = live
 		if err := rt.deleteItems(ctx, targets); err != nil {
-			return sweepGiveUp(ctx, last, err)
+			return rt.sweepGiveUp(ctx, last, rows, err)
 		}
 		timer := time.NewTimer(sweepPause)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return leftoverError(last)
+			return rt.leftover(last, rows)
 		case <-timer.C:
 		}
 	}
 }
 
-func sweepGiveUp(ctx context.Context, last []sweepItem, err error) error {
+func (rt *Runtime) sweepGiveUp(ctx context.Context, last []sweepItem, rows []sweep.Resource, err error) error {
 	if len(last) > 0 && ctx.Err() != nil {
-		return leftoverError(last)
+		return rt.leftover(last, rows)
 	}
 	return err
+}
+
+// ForeignLeftover is a sweep that still sees resources owned by a finished run
+// other than the caller. The caller's own leftovers stay a plain error.
+type ForeignLeftover struct {
+	msg string
+}
+
+func (e *ForeignLeftover) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.msg
+}
+
+func (rt *Runtime) leftover(items []sweepItem, rows []sweep.Resource) error {
+	base := leftoverError(items)
+	if foreignOnly(items, rows, rt.Cfg.RunID) {
+		return &ForeignLeftover{msg: base.Error()}
+	}
+	return base
+}
+
+func foreignOnly(items []sweepItem, rows []sweep.Resource, current string) bool {
+	if len(items) == 0 {
+		return false
+	}
+	for _, item := range items {
+		matched := false
+		for _, row := range rows {
+			if row.Kind != item.kind || row.ID != item.id {
+				continue
+			}
+			matched = true
+			if row.LedgerRunID == current {
+				return false
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
 }
 
 func leftoverError(items []sweepItem) error {

@@ -115,9 +115,10 @@ func loadConfig() (harness.Config, error) {
 }
 
 var gate struct {
-	once sync.Once
-	rt   *harness.Runtime
-	err  error
+	once    sync.Once
+	rt      *harness.Runtime
+	err     error
+	foreign error
 }
 
 var minted struct {
@@ -165,8 +166,13 @@ func runtime(ctx context.Context, cfg harness.Config) (*harness.Runtime, error) 
 			return
 		}
 		if err := rt.Sweep(ctx); err != nil {
-			gate.err = fmt.Errorf("pre-run sweep: %w", err)
-			return
+			var foreign *harness.ForeignLeftover
+			if errors.As(err, &foreign) {
+				gate.foreign = err
+			} else {
+				gate.err = fmt.Errorf("pre-run sweep: %w", err)
+				return
+			}
 		}
 		harness.SetProcessCleanup(func() error {
 			cctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -254,6 +260,9 @@ func runGroups(ctx context.Context, cfg harness.Config, onlyService, onlyGroup s
 		return rep, err
 	}
 	publishReport(rep, cfg, file)
+	if gate.foreign != nil {
+		_ = noteCleanup(gate.foreign)
+	}
 	return rep, nil
 }
 

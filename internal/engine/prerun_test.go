@@ -89,6 +89,7 @@ func resetGate(t *testing.T) {
 	gate.once = sync.Once{}
 	gate.rt = nil
 	gate.err = nil
+	gate.foreign = nil
 	published.mu.Lock()
 	published.rep = nil
 	published.cfg = harness.Config{}
@@ -99,6 +100,7 @@ func resetGate(t *testing.T) {
 		gate.once = sync.Once{}
 		gate.rt = nil
 		gate.err = nil
+		gate.foreign = nil
 		harness.SetProcessCleanup(nil)
 	})
 }
