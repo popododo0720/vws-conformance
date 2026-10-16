@@ -860,6 +860,32 @@ GH
   expect_fail "required steps that survive only as comments" \
     env GUARD_WORKFLOW_FILE="$tmp/commented.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
     "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  # continue-on-error and if are workflow keys. Text inside a run script is not a key.
+  cp .github/workflows/repo-guard.yml "$tmp/coe.yml"
+  sed -i '/- name: Approved for this head/a\        continue-on-error: true' "$tmp/coe.yml"
+  expect_fail "continue-on-error on Approved for this head" \
+    env GUARD_WORKFLOW_FILE="$tmp/coe.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  cp .github/workflows/repo-guard.yml "$tmp/iffalse.yml"
+  sed -i '/- name: Approved for this head/a\        if: false' "$tmp/iffalse.yml"
+  expect_fail "if: false on Approved for this head" \
+    env GUARD_WORKFLOW_FILE="$tmp/iffalse.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  awk '/^  verify-gate:$/ { print; print "    continue-on-error: true"; next } { print }' \
+    .github/workflows/repo-guard.yml >"$tmp/jobcoe.yml"
+  expect_fail "continue-on-error on the verify-gate job" \
+    env GUARD_WORKFLOW_FILE="$tmp/jobcoe.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  awk '/^  verify-gate:$/ { print; print "    if: false"; next } { print }' \
+    .github/workflows/repo-guard.yml >"$tmp/jobif.yml"
+  expect_fail "if: false on the verify-gate job" \
+    env GUARD_WORKFLOW_FILE="$tmp/jobif.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
+  cp .github/workflows/repo-guard.yml "$tmp/headload.yml"
+  printf '\n          git show "${HEAD_SHA}:scripts/guard-agents.sh"\n' >>"$tmp/headload.yml"
+  expect_fail "the workflow loads the guard script from the PR head" \
+    env GUARD_WORKFLOW_FILE="$tmp/headload.yml" GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL" "$ev"
   # The job's bootstrap block is the only copy of the sha256 fallback. Run that block.
   local brepo="$tmp/brepo" bbase="$tmp/bbase" bhead block out got
   block=$(awk '/# bootstrap-guard-start/ { on = 1; next } /# bootstrap-guard-end/ { on = 0 } on { sub(/^[[:space:]]*/, ""); print }' \
@@ -882,12 +908,7 @@ GH
   git -C "$bbase" init -q -b "$MAIN"
   git -C "$bbase" remote add origin "$brepo"
   git -C "$bbase" fetch -q --depth=1 origin "$bhead"
-  out=$(run_boot "$bbase" "$bhead" "$block")
-  got=$(sha256sum "$out" | cut -d' ' -f1)
-  [[ $got == $(cut -d' ' -f1 "$brepo/scripts/guard-agents.sh.sha256") && $(cat "$out") == $'#!/bin/sh\necho head-copy' ]] ||
-    die "selftest: matching head copy was not used"
-  rm -rf "$(dirname "$out")"
-  echo "ok: a head copy whose sha256 matches"
+  expect_fail "a head copy whose sha256 matches is still untrusted" run_boot "$bbase" "$bhead" "$block"
   echo 'echo edited' >>"$brepo/scripts/guard-agents.sh"
   git -C "$brepo" add scripts/guard-agents.sh
   git -C "$brepo" commit -q -m edited
@@ -896,6 +917,8 @@ GH
   expect_fail "a head copy whose sha256 does not match" run_boot "$bbase" "$bhead" "$block"
   mkdir -p "$bbase/scripts"
   printf '#!/bin/sh\necho base-copy\n' >"$bbase/scripts/guard-agents.sh"
+  expect_fail "a base script without its digest" run_boot "$bbase" "$bhead" "$block"
+  (cd "$bbase" && sha256sum scripts/guard-agents.sh >scripts/guard-agents.sh.sha256)
   out=$(run_boot "$bbase" "$bhead" "$block")
   [[ $out == scripts/guard-agents.sh && $(cat "$bbase/$out") == $'#!/bin/sh\necho base-copy' ]] ||
     die "selftest: the base script was not used"
