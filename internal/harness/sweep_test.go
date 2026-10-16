@@ -85,6 +85,80 @@ func TestSweepKeepsAnUndetachableVolume(t *testing.T) {
 	}
 }
 
+func TestSweepLeavesLiveForeignAndOtherTargetVolumes(t *testing.T) {
+	const (
+		current = "conf-20261015T120000Z-abc123"
+		active  = "conf-20261015T130000Z-def456"
+	)
+	activity := t.TempDir()
+	t.Setenv("VWS_CONF_ACTIVITY_DIR", activity)
+	if err := os.WriteFile(filepath.Join(activity, active), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	volumes := map[string]string{
+		"vol-foreign": active,
+		"vol-reused":  "",
+		"vol-mine":    "",
+	}
+	deleted := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/xml")
+			if _, writeErr := io.WriteString(w, listBucketsXML(nil)); writeErr != nil {
+				panic(writeErr)
+			}
+			return
+		}
+		vals := ec2Form(r)
+		mu.Lock()
+		defer mu.Unlock()
+		switch vals.Get("Action") {
+		case "DeleteVolume":
+			id := vals.Get("VolumeId")
+			delete(volumes, id)
+			deleted["volume "+id] = true
+			writeEC2(w, 200, ec2OK("DeleteVolumeResponse", "<return>true</return>"))
+		case "DetachVolume":
+			writeEC2(w, 200, ec2OK("DetachVolumeResponse", "<volumeId>"+vals.Get("VolumeId")+"</volumeId>"))
+		default:
+			status, body := ownedDescribe(vals.Get("Action"), nil, nil, volumes, nil)
+			writeEC2(w, status, body)
+		}
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	var lines []string
+	for _, row := range []sweep.Resource{
+		{Kind: "volume", ID: "vol-foreign", LedgerRunID: current, Target: "local-fake"},
+		{Kind: "volume", ID: "vol-reused", LedgerRunID: current, Target: "vws-test", Account: "999999999999"},
+		{Kind: "volume", ID: "vol-mine", LedgerRunID: current, Target: "local-fake"},
+	} {
+		b, err := json.Marshal(row)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines = append(lines, string(b))
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ledger.jsonl"), []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt := runtimeAt(t, srv.URL, dir, current)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := rt.Sweep(ctx); err != nil {
+		t.Fatalf("sweep: %v deleted %v", err, deleted)
+	}
+	if !deleted["volume vol-mine"] {
+		t.Fatal("in-scope untagged volume was kept")
+	}
+	for _, id := range []string{"volume vol-foreign", "volume vol-reused"} {
+		if deleted[id] {
+			t.Fatalf("deleted %s", id)
+		}
+	}
+}
+
 func TestSweepDetachesAnAttachedVolume(t *testing.T) {
 	var detached atomic.Bool
 	var deletes atomic.Int32

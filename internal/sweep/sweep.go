@@ -10,6 +10,8 @@ type Resource struct {
 	Path        string
 	Description string
 	LedgerRunID string
+	Target      string
+	Account     string
 }
 
 func CarriesPrefix(r Resource) bool {
