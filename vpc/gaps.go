@@ -38,7 +38,20 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	if err != nil {
 		return cases.Outcome{}, err
 	}
-	gid := aws.String("sg-0123456789abcdef0")
+	var gid *string
+	switch c.ID {
+	case "VPC-GAP-001", "VPC-GAP-002", "VPC-GAP-003":
+		cidr := map[string]string{
+			"VPC-GAP-001": "10.26.0.0/16",
+			"VPC-GAP-002": "10.27.0.0/16",
+			"VPC-GAP-003": "10.28.0.0/16",
+		}[c.ID]
+		id, err := goneGroup(ctx, rt, api, cidr, rt.Name(strings.ToLower(c.ID)))
+		if err != nil {
+			return cases.Outcome{}, err
+		}
+		gid = aws.String(id)
+	}
 	switch c.ID {
 	case "VPC-GAP-001":
 		{

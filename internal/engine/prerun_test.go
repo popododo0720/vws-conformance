@@ -170,7 +170,8 @@ func accountSweepServer(deletes *atomic.Int32) http.HandlerFunc {
 			deletes.Add(1)
 			gone.Store(true)
 			if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
-				`<DeleteVolumeResponse `+ns+`><requestId>r</requestId><return>true</return></DeleteVolumeResponse>`); writeErr != nil {
+				`<DeleteVolumeResponse `+ns+`><requestId>r</requestId>`+
+				`<return>true</return></DeleteVolumeResponse>`); writeErr != nil {
 				panic(writeErr)
 			}
 			return

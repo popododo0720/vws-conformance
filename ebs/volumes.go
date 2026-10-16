@@ -164,7 +164,17 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 			return callOut, wrapErr("runVol", callErr)
 		}
 	case "EBS-VOL-101", "EBS-VOL-104", "EBS-VOL-105", "EBS-VOL-106", "EBS-VOL-107":
-		id := "vol-0123456789abcdef0"
+		id, err := goneVol(ctx, rt, api, "missing")
+		if err != nil {
+			return cases.Outcome{}, err
+		}
+		inst := ""
+		if c.ID == "EBS-VOL-105" {
+			inst, err = ownedInstance(ctx, rt, api, "vol105")
+			if err != nil {
+				return cases.Outcome{}, err
+			}
+		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
 				var err error
@@ -174,7 +184,7 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 				case "EBS-VOL-105":
 					_, err = api.AttachVolume(ctx, &awsec2.AttachVolumeInput{
 						VolumeId:   aws.String(id),
-						InstanceId: aws.String("i-0123456789abcdef0"), Device: aws.String("/dev/sdf"),
+						InstanceId: aws.String(inst), Device: aws.String("/dev/sdf"),
 					})
 				case "EBS-VOL-106":
 					_, err = api.ModifyVolume(ctx, &awsec2.ModifyVolumeInput{VolumeId: aws.String(id), Size: aws.Int32(2)})
@@ -320,6 +330,44 @@ func waitAvailable(ctx context.Context, api *awsec2.Client, id string) error {
 		case <-tick.C:
 		}
 	}
+}
+
+func goneVol(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, token string) (string, error) {
+	id, err := makeVol(ctx, rt, api, token)
+	if err != nil {
+		return "", err
+	}
+	if _, err := api.DeleteVolume(ctx, &awsec2.DeleteVolumeInput{VolumeId: aws.String(id)}); err != nil {
+		return "", fmt.Errorf("delete volume %s: %w", id, err)
+	}
+	return id, nil
+}
+
+func ownedInstance(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, token string) (string, error) {
+	_, subnet, err := rt.EnsureNet(ctx)
+	if err != nil {
+		return "", wrapErr("ownedInstance", err)
+	}
+	run, err := api.RunInstances(ctx, &awsec2.RunInstancesInput{
+		ImageId: aws.String("ami-0123456789abcdef0"), InstanceType: types.InstanceType(harness.InstanceType),
+		MinCount: aws.Int32(1), MaxCount: aws.Int32(1), SubnetId: aws.String(subnet),
+		ClientToken: aws.String(rt.Token(token)), TagSpecifications: rt.TagSpec(types.ResourceTypeInstance),
+	})
+	if err != nil {
+		return "", fmt.Errorf("run: %w", err)
+	}
+	inst := aws.ToString(run.Instances[0].InstanceId)
+	if err := rt.Track("instance", inst, rt.Name(token)); err != nil {
+		return "", wrapErr("ownedInstance", err)
+	}
+	rt.Cleanup(func(ctx context.Context) error {
+		_, err := api.TerminateInstances(ctx, &awsec2.TerminateInstancesInput{InstanceIds: []string{inst}})
+		return harness.IgnoreCleanup(err)
+	})
+	if _, err := api.DescribeInstances(ctx, &awsec2.DescribeInstancesInput{InstanceIds: []string{inst}}); err != nil {
+		return "", fmt.Errorf("describe instance: %w", err)
+	}
+	return inst, nil
 }
 
 func trackVol(rt *harness.Runtime, api *awsec2.Client, id string) error {

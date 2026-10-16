@@ -331,7 +331,8 @@ func TestDeleteMissingVolumeLeavesThePlantedID(t *testing.T) {
 				notFound()
 				return
 			}
-			if _, writeErr := io.WriteString(w, strings.Replace(describeVolumeXML("available"), "vol-1", id, 1)); writeErr != nil {
+			body := strings.Replace(describeVolumeXML("available"), "vol-1", id, 1)
+			if _, writeErr := io.WriteString(w, body); writeErr != nil {
 				panic(writeErr)
 			}
 		case "DeleteVolume":
@@ -346,7 +347,8 @@ func TestDeleteMissingVolumeLeavesThePlantedID(t *testing.T) {
 				return
 			}
 			if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
-				`<DeleteVolumeResponse `+ns+`><requestId>r</requestId><return>true</return></DeleteVolumeResponse>`); writeErr != nil {
+				`<DeleteVolumeResponse `+ns+`><requestId>r</requestId>`+
+				`<return>true</return></DeleteVolumeResponse>`); writeErr != nil {
 				panic(writeErr)
 			}
 		default:

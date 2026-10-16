@@ -60,13 +60,21 @@ func runSubs(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		return cases.Outcome{}, err
 	}
 	if c.ID == "VPC-SUB-102" || c.ID == "VPC-SUB-103" {
+		cidr, sub := "10.22.0.0/16", "10.22.1.0/24"
+		if c.ID == "VPC-SUB-103" {
+			cidr, sub = "10.23.0.0/16", "10.23.1.0/24"
+		}
+		id, err := goneSubnet(ctx, rt, api, cidr, sub, "submiss")
+		if err != nil {
+			return cases.Outcome{}, err
+		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
 				var err error
 				if c.ID == "VPC-SUB-103" {
-					_, err = api.DescribeSubnets(ctx, &awsec2.DescribeSubnetsInput{SubnetIds: []string{"subnet-0123456789abcdef0"}})
+					_, err = api.DescribeSubnets(ctx, &awsec2.DescribeSubnetsInput{SubnetIds: []string{id}})
 				} else {
-					_, err = api.DeleteSubnet(ctx, &awsec2.DeleteSubnetInput{SubnetId: aws.String("subnet-0123456789abcdef0")})
+					_, err = api.DeleteSubnet(ctx, &awsec2.DeleteSubnetInput{SubnetId: aws.String(id)})
 				}
 				return wrapErr("runSubs", err)
 			})
@@ -147,6 +155,23 @@ func subnetInput(rt *harness.Runtime, vpcID, cidr string) *awsec2.CreateSubnetIn
 		AvailabilityZone:  aws.String("vws-1a"),
 		TagSpecifications: rt.TagSpec(types.ResourceTypeSubnet),
 	}
+}
+
+func goneSubnet(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, cidr, sub, token string) (string,
+	error,
+) {
+	vpcID, err := makeVpc(ctx, rt, api, cidr, token+"vpc")
+	if err != nil {
+		return "", err
+	}
+	id, err := createSubnet(ctx, rt, api, vpcID, sub, token)
+	if err != nil {
+		return "", err
+	}
+	if _, err := api.DeleteSubnet(ctx, &awsec2.DeleteSubnetInput{SubnetId: aws.String(id)}); err != nil {
+		return "", fmt.Errorf("delete subnet %s: %w", id, err)
+	}
+	return id, nil
 }
 
 func createSubnet(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, vpcID, cidr, token string) (string,

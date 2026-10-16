@@ -65,15 +65,21 @@ func runSG(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcom
 		return cases.Outcome{}, err
 	}
 	if c.ID == "VPC-SG-102" || c.ID == "VPC-SG-104" {
+		cidr := "10.24.0.0/16"
+		if c.ID == "VPC-SG-104" {
+			cidr = "10.25.0.0/16"
+		}
+		id, err := goneGroup(ctx, rt, api, cidr, rt.Name(strings.ToLower(c.ID)))
+		if err != nil {
+			return cases.Outcome{}, err
+		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
 				var err error
 				if c.ID == "VPC-SG-104" {
-					_, err = api.DescribeSecurityGroups(ctx,
-						&awsec2.DescribeSecurityGroupsInput{GroupIds: []string{"sg-0123456789abcdef0"}})
+					_, err = api.DescribeSecurityGroups(ctx, &awsec2.DescribeSecurityGroupsInput{GroupIds: []string{id}})
 				} else {
-					_, err = api.DeleteSecurityGroup(ctx,
-						&awsec2.DeleteSecurityGroupInput{GroupId: aws.String("sg-0123456789abcdef0")})
+					_, err = api.DeleteSecurityGroup(ctx, &awsec2.DeleteSecurityGroupInput{GroupId: aws.String(id)})
 				}
 				return wrapErr("runSG", err)
 			})
@@ -174,6 +180,21 @@ func runSG(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcom
 	default:
 		return cases.Outcome{}, fmt.Errorf("no runner for %s", c.ID)
 	}
+}
+
+func goneGroup(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, cidr, name string) (string, error) {
+	vpcID, err := makeVpc(ctx, rt, api, cidr, "sgmiss")
+	if err != nil {
+		return "", err
+	}
+	id, err := makeSG(ctx, rt, api, vpcID, name)
+	if err != nil {
+		return "", err
+	}
+	if _, err := api.DeleteSecurityGroup(ctx, &awsec2.DeleteSecurityGroupInput{GroupId: aws.String(id)}); err != nil {
+		return "", fmt.Errorf("delete security group %s: %w", id, err)
+	}
+	return id, nil
 }
 
 func makeSG(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, vpcID, name string) (string, error) {

@@ -115,10 +115,13 @@ func runAddr(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 			return callOut, wrapErr("runAddr", callErr)
 		}
 	case "EC2-EIP-101":
+		id, err := goneAlloc(ctx, rt, api)
+		if err != nil {
+			return cases.Outcome{}, err
+		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.ReleaseAddress(ctx,
-					&awsec2.ReleaseAddressInput{AllocationId: aws.String("eipalloc-0123456789abcdef0")})
+				_, err := api.ReleaseAddress(ctx, &awsec2.ReleaseAddressInput{AllocationId: aws.String(id)})
 				return wrapErr("runAddr", err)
 			})
 			return callOut, wrapErr("runAddr", callErr)
@@ -133,22 +136,36 @@ func runAddr(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 			return callOut, wrapErr("runAddr", callErr)
 		}
 	case "EC2-EIP-103":
+		id, err := goneAlloc(ctx, rt, api)
+		if err != nil {
+			return cases.Outcome{}, err
+		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.DescribeAddresses(ctx,
-					&awsec2.DescribeAddressesInput{AllocationIds: []string{"eipalloc-0123456789abcdef0"}})
+				_, err := api.DescribeAddresses(ctx, &awsec2.DescribeAddressesInput{AllocationIds: []string{id}})
 				return wrapErr("runAddr", err)
 			})
 			return callOut, wrapErr("runAddr", callErr)
 		}
 	case "EC2-EIP-104":
+		id, err := goneAlloc(ctx, rt, api)
+		if err != nil {
+			return cases.Outcome{}, err
+		}
+		_, subnet, err := rt.EnsureNet(ctx)
+		if err != nil {
+			return cases.Outcome{}, wrapErr("runAddr", err)
+		}
+		inst, err := launch(ctx, rt, api, subnet, rt.Token("eip104"))
+		if err != nil {
+			return cases.Outcome{}, err
+		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.AssociateAddress(ctx,
-					&awsec2.AssociateAddressInput{
-						AllocationId: aws.String("eipalloc-0123456789abcdef0"),
-						InstanceId:   aws.String("i-0123456789abcdef0"),
-					})
+				_, err := api.AssociateAddress(ctx, &awsec2.AssociateAddressInput{
+					AllocationId: aws.String(id),
+					InstanceId:   aws.String(inst),
+				})
 				return wrapErr("runAddr", err)
 			})
 			return callOut, wrapErr("runAddr", callErr)
@@ -217,6 +234,17 @@ func alloc(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (cases.
 		}
 	}
 	return o, wrapErr("alloc", err)
+}
+
+func goneAlloc(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (string, error) {
+	id, err := allocID(ctx, rt, api)
+	if err != nil {
+		return "", err
+	}
+	if _, err := api.ReleaseAddress(ctx, &awsec2.ReleaseAddressInput{AllocationId: aws.String(id)}); err != nil {
+		return "", fmt.Errorf("release %s: %w", id, err)
+	}
+	return id, nil
 }
 
 func allocID(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (string, error) {

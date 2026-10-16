@@ -3,6 +3,7 @@ package ec2
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsec2 "github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -36,10 +37,14 @@ func runTags(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	}
 	switch c.ID {
 	case "EC2-TAG-101":
+		id, err := goneVolume(ctx, rt, api)
+		if err != nil {
+			return cases.Outcome{}, err
+		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
 				_, err := api.CreateTags(ctx, &awsec2.CreateTagsInput{
-					Resources: []string{"vol-0123456789abcdef0"},
+					Resources: []string{id},
 					Tags:      []types.Tag{{Key: aws.String("Name"), Value: aws.String(rt.Name("tag"))}},
 				})
 				return wrapErr("runTags", err)
@@ -67,5 +72,62 @@ func runTags(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		}
 	default:
 		return cases.Outcome{}, fmt.Errorf("no runner for %s", c.ID)
+	}
+}
+
+func goneVolume(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (string, error) {
+	in := &awsec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("vws-1a"), Size: aws.Int32(harness.VolumeGiB),
+		VolumeType: types.VolumeTypeGp2, TagSpecifications: rt.TagSpec(types.ResourceTypeVolume),
+	}
+	out, err := api.CreateVolume(ctx, in)
+	if harness.UnsupportedParameter(err) {
+		bare := *in
+		bare.TagSpecifications = nil
+		out, err = api.CreateVolume(ctx, &bare)
+	}
+	if err != nil {
+		return "", fmt.Errorf("create volume: %w", err)
+	}
+	id := aws.ToString(out.VolumeId)
+	rt.Cleanup(func(ctx context.Context) error {
+		_, err := api.DeleteVolume(ctx, &awsec2.DeleteVolumeInput{VolumeId: aws.String(id)})
+		return harness.IgnoreCleanup(err)
+	})
+	if err := rt.Track("volume", id, rt.Name("tagmiss")); err != nil {
+		return "", wrapErr("goneVolume", err)
+	}
+	if err := waitVolume(ctx, api, id); err != nil {
+		return "", err
+	}
+	if _, err := api.DeleteVolume(ctx, &awsec2.DeleteVolumeInput{VolumeId: aws.String(id)}); err != nil {
+		return "", fmt.Errorf("delete volume %s: %w", id, err)
+	}
+	return id, nil
+}
+
+func waitVolume(ctx context.Context, api *awsec2.Client, id string) error {
+	ctx, cancel := context.WithTimeout(ctx, harness.OpTimeout)
+	defer cancel()
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		out, err := api.DescribeVolumes(ctx, &awsec2.DescribeVolumesInput{VolumeIds: []string{id}})
+		if err != nil {
+			return fmt.Errorf("describe %s: %w", id, err)
+		}
+		if len(out.Volumes) > 0 {
+			switch out.Volumes[0].State {
+			case types.VolumeStateAvailable, types.VolumeStateInUse:
+				return nil
+			case types.VolumeStateError, types.VolumeStateDeleted, types.VolumeStateDeleting:
+				return fmt.Errorf("volume %s is %s", id, out.Volumes[0].State)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("volume %s stayed creating: %w", id, ctx.Err())
+		case <-tick.C:
+		}
 	}
 }

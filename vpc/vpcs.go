@@ -88,18 +88,23 @@ func runVpcs(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 			})
 			return callOut, wrapErr("runVpcs", callErr)
 		}
-	case "VPC-VPC-102":
-		{
-			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.DeleteVpc(ctx, &awsec2.DeleteVpcInput{VpcId: aws.String("vpc-0123456789abcdef0")})
-				return wrapErr("runVpcs", err)
-			})
-			return callOut, wrapErr("runVpcs", callErr)
+	case "VPC-VPC-102", "VPC-VPC-104":
+		cidr := "10.20.0.0/16"
+		if c.ID == "VPC-VPC-104" {
+			cidr = "10.21.0.0/16"
 		}
-	case "VPC-VPC-104":
+		id, err := goneVpc(ctx, rt, api, cidr, "vpcmiss")
+		if err != nil {
+			return cases.Outcome{}, err
+		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.DescribeVpcs(ctx, &awsec2.DescribeVpcsInput{VpcIds: []string{"vpc-0123456789abcdef0"}})
+				var err error
+				if c.ID == "VPC-VPC-104" {
+					_, err = api.DescribeVpcs(ctx, &awsec2.DescribeVpcsInput{VpcIds: []string{id}})
+				} else {
+					_, err = api.DeleteVpc(ctx, &awsec2.DeleteVpcInput{VpcId: aws.String(id)})
+				}
 				return wrapErr("runVpcs", err)
 			})
 			return callOut, wrapErr("runVpcs", callErr)
@@ -156,6 +161,17 @@ func createVpc(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, cid
 		})
 	}
 	return o, wrapErr("createVpc", err)
+}
+
+func goneVpc(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, cidr, token string) (string, error) {
+	id, err := makeVpc(ctx, rt, api, cidr, token)
+	if err != nil {
+		return "", err
+	}
+	if _, err := api.DeleteVpc(ctx, &awsec2.DeleteVpcInput{VpcId: aws.String(id)}); err != nil {
+		return "", fmt.Errorf("delete vpc %s: %w", id, err)
+	}
+	return id, nil
 }
 
 func makeVpc(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, cidr, token string) (string, error) {
