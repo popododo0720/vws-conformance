@@ -21,6 +21,14 @@ jobs:
       - name: fake backend
         run: |
           git clone --depth 1 https://github.com/popododo0720/vws-console-api.git /tmp/src/vws-console-api
+          base=9ac48e08bc62a7ddff1b34a15a037ca8d48c69c7
+          got=$(git -C /tmp/src/vws-console-api rev-parse HEAD)
+          if [ "$got" != "$base" ]; then
+            echo "console-api main is $got, DetachVolume patch wants $base"
+            exit 1
+          fi
+          git -C /tmp/src/vws-console-api apply --index \
+            "$GITHUB_WORKSPACE/third_party/vws-console-api/detach-volume.patch"
           (cd /tmp/src/vws-console-api && go build -o /tmp/vws-console-api ./cmd/vws-console-api)
           /tmp/vws-console-api -backend fake -iam fake >/tmp/console-api.log 2>&1 &
           echo $! > /tmp/console-api.pid

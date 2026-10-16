@@ -1,0 +1,450 @@
+diff --git a/internal/backend/backend.go b/internal/backend/backend.go
+index 44c27d4..bac8762 100644
+--- a/internal/backend/backend.go
++++ b/internal/backend/backend.go
+@@ -46,6 +46,7 @@ type Compute interface {
+ 	CreateTags(ctx context.Context, m Mutation, req resource.CreateTagsRequest) (resource.Accepted[resource.Instance], error)
+ 	CreateVolume(ctx context.Context, m Mutation, req resource.CreateVolumeRequest) (resource.Accepted[resource.Volume], error)
+ 	AttachVolume(ctx context.Context, m Mutation, req resource.AttachVolumeRequest) (resource.Accepted[resource.Volume], error)
++	DetachVolume(ctx context.Context, m Mutation, req resource.DetachVolumeRequest) (resource.Accepted[resource.Volume], error)
+ 	DeleteVolume(ctx context.Context, m Mutation, req resource.DeleteVolumeRequest) (resource.Accepted[resource.Volume], error)
+ 	ModifyVolume(ctx context.Context, m Mutation, req resource.ModifyVolumeRequest) (resource.Accepted[resource.Volume], error)
+ 	DescribeVolumes(ctx context.Context, s Scope, q resource.VolumeQuery) (resource.Page[resource.Volume], error)
+diff --git a/internal/backend/fake/ec2.go b/internal/backend/fake/ec2.go
+index adbc713..f839392 100644
+--- a/internal/backend/fake/ec2.go
++++ b/internal/backend/fake/ec2.go
+@@ -216,6 +216,50 @@ func (c compute) AttachVolume(ctx context.Context, m backend.Mutation, req resou
+ 	return acc, nil
+ }
+ 
++func (c compute) DetachVolume(ctx context.Context, m backend.Mutation, req resource.DetachVolumeRequest) (resource.Accepted[resource.Volume], error) {
++	if err := ctx.Err(); err != nil {
++		return resource.Accepted[resource.Volume]{}, err
++	}
++	c.w.mu.Lock()
++	defer c.w.mu.Unlock()
++	c.w.settle(c.w.now())
++	if acc, ok, err := replay[resource.Accepted[resource.Volume]](c.w, m.Key, m.Fingerprint); err != nil || ok {
++		return acc, err
++	}
++	vol, ok := c.w.vol[req.VolumeID]
++	if !ok || vol.OwnerID != m.Account {
++		return resource.Accepted[resource.Volume]{}, resource.NotFound(resource.KindVolume, req.VolumeID.String())
++	}
++	if vol.State != resource.VolumeInUse {
++		return resource.Accepted[resource.Volume]{}, resource.Conflict(resource.KindVolume, vol.ID.String(), "volume is "+string(vol.State))
++	}
++	if !req.InstanceID.IsZero() && req.InstanceID != vol.InstanceID {
++		return resource.Accepted[resource.Volume]{}, resource.Conflict(resource.KindVolume, vol.ID.String(), "volume is not attached to "+req.InstanceID.String())
++	}
++	if req.Device != "" && req.Device != vol.Device {
++		return resource.Accepted[resource.Volume]{}, resource.Conflict(resource.KindVolume, vol.ID.String(), "volume is not attached at "+req.Device)
++	}
++	prev := *vol
++	vol.State = resource.VolumeDetaching
++	id := vol.ID
++	op, err := c.w.newOp(m.Account, resource.ServiceCompute, resource.ActionDetachVolume, []resource.Ref{id.Ref()}, func(time.Time) {
++		cur := c.w.vol[id]
++		if cur != nil && cur.State == resource.VolumeDetaching {
++			cur.State = resource.VolumeAvailable
++			cur.InstanceID = resource.InstanceID{}
++			cur.Device = ""
++		}
++	})
++	if err != nil {
++		*vol = prev
++		return resource.Accepted[resource.Volume]{}, err
++	}
++	item := *vol
++	acc := resource.Accepted[resource.Volume]{Operation: op, Items: []resource.Volume{item}}
++	c.w.finish(m.Key, m.Fingerprint, acc)
++	return acc, nil
++}
++
+ func (c compute) DeleteVolume(ctx context.Context, m backend.Mutation, req resource.DeleteVolumeRequest) (resource.Accepted[resource.Volume], error) {
+ 	if err := ctx.Err(); err != nil {
+ 		return resource.Accepted[resource.Volume]{}, err
+@@ -230,8 +274,12 @@ func (c compute) DeleteVolume(ctx context.Context, m backend.Mutation, req resou
+ 	if !ok || vol.OwnerID != m.Account {
+ 		return resource.Accepted[resource.Volume]{}, resource.NotFound(resource.KindVolume, req.ID.String())
+ 	}
+-	if vol.State == resource.VolumeInUse {
+-		return resource.Accepted[resource.Volume]{}, resource.Conflict(resource.KindVolume, vol.ID.String(), "volume is in use")
++	if vol.State == resource.VolumeInUse || vol.State == resource.VolumeDetaching {
++		msg := "volume is in use"
++		if vol.State == resource.VolumeDetaching {
++			msg = "volume is detaching"
++		}
++		return resource.Accepted[resource.Volume]{}, resource.Conflict(resource.KindVolume, vol.ID.String(), msg)
+ 	}
+ 	prev := vol.State
+ 	vol.State = resource.VolumeDeleting
+diff --git a/internal/backend/grpcclient/ec2.go b/internal/backend/grpcclient/ec2.go
+index 0c3a302..8df08d2 100644
+--- a/internal/backend/grpcclient/ec2.go
++++ b/internal/backend/grpcclient/ec2.go
+@@ -254,6 +254,10 @@ func (c computeClient) AttachVolume(ctx context.Context, m backend.Mutation, req
+ 	return resource.Accepted[resource.Volume]{Operation: op, Items: []resource.Volume{vol}}, nil
+ }
+ 
++func (c computeClient) DetachVolume(context.Context, backend.Mutation, resource.DetachVolumeRequest) (resource.Accepted[resource.Volume], error) {
++	return resource.Accepted[resource.Volume]{}, resource.Unimplemented("DetachVolume")
++}
++
+ func (c computeClient) DeleteVolume(ctx context.Context, m backend.Mutation, req resource.DeleteVolumeRequest) (resource.Accepted[resource.Volume], error) {
+ 	projectID := project(m.Account)
+ 	vol, err := c.getVolume(ctx, projectID, req.ID.String())
+diff --git a/internal/backend/grpcclient/loopback_test.go b/internal/backend/grpcclient/loopback_test.go
+index 28413e2..41038df 100644
+--- a/internal/backend/grpcclient/loopback_test.go
++++ b/internal/backend/grpcclient/loopback_test.go
+@@ -124,6 +124,7 @@ func (s opsGate) GetOperation(ctx context.Context, req *longrunningpb.GetOperati
+ 		return nil, toStatus(err)
+ 	}
+ 	volume := op.Action == resource.ActionCreateVolume || op.Action == resource.ActionDeleteVolume ||
++		op.Action == resource.ActionDetachVolume ||
+ 		op.Action == resource.ActionCreateSnapshot || op.Action == resource.ActionDeleteSnapshot
+ 	if volume != s.volumes {
+ 		return nil, toStatus(resource.NotFound(resource.KindOperation, lastSegment(req.GetName())))
+@@ -1177,7 +1178,7 @@ func (s *opsSrv) GetOperation(ctx context.Context, req *longrunningpb.GetOperati
+ 
+ func operationVerb(action resource.Action) commonv1.OperationVerb {
+ 	switch action {
+-	case resource.ActionStopInstances, resource.ActionStartInstances, resource.ActionAttachVolume, resource.ActionAuthorizeSecurityGroupIngress, resource.ActionAssociateAddress, resource.ActionDisassociateAddress, resource.ActionModifyVolume, resource.ActionCreateTags:
++	case resource.ActionStopInstances, resource.ActionStartInstances, resource.ActionAttachVolume, resource.ActionDetachVolume, resource.ActionAuthorizeSecurityGroupIngress, resource.ActionAssociateAddress, resource.ActionDisassociateAddress, resource.ActionModifyVolume, resource.ActionCreateTags:
+ 		return commonv1.OperationVerb_OPERATION_VERB_UPDATE
+ 	case resource.ActionTerminateInstances, resource.ActionDeleteVpc, resource.ActionDeleteVolume, resource.ActionDeleteKeyPair, resource.ActionDeleteSecurityGroup, resource.ActionDeleteSubnet, resource.ActionReleaseAddress, resource.ActionDeleteSnapshot:
+ 		return commonv1.OperationVerb_OPERATION_VERB_DELETE
+diff --git a/internal/cloud/methods.go b/internal/cloud/methods.go
+index c5d96f9..1ff4507 100644
+--- a/internal/cloud/methods.go
++++ b/internal/cloud/methods.go
+@@ -61,6 +61,15 @@ func (s *Service) AttachVolume(ctx context.Context, c resource.Caller, token res
+ 	return mutate(ctx, s, c, token, req, s.backends.Compute.AttachVolume)
+ }
+ 
++// DetachVolume accepts a detach and returns the operation.
++func (s *Service) DetachVolume(ctx context.Context, c resource.Caller, token resource.ClientToken, req resource.DetachVolumeRequest) (resource.Accepted[resource.Volume], error) {
++	token, err := fillToken(token)
++	if err != nil {
++		return resource.Accepted[resource.Volume]{}, err
++	}
++	return mutate(ctx, s, c, token, req, s.backends.Compute.DetachVolume)
++}
++
+ // DeleteVolume accepts a delete and returns the operation.
+ func (s *Service) DeleteVolume(ctx context.Context, c resource.Caller, token resource.ClientToken, req resource.DeleteVolumeRequest) (resource.Accepted[resource.Volume], error) {
+ 	token, err := fillToken(token)
+diff --git a/internal/cloud/mutate_test.go b/internal/cloud/mutate_test.go
+index eb7c653..db4e5a5 100644
+--- a/internal/cloud/mutate_test.go
++++ b/internal/cloud/mutate_test.go
+@@ -161,6 +161,10 @@ func (foreignCompute) CreateTags(context.Context, backend.Mutation, resource.Cre
+ 	return resource.Accepted[resource.Instance]{}, errors.New("unused")
+ }
+ 
++func (foreignCompute) DetachVolume(context.Context, backend.Mutation, resource.DetachVolumeRequest) (resource.Accepted[resource.Volume], error) {
++	return resource.Accepted[resource.Volume]{}, errors.New("unused")
++}
++
+ func (foreignCompute) DeleteVolume(context.Context, backend.Mutation, resource.DeleteVolumeRequest) (resource.Accepted[resource.Volume], error) {
+ 	return resource.Accepted[resource.Volume]{}, errors.New("unused")
+ }
+diff --git a/internal/resource/ec2.go b/internal/resource/ec2.go
+index 1ef52bf..f065454 100644
+--- a/internal/resource/ec2.go
++++ b/internal/resource/ec2.go
+@@ -93,6 +93,7 @@ const (
+ 	VolumeCreating  VolumeState = "creating"
+ 	VolumeAvailable VolumeState = "available"
+ 	VolumeInUse     VolumeState = "in-use"
++	VolumeDetaching VolumeState = "detaching"
+ 	VolumeDeleting  VolumeState = "deleting"
+ 	// VolumeError is the EC2 status of a volume whose reconcile failed.
+ 	// https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_Volume.html
+@@ -189,6 +190,26 @@ func (r AttachVolumeRequest) Normalize() (AttachVolumeRequest, error) {
+ 	return r, nil
+ }
+ 
++// DetachVolumeRequest detaches one volume. Instance, device, and force are optional.
++// There is no busy attachment, so force does not change the result.
++type DetachVolumeRequest struct {
++	VolumeID   VolumeID   `json:"volumeId"`
++	InstanceID InstanceID `json:"instanceId,omitempty"`
++	Device     string     `json:"device,omitempty"`
++	Force      bool       `json:"force,omitempty"`
++}
++
++// Action returns DetachVolume.
++func (DetachVolumeRequest) Action() Action { return ActionDetachVolume }
++
++// Normalize checks the volume id.
++func (r DetachVolumeRequest) Normalize() (DetachVolumeRequest, error) {
++	if r.VolumeID.IsZero() {
++		return DetachVolumeRequest{}, Invalid("volumeId", "required")
++	}
++	return r, nil
++}
++
+ // DeleteVolumeRequest deletes one volume.
+ type DeleteVolumeRequest struct {
+ 	ID VolumeID `json:"volumeId"`
+diff --git a/internal/resource/operation.go b/internal/resource/operation.go
+index 8fee006..744c8a8 100644
+--- a/internal/resource/operation.go
++++ b/internal/resource/operation.go
+@@ -36,6 +36,7 @@ const (
+ 	ActionDisassociateAddress
+ 	ActionModifyVolume
+ 	ActionCreateTags
++	ActionDetachVolume
+ )
+ 
+ // String returns the wire name. An unknown action returns "".
+@@ -89,6 +90,8 @@ func (a Action) String() string {
+ 		return "ModifyVolume"
+ 	case ActionCreateTags:
+ 		return "CreateTags"
++	case ActionDetachVolume:
++		return "DetachVolume"
+ 	case actionNone:
+ 		return ""
+ 	default:
+diff --git a/internal/resource/resource_test.go b/internal/resource/resource_test.go
+index c78ca9c..17aad6b 100644
+--- a/internal/resource/resource_test.go
++++ b/internal/resource/resource_test.go
+@@ -119,7 +119,7 @@ func TestOperationIDRoundTrip(t *testing.T) {
+ 
+ func TestActionsAreDerived(t *testing.T) {
+ 	got := Actions()
+-	if len(got) != 24 {
++	if len(got) != 25 {
+ 		t.Fatalf("actions: %v", got)
+ 	}
+ 	for _, a := range got {
+diff --git a/internal/surface/console/console.go b/internal/surface/console/console.go
+index fb89c5c..4bc4e70 100644
+--- a/internal/surface/console/console.go
++++ b/internal/surface/console/console.go
+@@ -150,6 +150,8 @@ func (h *handler) mutation(action resource.Action) (string, string, http.Handler
+ 		return http.MethodPost, "/api/v1/volumes/{id}/attach", h.attachVolume
+ 	case resource.ActionDeleteVolume:
+ 		return http.MethodPost, "/api/v1/volumes/{id}/delete", h.deleteVolume
++	case resource.ActionDetachVolume:
++		return http.MethodPost, "/api/v1/volumes/{id}/detach", h.detachVolume
+ 	case resource.ActionCreateSecurityGroup:
+ 		return http.MethodPost, "/api/v1/security-groups", h.createSecurityGroup
+ 	case resource.ActionAuthorizeSecurityGroupIngress:
+diff --git a/internal/surface/console/ec2.go b/internal/surface/console/ec2.go
+index dacd0af..368481a 100644
+--- a/internal/surface/console/ec2.go
++++ b/internal/surface/console/ec2.go
+@@ -259,6 +259,31 @@ func (h *handler) createKeyPair(w http.ResponseWriter, r *http.Request) {
+ 	writeAccepted(w, acc)
+ }
+ 
++// detachVolume detaches a volume. The body may name the instance, device, and force flag.
++func (h *handler) detachVolume(w http.ResponseWriter, r *http.Request) {
++	c, token, ok := h.begin(w, r)
++	if !ok {
++		return
++	}
++	id, err := resource.Parse[resource.VolumeID](r.PathValue("id"))
++	if err != nil {
++		writeErr(w, r, err)
++		return
++	}
++	var req resource.DetachVolumeRequest
++	if err := decode(w, r, &req); err != nil {
++		writeErr(w, r, err)
++		return
++	}
++	req.VolumeID = id
++	acc, err := h.svc.DetachVolume(r.Context(), c, token, req)
++	if err != nil {
++		writeErr(w, r, err)
++		return
++	}
++	writeAccepted(w, acc)
++}
++
+ // modifyVolume grows a volume. The body is {"size": N}.
+ func (h *handler) modifyVolume(w http.ResponseWriter, r *http.Request) {
+ 	c, token, ok := h.begin(w, r)
+diff --git a/internal/surface/ec2query/actions.go b/internal/surface/ec2query/actions.go
+index 3bc34dd..71a3aab 100644
+--- a/internal/surface/ec2query/actions.go
++++ b/internal/surface/ec2query/actions.go
+@@ -166,6 +166,47 @@ func (h *handler) attachVolume(w http.ResponseWriter, r *http.Request, c resourc
+ 	})
+ }
+ 
++func (h *handler) detachVolume(w http.ResponseWriter, r *http.Request, c resource.Caller) {
++	token, err := optionalClientToken(r)
++	if err != nil {
++		writeErr(w, r, err)
++		return
++	}
++	vol, err := resource.Parse[resource.VolumeID](r.Form.Get("VolumeId"))
++	if err != nil {
++		writeErr(w, r, err)
++		return
++	}
++	var inst resource.InstanceID
++	if raw := r.Form.Get("InstanceId"); raw != "" {
++		inst, err = resource.Parse[resource.InstanceID](raw)
++		if err != nil {
++			writeErr(w, r, err)
++			return
++		}
++	}
++	force := false
++	if raw := r.Form.Get("Force"); raw != "" {
++		force, err = strconv.ParseBool(raw)
++		if err != nil {
++			writeErr(w, r, resource.Invalid("Force", "unsupported"))
++			return
++		}
++	}
++	acc, err := h.svc.DetachVolume(r.Context(), c, token, resource.DetachVolumeRequest{
++		VolumeID: vol, InstanceID: inst, Device: r.Form.Get("Device"), Force: force,
++	})
++	if err != nil {
++		writeErr(w, r, err)
++		return
++	}
++	item := acc.Items[0]
++	writeXML(w, detachVolumeXML{
++		RequestID: requestID(r), VolumeID: item.ID.String(), InstanceID: item.InstanceID.String(),
++		Device: item.Device, Status: string(item.State), AttachTime: awsTime(item.CreateTime),
++	})
++}
++
+ func (h *handler) deleteVolume(w http.ResponseWriter, r *http.Request, c resource.Caller) {
+ 	token, err := optionalClientToken(r)
+ 	if err != nil {
+diff --git a/internal/surface/ec2query/detach_test.go b/internal/surface/ec2query/detach_test.go
+new file mode 100644
+index 0000000..0419c4b
+--- /dev/null
++++ b/internal/surface/ec2query/detach_test.go
+@@ -0,0 +1,58 @@
++package ec2query
++
++import (
++	"net/http"
++	"net/url"
++	"strings"
++	"testing"
++)
++
++func TestDetachVolumeThenDelete(t *testing.T) {
++	h, cred, now := harness(t)
++	send := func(f url.Values) string {
++		t.Helper()
++		f.Set("Version", Version)
++		res := signed(t, h, cred, now, f.Encode())
++		if res.Code != http.StatusOK {
++			t.Fatalf("%s %d %s", f.Get("Action"), res.Code, res.Body)
++		}
++		return res.Body.String()
++	}
++	vpc := send(url.Values{"Action": {"CreateVpc"}, "CidrBlock": {"10.2.0.0/16"}})
++	subnet := send(url.Values{
++		"Action": {"CreateSubnet"}, "VpcId": {xmlText(t, vpc, "vpcId")}, "CidrBlock": {"10.2.1.0/24"},
++	})
++	run := send(url.Values{
++		"Action": {"RunInstances"}, "ImageId": {"ami-0123456789abcdef0"}, "InstanceType": {"vws.small"},
++		"SubnetId": {xmlText(t, subnet, "subnetId")}, "MinCount": {"1"}, "MaxCount": {"1"}, "ClientToken": {"detach-run"},
++	})
++	inst := xmlText(t, run, "instanceId")
++	created := send(url.Values{
++		"Action": {"CreateVolume"}, "AvailabilityZone": {"vws-1a"}, "Size": {"1"}, "VolumeType": {"gp2"},
++	})
++	vol := xmlText(t, created, "volumeId")
++	send(url.Values{
++		"Action": {"AttachVolume"}, "VolumeId": {vol}, "InstanceId": {inst}, "Device": {"/dev/sdf"},
++	})
++	body := send(url.Values{
++		"Action": {"DetachVolume"}, "VolumeId": {vol}, "InstanceId": {inst}, "Device": {"/dev/sdf"},
++	})
++	for _, want := range []string{
++		"<volumeId>" + vol + "</volumeId>",
++		"<instanceId>" + inst + "</instanceId>",
++		"<device>/dev/sdf</device>",
++		"<status>detaching</status>",
++	} {
++		if !strings.Contains(body, want) {
++			t.Fatalf("no %s in %s", want, body)
++		}
++	}
++	attachTimeOK(t, body)
++	send(url.Values{"Action": {"DeleteVolume"}, "VolumeId": {vol}})
++	missing := signed(t, h, cred, now, url.Values{
++		"Action": {"DetachVolume"}, "Version": {Version}, "VolumeId": {"vol-0123456789abcdef0"},
++	}.Encode())
++	if missing.Code != http.StatusBadRequest || !strings.Contains(missing.Body.String(), "InvalidVolume.NotFound") {
++		t.Fatalf("missing %d %s", missing.Code, missing.Body)
++	}
++}
+diff --git a/internal/surface/ec2query/ec2query.go b/internal/surface/ec2query/ec2query.go
+index 62cc153..09921d1 100644
+--- a/internal/surface/ec2query/ec2query.go
++++ b/internal/surface/ec2query/ec2query.go
+@@ -104,6 +104,8 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request) {
+ 		h.attachVolume(w, r, caller)
+ 	case resource.ActionDeleteVolume.String():
+ 		h.deleteVolume(w, r, caller)
++	case resource.ActionDetachVolume.String():
++		h.detachVolume(w, r, caller)
+ 	case resource.ActionModifyVolume.String():
+ 		h.modifyVolume(w, r, caller)
+ 	case resource.ActionCreateTags.String():
+@@ -530,6 +532,8 @@ func rejectUnknown(r *http.Request, action string) error {
+ 		allow = allowAttachVolume
+ 	case resource.ActionDeleteVolume.String():
+ 		allow = allowDeleteVolume
++	case resource.ActionDetachVolume.String():
++		allow = allowDetachVolume
+ 	case resource.ActionModifyVolume.String():
+ 		allow = allowModifyVolume
+ 	case resource.ActionCreateTags.String():
+@@ -636,6 +640,15 @@ func allowDeleteVolume(key string) bool {
+ 	return key == "Action" || key == "Version" || key == "ClientToken" || key == "VolumeId"
+ }
+ 
++func allowDetachVolume(key string) bool {
++	switch key {
++	case "Action", "Version", "ClientToken", "VolumeId", "InstanceId", "Device", "Force":
++		return true
++	default:
++		return false
++	}
++}
++
+ func allowModifyVolume(key string) bool {
+ 	return key == "Action" || key == "Version" || key == "ClientToken" || key == "VolumeId" || key == "Size"
+ }
+diff --git a/internal/surface/ec2query/wire.go b/internal/surface/ec2query/wire.go
+index 7bbd3dd..83ef44c 100644
+--- a/internal/surface/ec2query/wire.go
++++ b/internal/surface/ec2query/wire.go
+@@ -258,6 +258,16 @@ type attachVolumeXML struct {
+ 	Status     string   `xml:"status"`
+ }
+ 
++type detachVolumeXML struct {
++	XMLName    struct{} `xml:"DetachVolumeResponse"`
++	RequestID  string   `xml:"requestId"`
++	VolumeID   string   `xml:"volumeId"`
++	InstanceID string   `xml:"instanceId"`
++	Device     string   `xml:"device"`
++	Status     string   `xml:"status"`
++	AttachTime string   `xml:"attachTime"`
++}
++
+ type modifyVolumeXML struct {
+ 	XMLName      struct{}              `xml:"ModifyVolumeResponse"`
+ 	RequestID    string                `xml:"requestId"`

@@ -122,7 +122,7 @@ func ec2Service(op string) (string, error) {
 		}
 		return "vpc", nil
 	case "CreateVolume", "DeleteVolume", "DescribeVolumes", "AttachVolume", "ModifyVolume",
-		"CreateSnapshot", "DeleteSnapshot", "DescribeSnapshots":
+		"DetachVolume", "CreateSnapshot", "DeleteSnapshot", "DescribeSnapshots":
 		return "ebs", nil
 	case "RunInstances", "StopInstances", "StartInstances", "TerminateInstances", "CreateTags",
 		"CreateKeyPair", "DeleteKeyPair", "DescribeKeyPairs", "AllocateAddress", "ReleaseAddress",

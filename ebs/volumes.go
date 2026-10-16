@@ -22,12 +22,14 @@ func Volumes() bind.Group {
 		{ID: "EBS-VOL-003", Service: "ebs", Group: "volumes", Op: "AttachVolume", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocEC2("AttachVolume"), Expect: cases.Expect{HTTP: 200}, Impl: "yes", Slow: true},
 		{ID: "EBS-VOL-004", Service: "ebs", Group: "volumes", Op: "ModifyVolume", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocEC2("ModifyVolume"), Expect: cases.Expect{HTTP: 200}, Impl: "yes"},
 		{ID: "EBS-VOL-005", Service: "ebs", Group: "volumes", Op: "DeleteVolume", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocEC2("DeleteVolume"), Expect: cases.Expect{HTTP: 200}, Impl: "yes"},
+		{ID: "EBS-VOL-006", Service: "ebs", Group: "volumes", Op: "DetachVolume", Kind: cases.KindHappy, Suite: cases.SuiteSDK, DocURL: cases.DocEC2("DetachVolume"), Expect: cases.Expect{HTTP: 200}, Impl: "yes", Slow: true},
 		{ID: "EBS-VOL-101", Service: "ebs", Group: "volumes", Op: "DeleteVolume", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidVolume.NotFound"}, Impl: "yes"},
 		{ID: "EBS-VOL-102", Service: "ebs", Group: "volumes", Op: "DeleteVolume", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "VolumeInUse"}, Impl: "yes", Slow: true},
 		{ID: "EBS-VOL-103", Service: "ebs", Group: "volumes", Op: "CreateVolume", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidParameterValue"}, Impl: "yes"},
 		{ID: "EBS-VOL-104", Service: "ebs", Group: "volumes", Op: "DescribeVolumes", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidVolume.NotFound"}, Impl: "yes"},
 		{ID: "EBS-VOL-105", Service: "ebs", Group: "volumes", Op: "AttachVolume", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidVolume.NotFound"}, Impl: "yes"},
 		{ID: "EBS-VOL-106", Service: "ebs", Group: "volumes", Op: "ModifyVolume", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidVolume.NotFound"}, Impl: "yes"},
+		{ID: "EBS-VOL-107", Service: "ebs", Group: "volumes", Op: "DetachVolume", Kind: cases.KindError, Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidVolume.NotFound"}, Impl: "yes"},
 	}}
 }
 
@@ -91,7 +93,7 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 			_, err := api.DeleteVolume(ctx, &awsec2.DeleteVolumeInput{VolumeId: aws.String(id)})
 			return err
 		})
-	case "EBS-VOL-101", "EBS-VOL-104", "EBS-VOL-105", "EBS-VOL-106":
+	case "EBS-VOL-101", "EBS-VOL-104", "EBS-VOL-105", "EBS-VOL-106", "EBS-VOL-107":
 		id := "vol-0123456789abcdef0"
 		return rt.Call(ctx, func(ctx context.Context) error {
 			var err error
@@ -102,6 +104,8 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 				_, err = api.AttachVolume(ctx, &awsec2.AttachVolumeInput{VolumeId: aws.String(id), InstanceId: aws.String("i-0123456789abcdef0"), Device: aws.String("/dev/sdf")})
 			case "EBS-VOL-106":
 				_, err = api.ModifyVolume(ctx, &awsec2.ModifyVolumeInput{VolumeId: aws.String(id), Size: aws.Int32(2)})
+			case "EBS-VOL-107":
+				_, err = api.DetachVolume(ctx, &awsec2.DetachVolumeInput{VolumeId: aws.String(id)})
 			default:
 				_, err = api.DeleteVolume(ctx, &awsec2.DeleteVolumeInput{VolumeId: aws.String(id)})
 			}
@@ -113,15 +117,19 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 			_, err := api.CreateVolume(ctx, in)
 			return err
 		})
-	case "EBS-VOL-003", "EBS-VOL-102":
+	case "EBS-VOL-003", "EBS-VOL-102", "EBS-VOL-006":
 		_, subnet, err := rt.EnsureNet(ctx)
 		if err != nil {
 			return cases.Outcome{}, err
 		}
+		instToken, volToken := "volinst", "attach"
+		if c.ID == "EBS-VOL-006" {
+			instToken, volToken = "detach", "detach"
+		}
 		run, err := api.RunInstances(ctx, &awsec2.RunInstancesInput{
 			ImageId: aws.String("ami-0123456789abcdef0"), InstanceType: types.InstanceType(harness.InstanceType),
 			MinCount: aws.Int32(1), MaxCount: aws.Int32(1), SubnetId: aws.String(subnet),
-			ClientToken: aws.String(rt.Token("volinst")), TagSpecifications: rt.TagSpec(types.ResourceTypeInstance),
+			ClientToken: aws.String(rt.Token(instToken)), TagSpecifications: rt.TagSpec(types.ResourceTypeInstance),
 		})
 		if err != nil {
 			return cases.Outcome{}, fmt.Errorf("run: %w", err)
@@ -133,7 +141,7 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 			return harness.IgnoreCleanup(err)
 		})
 		_, _ = api.DescribeInstances(ctx, &awsec2.DescribeInstancesInput{InstanceIds: []string{inst}})
-		vol, err := makeVol(ctx, rt, api, "attach")
+		vol, err := makeVol(ctx, rt, api, volToken)
 		if err != nil {
 			return cases.Outcome{}, err
 		}
@@ -144,6 +152,14 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 		})
 		if c.ID == "EBS-VOL-003" || err != nil {
 			return o, err
+		}
+		if c.ID == "EBS-VOL-006" {
+			return rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.DetachVolume(ctx, &awsec2.DetachVolumeInput{
+					VolumeId: aws.String(vol), InstanceId: aws.String(inst), Device: aws.String("/dev/sdf"),
+				})
+				return err
+			})
 		}
 		return rt.Call(ctx, func(ctx context.Context) error {
 			_, err := api.DeleteVolume(ctx, &awsec2.DeleteVolumeInput{VolumeId: aws.String(vol)})

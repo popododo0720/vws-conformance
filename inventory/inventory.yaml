@@ -7,6 +7,7 @@ ops:
   - {service: ebs, op: CreateVolume, impl: yes}
   - {service: ebs, op: AttachVolume, impl: yes}
   - {service: ebs, op: DeleteVolume, impl: yes}
+  - {service: ebs, op: DetachVolume, impl: yes}
   - {service: ebs, op: ModifyVolume, impl: yes}
   - {service: ec2, op: CreateTags, impl: yes}
   - {service: vpc, op: CreateSecurityGroup, impl: yes}
@@ -121,7 +122,6 @@ ops:
   - {service: vpc, op: DescribeRegions, impl: gap}
   - {service: vpc, op: CreateInternetGateway, impl: gap}
   - {service: vpc, op: DescribeRouteTables, impl: gap}
-  - {service: ebs, op: DetachVolume, impl: gap}
   - {service: ebs, op: DescribeVolumesModifications, impl: gap}
   - {service: sts, op: GetSessionToken, impl: gap}
   - {service: sts, op: AssumeRoleWithWebIdentity, impl: gap}
