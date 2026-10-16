@@ -1,0 +1,56 @@
+# A comment event runs on the default branch, and its check would not attach to the PR head.
+# It lives outside repo-guard.yml so the verify-gate job needs no event if.
+name: verify-rerun
+
+on:
+  issue_comment:
+    types: [created, edited, deleted]
+
+permissions:
+  contents: read
+
+jobs:
+  verify-rerun:
+    if: github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      pull-requests: read
+    steps:
+      - name: Re-run verify-gate for the PR head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          head=$(gh api "repos/${REPO}/pulls/${NUMBER}" --jq '.head.sha')
+          # Prefer the pull_request_target run. That run executes the default-branch workflow.
+          # Several PRs can share a head SHA: prefer the newest run linked to this PR number.
+          run=$(gh api "repos/${REPO}/actions/workflows/repo-guard.yml/runs?event=pull_request_target&per_page=50" \
+            --jq "[.workflow_runs[] | select(any(.pull_requests[]?; .number == ${NUMBER}))][0].id // empty")
+          if [[ -z $run ]]; then
+            ids=$(gh api "repos/${REPO}/actions/workflows/repo-guard.yml/runs?event=pull_request_target&per_page=15" \
+              --jq '.workflow_runs[].id')
+            for id in $ids; do
+              num=$(gh api "repos/${REPO}/actions/runs/${id}" --jq '.pull_requests[0].number // empty')
+              if [[ $num == "$NUMBER" ]]; then run=$id; break; fi
+            done
+          fi
+          if [[ -z $run ]]; then
+            echo "no pull_request_target verify-gate run for ${head}" >&2
+            exit 1
+          fi
+          job=$(gh api "repos/${REPO}/actions/runs/${run}/jobs" --jq '.jobs[] | select(.name == "verify-gate") | .id')
+          if [[ -z $job ]]; then echo "run ${run} has no verify-gate job" >&2; exit 1; fi
+          status=
+          # A job that is still running cannot be re-run yet: wait for it (up to 15 minutes), then re-run.
+          for _ in $(seq 1 30); do
+            status=$(gh api "repos/${REPO}/actions/jobs/${job}" --jq '.status')
+            if [[ $status == completed ]] && gh api -X POST "repos/${REPO}/actions/jobs/${job}/rerun" >/dev/null; then
+              echo "verify-gate job ${job} re-run"; exit 0
+            fi
+            sleep 30
+          done
+          echo "verify-gate job ${job} could not be re-run (status ${status})" >&2
+          exit 1

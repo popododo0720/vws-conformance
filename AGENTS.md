@@ -1,38 +1,61 @@
-# Agent rules
+# AGENTS.md
 
-This repository is the unmodified AWS SDK and CLI conformance suite for VWS. It talks to VWS only through the AWS SDK or CLI. It does not import any other `github.com/popododo0720/vws-*` module.
+vws-conformance is the AWS conformance suite for VWS. It drives VWS endpoints with the unmodified AWS SDK and CLI and checks that every response matches what the official AWS documentation says AWS returns.
+
+## Hard safety rules (read first)
+
+These rules have no exceptions. Breaking one is an incident (see guardrail 7).
+
+1. **Never send any request to real AWS.** No code path, test, script, CI job or manual run may reach an `amazonaws.com` (or any other AWS-owned) endpoint, including STS, IMDS and SSO.
+2. **VWS endpoints only, through the guard.** The suite talks only to VWS endpoints, and only through the guarded dialer and the host allowlist (`VWS_CONF_ALLOWED_HOSTS`). Never bypass, widen or disable the guard, never follow redirects off the allowlist, and never let a proxy or a fresh DNS lookup pick the destination. The AWS CLI runs only behind the same endpoint check.
+3. **No real AWS credentials or profiles, ever.** Use only the throwaway VWS test credentials from the environment. Never read `~/.aws`, `AWS_PROFILE`, SSO caches or instance metadata, and never commit or log a credential.
+4. **Parity is checked against official AWS docs only.** Every expected status, error code and message cites the official AWS documentation (API reference or user guide). Never derive an expectation by calling real AWS, and never loosen one to make a VWS response pass.
+5. **Cleanup touches only the suite's own resources.** A run deletes only resources named with its own `conf-` run ID.
+
+## VWS rules
+
+- **Exact AWS parity is the top priority.** Every gap between VWS and AWS is a tracked issue in the repo that owns the behavior. A failing case is never hidden, skipped or loosened without a linked issue.
+- **Codex review once per head.** Every pull request head gets one Codex review; a new head needs a new review.
+- **verify PASS before merge.** vws-verify must post PASS (`Verified-by: vws-verify` for the exact head SHA, `verify-approved` label) and `verify-gate` must be green before merge.
+- **Only dr eggbot merges.** No author bot merges, including its own pull request.
+- **English only.** See "English only" below.
+- Pull requests say `Part of #N` and never close an issue (no Closes/Fixes/Resolves in the body or commits). No force-push.
+
+## Branches and commits
+
+- Do not push to main directly. Work on a branch cut from main, one pull request per branch.
+- Commits are atomic. One commit is one change, and the build holds with that commit alone.
 
 ## Rules
 
-| ID | Rule | Check |
-| --- | --- | --- |
-| R1 | Work on a branch. Never push to main or master. | `.githooks/pre-push` |
-| R2 | Commit subject is `type: summary`. The body contains `Part of #N`. The commit message has no `Closes`, `Fixes`, or `Resolves`. | review |
-| R3 | The pull request body starts with `Made-by: Cursor cloud agent` when a cloud agent opened it. The body contains `Closes #N` for the tracking issue this change finishes. | review |
-| R7 | No logo files and no trademark notices. | review |
-| R9 | A cloud agent may open a pull request. The first body line is `Made-by: Cursor cloud agent`. | review |
-| R13 | English only in code, comments, docs, commits, and the pull request body. | `scripts/guard.sh` |
-| R21 | `go.mod` does not require another vws module and does not replace aws-sdk-go-v2. | `scripts/guard.sh` |
-| R22 | The endpoint allow list refuses `amazonaws.com` and `*.amazonaws.com`. The suite has no real-AWS mode. | `internal/harness/allow_test.go` |
-| R23 | Workflows have `pull_request` and `workflow_dispatch` only. No `schedule`. No self-hosted runner. | `scripts/guard.sh` |
-| R24 | A parity mismatch stays a recorded fail. Do not change the expected AWS code to match VWS. | `internal/expect/expect_test.go` |
+A rule whose enforcer cell is `Judgment` has no check; the author and reviewer uphold it.
 
-`make guard` runs `scripts/guard.sh`. `make test-unit` runs the race tests that do not need a backend. `make test-local` runs every group against a fake console-api that is already listening.
+| Rule | Enforcer |
+| --- | --- |
+| Never send any request to real AWS | Judgment until the harness guard tests land (vws-conformance#1) |
+| Requests go only to allowlisted VWS endpoints through the guarded dialer | Judgment until the harness guard tests land (vws-conformance#1) |
+| No real AWS credentials or profiles | Judgment |
+| Expected results cite official AWS docs only | Judgment |
+| Every VWS-vs-AWS gap is a tracked issue | Judgment |
+| Do not push to main directly. Work on a branch | `.github/workflows/direct-push-watch.yml` (detected after the fact) |
+| A pull request targets main, says `Part of #N` and closes no issue | `.github/workflows/repo-guard.yml` `pr-hygiene` |
+| Merge only after vws-verify PASS for the exact head | `.github/workflows/repo-guard.yml` `verify-gate` |
+| Commits are atomic | Judgment |
 
-## Way of working
+## English only
 
-Write the smallest change that keeps the case table honest. A new AWS expectation is a new case, not a change to an old expected code. Say a command was verified only if it was run. Mark everything else unverified.
+Write everything in this repo in English: README, code comments, docs, AGENTS.md, QUALITY.md, PR and issue templates, commit messages, PR and issue bodies, review comments and `Verified-by` sections. The `english` job in CI runs `scripts/check-english.sh`: `files` fails on a tracked file with Hangul unless `.github/english-allowlist` lists it as `<glob> <reason>` (only test data and user-facing UI strings belong there), and `text` and `commits` reject Hangul in the PR body and the PR's commit messages with no exception.
 
 ## Insider-risk guardrails
 
-1. The author of a change does not merge it. dr eggbot owns merges.
-2. Commits use `Part of #N` and do not use a closing keyword. The pull request body may contain `Closes #N`.
-3. New behavior has a failure-path test, or the pull request says why that is impossible.
-4. No direct push to main. Tokens stay scoped to this repo. Secrets stay in env and out of `out/`.
-5. The author does not approve their own verify-gate comment.
-6. Stop when the user says to stop.
-7. A rule break is recorded, not hidden.
+Bots are insider risks too. The rules below have no exceptions. The design is popododo0720/vws-deploy#33.
 
-## Verify gate
+1. **Independent verification**: an important result (merge, security, data) is never verified by the bot/model that wrote it. Another bot (or a person) verifies it. This is a process rule; CI cannot enforce it.
+2. **Records**: every change leaves a trail of issue → PR (`Part of #N`) → commits. Work logs go in the PR body and issue comments in a form people can read. Force-push and history rewriting are forbidden, except with the user's approval.
+3. **Failure tests**: a new feature is not tested on the happy path only. Include at least one case each for power loss and restart, idempotent re-run, and malicious or boundary input, or state in the PR why that is not possible.
+4. **Least privilege**: do not push to main directly. Every change is a single PR from its own branch cut from main. Stacked PRs and local merges are forbidden. Tokens are scoped to the repo. RBAC allows only the resources the service code actually calls, as a namespace-scoped Role where possible.
+5. **Separated audit**: the author bot, the verifier bot and the merge decision are all different. An author bot never merges its own PR. Merge only when the base is main and every CI check on the head commit is success.
+6. **Isolation and emergency stop**: a bot is stopped immediately at the user's request or by the orchestrator stopping that bot's session and revoking its token (`gh auth`, PAT revoke). Risky work happens only in a sandbox (the box, a throwaway cluster). No access to production clusters.
+7. **Incident disclosure**: rule violations and incidents are never hidden; record them in an issue as `Cause / Impact / Action / Prevention`. The label is `incident`.
 
-vws-verify judges the nine QUALITY.md items and posts `Verified-by` with a Codex review path. This file does not claim that the gate has passed.
+This repo is public. `main` branch protection requires the CI checks; `.github/workflows/repo-guard.yml` checks that the PR's base is main, that the body has `Part of #N` and no closing keyword, and that this section has items 1-7. `.github/workflows/direct-push-watch.yml` reports after the fact any commit that reached main without a PR. The check code is `scripts/guard-agents.sh`, the same file as in vws-deploy, so it is copied, not edited.

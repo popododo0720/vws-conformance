@@ -1,0 +1,1018 @@
+#!/usr/bin/env bash
+# Insider-risk guards that need no repo-specific paths. Copy this file as-is into another repo.
+#
+#   guard-agents.sh agents [FILE]           FILE (default AGENTS.md) has the guardrail section and items 1-7
+#   guard-agents.sh rules [FILE] [HEADING]  every row of the rule table under HEADING names an enforcer; prints the Judgment count
+#   guard-agents.sh judgment [FILE] [HEADING] alias of rules
+#   guard-agents.sh archtest [FILE] [HEADING] prints the rules line, then runs go test -v on GUARD_ARCHTEST_PKG
+#   guard-agents.sh identity [SUMFILE]      this file's sha256 equals SUMFILE (default scripts/guard-agents.sh.sha256)
+#   guard-agents.sh allow ALLOWFILE HEADREF every locked path at HEADREF has a line "HASH  PATH" in ALLOWFILE
+#                                           (sha256, two spaces). ALLOWFILE is the default-branch file.
+#                                           A line that exists only at HEADREF does not count.
+#   guard-agents.sh pr-base BASE_REF        a pull request must target the main branch
+#   guard-agents.sh pr-body [FILE]          the pull request text (FILE or $PR_BODY) has "Part of #N", no closing keyword and no Hangul
+#   guard-agents.sh commit-msg FILE         the commit message has no closing keyword (Closes/Fixes/Resolves #N, owner/repo#N or an issue URL) and no Hangul
+#   guard-agents.sh pr-commits BASE HEAD    every commit in BASE..HEAD passes commit-msg
+#   guard-agents.sh push-watch BEFORE AFTER every first-parent commit pushed to main came from a pull request
+#   guard-agents.sh latest-labeler         stdin is created_at<TAB>id<TAB>login. Prints the login of the
+#                                           latest row. A later created_at wins. The same second keeps the
+#                                           greater decimal event id. Empty input fails closed.
+#   guard-agents.sh check-run HEAD         stdin is one check-run JSON object per line. Exit 0 only when the
+#                                           latest run named vws-verify from the vws-verify app (slug or
+#                                           GUARD_VERIFY_APP_ID) has head_sha HEAD and conclusion success.
+#   guard-agents.sh verify-gate HEAD LABELS
+#                                           the pull request is verify-approved: LABELS is one label name per
+#                                           line and one line equals verify-approved. The labeler is in
+#                                           GUARD_VERIFY_ACTORS, which must be nonempty. A Verified-by comment
+#                                           is not read.
+#   guard-agents.sh english [ALLOWLIST]     no tracked file has Hangul unless a glob in ALLOWLIST (default
+#                                           .github/english-allowlist, lines "<glob> <reason>") covers it
+#   guard-agents.sh selftest                run the guards on bad inputs; every one must fail
+#
+# Environment: GUARD_MAIN_BRANCH (default main), GUARD_HEADING (default "## Insider-risk guardrails"),
+# GUARD_ITEMS (default 7), GUARD_RULES_HEADING (default: the first of "## Rules" and "## 규칙표" in FILE),
+# GUARD_VERIFY_LABEL (default verify-approved),
+# GUARD_VERIFY_ACTORS (comma list of logins allowed to add the label; empty fails closed), GUARD_VERIFY_LABELER
+# (login that last added the label), GUARD_VERIFY_EXCLUDE (PR author and head pusher: never label),
+# GUARD_VERIFY_IDENTITY (the vws-verify login, exempt from EXCLUDE),
+# GUARD_VERIFY_APP_SLUG (default vws-verify), GUARD_VERIFY_APP_ID (optional numeric app id),
+# GUARD_VERIFY_CHECK (default vws-verify, the check run name),
+# GUARD_ARCHTEST_PKG (default ./internal/archtest/...), GITHUB_REPOSITORY and an authenticated gh for push-watch.
+set -euo pipefail
+export LC_ALL=C
+
+MAIN=${GUARD_MAIN_BRANCH:-main}
+HEADING=${GUARD_HEADING:-## Insider-risk guardrails}
+ITEMS=${GUARD_ITEMS:-7}
+VERIFY_LABEL=${GUARD_VERIFY_LABEL:-verify-approved}
+# pull_request_target runs this file from the default branch. allow reads the digest list from that
+# checkout, so a pull request cannot authorize its own edits to a locked file.
+die() {
+  echo "$*" >&2
+  exit 1
+}
+
+cmd_agents() {
+  local file=${1:-AGENTS.md} section n
+  [[ -f $file ]] || die "agents: ${file} does not exist"
+  grep -q -x -F -- "$HEADING" "$file" || die "agents: ${file} has no '${HEADING}' heading"
+  section=$(awk -v h="$HEADING" '
+    $0 == h { on = 1; next }
+    on && /^## / { exit }
+    on { print }' "$file")
+  for ((n = 1; n <= ITEMS; n++)); do
+    [[ $(grep -c -E "^${n}\. +[^ ]" <<<"$section") -eq 1 ]] ||
+      die "agents: '${HEADING}' needs exactly one item numbered ${n}"
+  done
+  if grep -q -E "^$((ITEMS + 1))\. " <<<"$section"; then
+    die "agents: '${HEADING}' has more than ${ITEMS} numbered items"
+  fi
+}
+
+# The rule table under HEADING has two columns, rule | enforcer. An enforcer cell is never empty;
+# a rule without a test, lint or CI step says so with a cell that starts with "Judgment".
+# HEADING: the argument, else GUARD_RULES_HEADING, else "## Rules" or "## 규칙표", whichever FILE has.
+cmd_rules() {
+  local file=${1:-AGENTS.md} heading=${2:-${GUARD_RULES_HEADING:-}} h rows
+  [[ -f $file ]] || die "rules: ${file} does not exist"
+  if [[ -z $heading ]]; then
+    for h in "## Rules" "## 규칙표"; do
+      if grep -q -x -F -- "$h" "$file"; then heading=$h; break; fi
+    done
+    [[ -n $heading ]] || die "rules: ${file} has no '## Rules' or '## 규칙표' heading"
+  fi
+  grep -q -x -F -- "$heading" "$file" || die "rules: ${file} has no '${heading}' heading"
+  rows=$(awk -v h="$heading" '
+    $0 == h { on = 1; next }
+    on && /^## / { exit }
+    on && /^\|/ { print }' "$file")
+  [[ -n $rows ]] || die "rules: '${heading}' has no table"
+  awk -F'|' 'NR == 1 && NF != 4 { exit 1 } NR == 2 && $2 !~ /^[[:space:]]*:?-+:?[[:space:]]*$/ { exit 1 }' <<<"$rows" ||
+    die "rules: '${heading}' needs a two-column '| Rule | Enforcer |' table"
+  rows=$(tail -n +3 <<<"$rows")
+  [[ -n $rows ]] || die "rules: '${heading}' has no rule rows"
+  awk -F'|' 'NF != 4 || $3 ~ /^[[:space:]]*$/ { print "rules: row without an enforcer: " $0; bad = 1 } END { exit bad }' <<<"$rows" >&2 ||
+    die "rules: every row needs an enforcer (test, lint, CI step) or 'Judgment'"
+  echo "rules: $(wc -l <<<"$rows") rows, $(awk -F'|' '$3 ~ /^[[:space:]]*Judgment/' <<<"$rows" | wc -l) Judgment"
+}
+
+# Paths the verify-gate job loads. A pull request cannot shrink this set.
+# scripts/guard-allowed.sha256 is not listed. It is this checkout's digest list, so a review
+# can add a hash before the blob changes.
+LOCKED_PATHS=(
+  .github/workflows/repo-guard.yml
+  scripts/guard-agents.sh
+  scripts/guard-agents.sh.sha256
+)
+
+cmd_allow() {
+  local allowfile=${1:-} headref=${2:-} path hash
+  [[ -n $allowfile && -n $headref ]] || die "allow: needs ALLOWFILE and HEADREF"
+  [[ -f $allowfile ]] || die "allow: ${allowfile} is missing; refusing"
+  git rev-parse --verify --quiet "${headref}^{commit}" >/dev/null ||
+    die "allow: ${headref} is not a commit"
+  for path in "${LOCKED_PATHS[@]}"; do
+    if ! git cat-file -e "${headref}:${path}" 2>/dev/null; then
+      die "allow: ${path} is missing at ${headref}"
+    fi
+    hash=$(git show "${headref}:${path}" | sha256sum | awk '{print $1}')
+    if ! grep -F -x -q -e "${hash}  ${path}" "$allowfile"; then
+      die "allow: ${path} (${hash}) is not in the trusted digest list; land that digest on the default branch first"
+    fi
+  done
+}
+
+id_gt() {
+  local a=$1 b=$2
+  while [[ $a == 0* && ${#a} -gt 1 ]]; do a=${a#0}; done
+  while [[ $b == 0* && ${#b} -gt 1 ]]; do b=${b#0}; done
+  if (( ${#a} > ${#b} )); then return 0; fi
+  if (( ${#a} < ${#b} )); then return 1; fi
+  [[ $a > $b ]]
+}
+
+cmd_latest_labeler() {
+  local best_at="" best_id="" best_login="" at id login
+  while IFS=$'\t' read -r at id login || [[ -n ${at:-} ]]; do
+    [[ -n $at && -n ${id:-} && -n ${login:-} ]] || continue
+    [[ $id =~ ^[0-9]+$ ]] || die "latest-labeler: event id '${id}' is not decimal"
+    if [[ -z $best_at ]] || [[ $at > $best_at ]] || { [[ $at == "$best_at" ]] && id_gt "$id" "$best_id"; }; then
+      best_at=$at
+      best_id=$id
+      best_login=$login
+    fi
+  done
+  [[ -n $best_login ]] || die "latest-labeler: no verify-approved labeled event"
+  printf '%s\n' "$best_login"
+}
+
+cmd_check_run() {
+  local head=${1:-} line name sha conclusion slug app_id completed id
+  local best_at="" best_id="" best_conclusion="" saw=0
+  local want_slug=${GUARD_VERIFY_APP_SLUG:-vws-verify}
+  local want_id=${GUARD_VERIFY_APP_ID:-}
+  local want_name=${GUARD_VERIFY_CHECK:-vws-verify}
+  [[ $head =~ ^[0-9a-f]{40}$ ]] || die "check-run: needs the full head commit SHA"
+  while IFS= read -r line || [[ -n ${line:-} ]]; do
+    [[ -n $line ]] || continue
+    name=$(jq -r '.name // empty' <<<"$line")
+    sha=$(jq -r '.head_sha // empty' <<<"$line")
+    conclusion=$(jq -r '.conclusion // empty' <<<"$line")
+    slug=$(jq -r '.app.slug // empty' <<<"$line")
+    app_id=$(jq -r 'if .app.id == null then empty else (.app.id | tostring) end' <<<"$line")
+    completed=$(jq -r '.completed_at // empty' <<<"$line")
+    id=$(jq -r 'if .id == null then "0" else (.id | tostring) end' <<<"$line")
+    [[ $name == "$want_name" && $sha == "$head" ]] || continue
+    if [[ $slug != "$want_slug" ]] && { [[ -z $want_id ]] || [[ $app_id != "$want_id" ]]; }; then
+      continue
+    fi
+    [[ $id =~ ^[0-9]+$ ]] || id=0
+    if [[ $saw -eq 0 ]] || [[ $completed > $best_at ]] || { [[ $completed == "$best_at" ]] && id_gt "$id" "$best_id"; }; then
+      best_at=$completed
+      best_id=$id
+      best_conclusion=$conclusion
+      saw=1
+    fi
+  done
+  [[ $saw -eq 1 ]] || die "check-run: no ${want_name} check run from the ${want_slug} app on ${head}"
+  [[ $best_conclusion == success ]] ||
+    die "check-run: ${want_name} conclusion is '${best_conclusion:-none}', want success"
+}
+
+cmd_verify_gate() {
+  local head=${1:-} labels=${2:-} actors
+  actors=${GUARD_VERIFY_ACTORS:-}
+  [[ $head =~ ^[0-9a-f]{40}$ ]] || die "verify-gate: needs the full head commit SHA"
+  if [[ -z ${actors//[[:space:],]/} ]]; then
+    die "verify-gate: GUARD_VERIFY_ACTORS is empty; set VWS_VERIFY_ACTORS to the logins allowed to approve"
+  fi
+  local name has_label=0
+  while IFS= read -r name || [[ -n ${name:-} ]]; do
+    [[ $name == "$VERIFY_LABEL" ]] && has_label=1
+  done <<<"$labels"
+  [[ $has_label -eq 1 ]] || die "verify-gate: the pull request has no '${VERIFY_LABEL}' label"
+  local labeler=${GUARD_VERIFY_LABELER:-} excluded=${GUARD_VERIFY_EXCLUDE:-} identity=${GUARD_VERIFY_IDENTITY:-}
+  [[ -n $labeler && ",${actors}," == *",${labeler},"* ]] ||
+    die "verify-gate: '${VERIFY_LABEL}' was added by '${labeler:-unknown}', not by one of: ${actors}"
+  # No self-approval: the PR author and the head pusher (GUARD_VERIFY_EXCLUDE) can neither label nor
+  # approve, unless the login is the vws-verify identity (GUARD_VERIFY_IDENTITY). Same-account gap: when
+  # vws-verify and the author share one login, this check cannot tell them apart.
+  if [[ -n $labeler && $labeler != "$identity" && ",${excluded}," == *",${labeler},"* ]]; then
+    die "verify-gate: '${VERIFY_LABEL}' was added by '${labeler}', the PR author or pusher"
+  fi
+}
+
+# The one guard command for the architecture test: the Judgment count line comes first so the CI log
+# always shows it, even when the test fails; go test runs with -v so every rule test is listed.
+# A repo without the archtest directory says so and passes; the rules check still runs.
+cmd_archtest() {
+  local pkg=${GUARD_ARCHTEST_PKG:-./internal/archtest/...}
+  cmd_rules "$@"
+  if [[ ! -d ${pkg%/...} ]]; then
+    echo "archtest: ${pkg%/...} does not exist; no architecture test to run"
+    return 0
+  fi
+  go test -v -count=1 "$pkg" || die "archtest: go test -v ${pkg} failed"
+}
+
+# Every repo carries a byte-identical copy of the vws-deploy file. SUMFILE pins its sha256 (sha256sum format).
+# vws-deploy CI checks SUMFILE against the file, so a change to the canonical file updates SUMFILE in the
+# same pull request; other repos copy both files unchanged.
+cmd_identity() {
+  local sumfile=${1:-scripts/guard-agents.sh.sha256} self want got
+  self=${GUARD_SELF:-${BASH_SOURCE[0]}}
+  [[ -f $sumfile ]] || die "identity: ${sumfile} does not exist"
+  want=$(awk 'NR == 1 { print $1 }' "$sumfile")
+  [[ $want =~ ^[0-9a-f]{64}$ ]] || die "identity: ${sumfile} has no sha256"
+  got=$(sha256sum "$self" | cut -d' ' -f1)
+  [[ $got == "$want" ]] ||
+    die "identity: ${self} (sha256 ${got}) is not the canonical vws-deploy copy (${want}); copy scripts/guard-agents.sh and its .sha256 from vws-deploy main, do not edit them here"
+  echo "identity: ${self} is the canonical copy (${want:0:12})"
+}
+
+cmd_pr_base() {
+  local base=${1:-}
+  [[ -n $base ]] || die "pr-base: needs the base ref"
+  [[ $base == "$MAIN" ]] || die "pr-base: this pull request targets '${base}', not '${MAIN}'. Do not stack pull requests."
+}
+
+# A closing keyword followed by an issue reference: GitHub would close that issue on merge.
+# The reference is #N, owner/repo#N or a full issue or pull request URL (GitHub closes on all three).
+CLOSING_RE='(^|[^[:alnum:]])(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]*:?[[:space:]]+(([A-Za-z0-9._/-]+)?#[0-9]+|(https?://)?[^[:space:]]*/(issues|pull)/[0-9]+)'
+# "Part of #N" or "Part of owner/repo#N". #TBD is allowed in commits only, until the issue exists.
+# Issue numbers start at 1: #0, #00 and #012 name no issue and are rejected wherever they appear.
+PART_OF_RE='(^|[^[:alnum:]])part of[[:space:]]+([A-Za-z0-9._/-]+)?#[1-9][0-9]*'
+PART_OF_ZERO_RE='(^|[^[:alnum:]])part of[[:space:]]+([A-Za-z0-9._/-]+)?#0'
+
+# Work items are tracked on parent issues that a human closes. No PR or commit may close an
+# issue automatically, so closing keywords are banned outright. Telling a parent issue from a
+# leaf would need the GitHub API (sub-issues or a tracking label) in every hook and run; a
+# plain ban needs no token, works offline and cannot be fooled by a missing label.
+# The text a reader sees: HTML comments (<!-- -->, also across lines) and fenced code blocks
+# (``` or ~~~) are removed, so a "Part of #N" hidden there does not count.
+visible_text() {
+  awk '
+    {
+      line = $0; out = ""
+      # A fence closes only on a line of the same character, at least as long as the opening run, with
+      # nothing after it (CommonMark), so "```" inside a "~~~~" block or a "```go" line does not close it.
+      if (!incom && !fence && match(line, /^[[:space:]]*(```+|~~~+)/)) {
+        run = substr(line, RSTART, RLENGTH); sub(/^[[:space:]]*/, "", run)
+        fch = substr(run, 1, 1); flen = length(run); fence = 1; next
+      }
+      if (fence) {
+        if (match(line, /^[[:space:]]*(```+|~~~+)[[:space:]]*$/)) {
+          run = line; gsub(/[[:space:]]/, "", run)
+          if (substr(run, 1, 1) == fch && length(run) >= flen) fence = 0
+        }
+        next
+      }
+      while (1) {
+        if (incom) {
+          i = index(line, "-->"); if (!i) { line = ""; break }
+          line = substr(line, i + 3); incom = 0
+        } else {
+          i = index(line, "<!--"); if (!i) { out = out line; break }
+          out = out substr(line, 1, i - 1); line = substr(line, i + 4); incom = 1
+        }
+      }
+      print out
+    }'
+}
+
+# English only: exit 0 when stdin has a Hangul character. perl, because grep -P needs a UTF-8 locale.
+has_hangul() {
+  perl -CSD -ne '$f = 1 if /\p{Hangul}/; END { exit($f ? 0 : 1) }' 2>/dev/null
+}
+
+cmd_english() {
+  local list=${1:-.github/english-allowlist} glob reason f ok
+  local -a globs=() bad=()
+  if [[ -f $list ]]; then
+    while read -r glob reason; do
+      [[ -z $glob || $glob == \#* ]] && continue
+      [[ -n $reason ]] || die "english: ${list}: '${glob}' has no reason"
+      globs+=("$glob")
+    done <"$list"
+  fi
+  while IFS= read -r -d '' f; do
+    [[ -f $f ]] || continue
+    ok=0
+    for glob in "${globs[@]}"; do
+      # shellcheck disable=SC2053
+      [[ $f == $glob ]] && ok=1 && break
+    done
+    [[ $ok -eq 1 ]] && continue
+    has_hangul <"$f" && bad+=("$f")
+  done < <(git ls-files -z)
+  [[ ${#bad[@]} -eq 0 ]] || die "english: Hangul in ${bad[*]}; write English or add '<glob> <reason>' to ${list}"
+}
+
+cmd_pr_body() {
+  local body=${PR_BODY:-} seen
+  if [[ -n ${1:-} ]]; then
+    [[ -f $1 ]] || die "pr-body: ${1} does not exist"
+    body=$(cat "$1")
+  fi
+  seen=$(visible_text <<<"$body")
+  # Closing keywords are checked in the raw text and in the visible text, so hiding one in a
+  # comment or fence never makes a body pass that would otherwise fail.
+  if grep -q -i -E "$CLOSING_RE" <<<"$body" || grep -q -i -E "$CLOSING_RE" <<<"$seen"; then
+    die "pr-body: do not close issues from a pull request (found Closes/Fixes/Resolves #N); write 'Part of #N'"
+  fi
+  ! grep -q -i -E "$PART_OF_ZERO_RE" <<<"$body" ||
+    die "pr-body: 'Part of #0' names no issue; issue numbers start at 1"
+  grep -q -i -E "$PART_OF_RE" <<<"$seen" ||
+    die "pr-body: the pull request text needs 'Part of #N' outside HTML comments and code fences"
+  ! has_hangul <<<"$body" || die "pr-body: write the pull request text in English (found Hangul)"
+}
+
+cmd_commit_msg() {
+  local file=${1:-} mode=${2:-} msg
+  [[ -n $file && -f $file ]] || die "commit-msg: needs the message file"
+  # In the commit-msg hook, lines starting with # are git's comments and never reach the commit. A stored
+  # message (mode "stored", from pr-commits) has no such comments: every line is real and is checked.
+  if [[ $mode == stored ]]; then msg=$(cat "$file"); else msg=$(grep -v '^#' "$file" || true); fi
+  if grep -q -i -E "$CLOSING_RE" <<<"$msg" || grep -q -i -E "$CLOSING_RE" <<<"$(visible_text <<<"$msg")"; then
+    die "commit-msg: do not close issues from a commit (found Closes/Fixes/Resolves #N); write 'Part of #N'"
+  fi
+  ! grep -q -i -E "$PART_OF_ZERO_RE" <<<"$msg" ||
+    die "commit-msg: 'Part of #0' names no issue; issue numbers start at 1"
+  ! has_hangul <<<"$msg" || die "commit-msg: write the commit message in English (found Hangul)"
+}
+
+cmd_pr_commits() {
+  local base=${1:-} head=${2:-} sha tmp
+  [[ -n $base && -n $head ]] || die "pr-commits: needs BASE and HEAD"
+  tmp=$(mktemp)
+  trap 'rm -f "$tmp"' RETURN
+  # Merge commits too: a merge message that closes an issue closes it like any other commit. A range git
+  # cannot list (a bad ref) fails instead of checking nothing.
+  local -a shas
+  mapfile -t shas < <(git rev-list "${base}..${head}" || echo "rev-list-failed")
+  [[ ${shas[*]:-} != *rev-list-failed* ]] || die "pr-commits: cannot list the commits in ${base}..${head}"
+  for sha in "${shas[@]}"; do
+    [[ -n $sha ]] || continue
+    git log -1 --format=%B "$sha" >"$tmp"
+    (cmd_commit_msg "$tmp" stored) 2>/dev/null || die "pr-commits: ${sha:0:12} closes an issue, names #0 or has Hangul; write English with 'Part of #N'"
+  done
+}
+
+pr_count() {
+  local sha=$1 i n
+  for i in 1 2 3; do
+    n=$(gh api "repos/${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}/commits/${sha}/pulls" --jq 'length') || n=0
+    [[ $n -gt 0 ]] && break
+    # The association appears a few seconds after a merge.
+    [[ $i -lt 3 ]] && sleep "${GUARD_RETRY_SECONDS:-5}"
+  done
+  echo "$n"
+}
+
+cmd_push_watch() {
+  local before=${1:-} after=${2:-} zero sha
+  local -a commits bad=()
+  [[ -n $before && -n $after ]] || die "push-watch: needs BEFORE and AFTER"
+  zero=$(printf '0%.0s' {1..40})
+  if [[ $before == "$zero" ]] || ! git cat-file -e "${before}^{commit}" 2>/dev/null; then
+    commits=("$after")
+  else
+    git merge-base --is-ancestor "$before" "$after" ||
+      die "push-watch: history of '${MAIN}' was rewritten (${before} is not an ancestor of ${after})"
+    mapfile -t commits < <(git rev-list --first-parent "${before}..${after}")
+  fi
+  for sha in "${commits[@]}"; do
+    [[ $(pr_count "$sha") -gt 0 ]] || bad+=("$sha")
+  done
+  [[ ${#bad[@]} -eq 0 ]] || die "push-watch: commits on '${MAIN}' without a pull request: ${bad[*]}"
+}
+
+CORRECT_HEADING="## /correct loop"
+# The Korean heading is still accepted until every repo's AGENTS.md is English.
+CORRECT_HEADING_LEGACY="## /correct 교정 루프"
+CORRECT_FIELDS="what-happened impact detection root-cause catching-check follow-ups"
+
+cmd_correct() {
+  local dir=${1:-.} tpl labels id h=$CORRECT_HEADING
+  tpl="${dir}/.github/ISSUE_TEMPLATE/incident.yml"
+  labels="${dir}/.github/labels.yml"
+  [[ -f ${dir}/AGENTS.md ]] || die "correct: ${dir}/AGENTS.md does not exist"
+  if ! tr -d '\r' <"${dir}/AGENTS.md" | grep -q -x -F -- "$h"; then
+    tr -d '\r' <"${dir}/AGENTS.md" | grep -q -x -F -- "$CORRECT_HEADING_LEGACY" && h=$CORRECT_HEADING_LEGACY
+  fi
+  # CRLF line endings are read as LF, so a heading saved on Windows still matches.
+  tr -d '\r' <"${dir}/AGENTS.md" | grep -q -x -F -- "$h" ||
+    die "correct: AGENTS.md has no line that is exactly '${h}' (trailing spaces or a different heading do not match)"
+  # Empty: no content before the next # or ## heading. A ### subheading and a line inside a code fence are
+  # content; the fence lines themselves and blank lines are not, so an empty fence is an empty section.
+  tr -d '\r' <"${dir}/AGENTS.md" | awk -v h="$h" '
+    $0 == h { s = 1; next }
+    !s { next }
+    /^[[:space:]]*(```|~~~)/ { fence = !fence; next }
+    !fence && /^##?([[:space:]]|$)/ { exit }
+    /[^[:space:]]/ { f = 1; exit }
+    END { exit !f }' || die "correct: AGENTS.md '${h}' section is empty (blank lines and empty code fences do not count)"
+  [[ -f $tpl ]] || die "correct: ${tpl} does not exist"
+  grep -q -E '^labels:.*\bincident\b' "$tpl" || die "correct: ${tpl} does not apply the incident label"
+  for id in $CORRECT_FIELDS; do
+    grep -q -E "^[[:space:]]+id:[[:space:]]+${id}[[:space:]]*$" "$tpl" || die "correct: ${tpl} has no field '${id}'"
+  done
+  [[ -f $labels ]] || die "correct: ${labels} does not exist"
+  grep -q -E '^- name:[[:space:]]+incident[[:space:]]*$' "$labels" || die "correct: ${labels} does not define the incident label"
+}
+
+expect_fail() {
+  local label=$1
+  shift
+  if ("$@") >/dev/null 2>&1; then
+    die "selftest: ${label} was accepted"
+  fi
+  echo "ok: ${label} fails"
+}
+
+expect_pass() {
+  local label=$1
+  shift
+  "$@" >/dev/null 2>&1 || die "selftest: ${label} was rejected"
+  echo "ok: ${label} passes"
+}
+
+cmd_selftest() {
+  local tmp good i
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' RETURN
+  good="$tmp/good.md"
+  { echo "# t"; echo "$HEADING"; echo; for ((i = 1; i <= ITEMS; i++)); do echo "${i}. **rule ${i}** text"; done; echo; echo "## next"; } >"$good"
+  expect_pass "complete section" cmd_agents "$good"
+  expect_fail "missing file" cmd_agents "$tmp/none.md"
+  printf '# t\n## other\n1. a\n' >"$tmp/nohead.md"
+  expect_fail "missing heading" cmd_agents "$tmp/nohead.md"
+  grep -v -E "^3\. " "$good" >"$tmp/noitem.md"
+  expect_fail "missing item 3" cmd_agents "$tmp/noitem.md"
+  { cat "$good"; echo "3. again"; } >"$tmp/dup.md"
+  sed -i "/^## next/d" "$tmp/dup.md"
+  expect_fail "duplicate item 3" cmd_agents "$tmp/dup.md"
+  awk -v h="$HEADING" '$0 == h { print "## Other"; next } { print }' "$good" >"$tmp/renamed.md"
+  expect_fail "renamed heading" cmd_agents "$tmp/renamed.md"
+
+  local rules="$tmp/rules.md"
+  printf '# t\n## Rules\n\n| Rule | Enforcer |\n| --- | --- |\n| a | `TestA` |\n| b | Judgment. why |\n\n## next\n| x | |\n' >"$rules"
+  expect_pass "every rule has an enforcer" cmd_rules "$rules"
+  [[ $(cmd_rules "$rules") == "rules: 2 rows, 1 Judgment" ]] || die "selftest: Judgment count is wrong"
+  echo "ok: Judgment count"
+  [[ $(bash "$0" judgment "$rules") == "rules: 2 rows, 1 Judgment" ]] || die "selftest: judgment is not an alias of rules"
+  echo "ok: judgment is an alias of rules"
+  mkdir -p "$tmp/bin" "$tmp/arch/internal/archtest"
+  printf '#!/bin/sh\necho "go $*" >>"$GOLOG"\n[ -z "$GOFAIL" ]\n' >"$tmp/bin/go"
+  chmod +x "$tmp/bin/go"
+  local out self
+  self=$(readlink -f "$0")
+  out=$(cd "$tmp/arch" && PATH="$tmp/bin:$PATH" GOLOG="$tmp/go.log" bash "$self" archtest "$rules")
+  [[ $(head -1 <<<"$out") == "rules: 2 rows, 1 Judgment" ]] || die "selftest: archtest does not print the Judgment count first"
+  grep -q -x -F 'go test -v -count=1 ./internal/archtest/...' "$tmp/go.log" || die "selftest: archtest does not run go test -v"
+  echo "ok: archtest prints the Judgment count and runs go test -v"
+  expect_fail "a failing archtest" bash -c 'cd "$1" && PATH="$2:$PATH" GOLOG=/dev/null GOFAIL=1 bash "$3" archtest "$4"' _ "$tmp/arch" "$tmp/bin" "$self" "$rules"
+  out=$(cd "$tmp" && PATH="$tmp/bin:$PATH" GOLOG=/dev/null GOFAIL=1 bash "$self" archtest "$rules") || die "selftest: archtest failed without an archtest directory"
+  grep -q -x -F "rules: 2 rows, 1 Judgment" <<<"$out" || die "selftest: archtest without a directory dropped the Judgment count"
+  echo "ok: archtest without a directory still prints the Judgment count"
+  sed 's/^## Rules$/## 규칙표/; s/| Rule | Enforcer |/| 규칙 | 강제 |/' "$rules" >"$tmp/rules-ko.md"
+  expect_pass "the Korean heading is found" cmd_rules "$tmp/rules-ko.md"
+  sed 's/^## Rules$/## Policy/' "$rules" >"$tmp/rules-arg.md"
+  expect_pass "heading from the argument" cmd_rules "$tmp/rules-arg.md" "## Policy"
+  expect_pass "heading from GUARD_RULES_HEADING" env GUARD_RULES_HEADING="## Policy" bash "$0" rules "$tmp/rules-arg.md"
+  expect_fail "a heading the file does not have" cmd_rules "$rules" "## Policy"
+  sed 's/^| a | `TestA` |$/| a |  |/' "$rules" >"$tmp/norule.md"
+  expect_fail "a rule without an enforcer" cmd_rules "$tmp/norule.md"
+  sed 's/^| a | `TestA` |$/| a | `TestA` | extra |/' "$rules" >"$tmp/threecol.md"
+  expect_fail "a row with three columns" cmd_rules "$tmp/threecol.md"
+  sed 's/| Rule | Enforcer |/| Rule | Enforcer | Note |/' "$rules" >"$tmp/header.md"
+  expect_fail "a three-column header" cmd_rules "$tmp/header.md"
+  sed 's/^## Rules$/## other/' "$rules" >"$tmp/norules.md"
+  expect_fail "no rule table heading" cmd_rules "$tmp/norules.md"
+  printf '# t\n## Rules\n\n| Rule | Enforcer |\n| --- | --- |\n' >"$tmp/emptyrules.md"
+  expect_fail "an empty rule table" cmd_rules "$tmp/emptyrules.md"
+
+  cp "$0" "$tmp/copy.sh"
+  sha256sum "$tmp/copy.sh" >"$tmp/copy.sha256"
+  expect_pass "an identical copy" env GUARD_SELF="$tmp/copy.sh" bash "$0" identity "$tmp/copy.sha256"
+  echo "# local edit" >>"$tmp/copy.sh"
+  expect_fail "an edited copy" env GUARD_SELF="$tmp/copy.sh" bash "$0" identity "$tmp/copy.sha256"
+  echo "not-a-hash  x" >"$tmp/bad.sha256"
+  expect_fail "a sum file without a hash" bash "$0" identity "$tmp/bad.sha256"
+  expect_fail "a missing sum file" bash "$0" identity "$tmp/none.sha256"
+
+  expect_pass "base is main" cmd_pr_base "$MAIN"
+  expect_fail "base is a stack branch" cmd_pr_base "feature-stack-base"
+  expect_fail "empty base" cmd_pr_base ""
+
+  expect_pass "Part of #N" env PR_BODY="Part of #12" bash "$0" pr-body
+  expect_pass "part of owner/repo#N" env PR_BODY="intro
+part of acme/repo#7" bash "$0" pr-body
+  expect_fail "Closes #N" env PR_BODY="Part of #3
+Closes #12" bash "$0" pr-body
+  expect_fail "fixes owner/repo#N" env PR_BODY="Part of #3
+fixes acme/repo#7" bash "$0" pr-body
+  expect_fail "Resolves: #N" env PR_BODY="Part of #3 Resolves: #7" bash "$0" pr-body
+  expect_fail "no Part of" env PR_BODY="mentions #12 only" bash "$0" pr-body
+  expect_fail "empty body" env PR_BODY="" bash "$0" pr-body
+  expect_fail "Part of without number" env PR_BODY="Part of the gap" bash "$0" pr-body
+  expect_fail "Part of #TBD in a pull request" env PR_BODY="Part of #TBD" bash "$0" pr-body
+
+  expect_fail "Part of only in an HTML comment" env PR_BODY="<!-- Part of #12 -->" bash "$0" pr-body
+  expect_fail "Part of only in a multi-line HTML comment" env PR_BODY="intro
+<!--
+Part of #12
+-->
+outro" bash "$0" pr-body
+  expect_fail "Part of only in a backtick fence" env PR_BODY="intro
+\`\`\`
+Part of #12
+\`\`\`" bash "$0" pr-body
+  expect_fail "Part of only in a tilde fence" env PR_BODY="~~~text
+Part of #12
+~~~" bash "$0" pr-body
+  expect_fail "Part of only in an unclosed fence" env PR_BODY="\`\`\`
+Part of #12" bash "$0" pr-body
+  expect_pass "Part of after a closed comment on the same line" env PR_BODY="<!-- note --> Part of #12" bash "$0" pr-body
+  expect_pass "Part of after a fence" env PR_BODY="\`\`\`
+code
+\`\`\`
+Part of #12" bash "$0" pr-body
+  expect_fail "Closes hidden in an HTML comment" env PR_BODY="Part of #3 <!-- Closes #12 -->" bash "$0" pr-body
+  expect_fail "Closes hidden in a fence" env PR_BODY="Part of #3
+\`\`\`
+Closes #12
+\`\`\`" bash "$0" pr-body
+  expect_fail "Closes split around a comment" env PR_BODY="Part of #3 Closes<!-- x --> #12" bash "$0" pr-body
+  printf 'ci: x\n\nPart of #3 Fixes<!-- --> #12\n' >"$tmp/msg-hidden"
+  expect_fail "commit-msg Fixes split around a comment" cmd_commit_msg "$tmp/msg-hidden"
+  expect_fail "Part of #0" env PR_BODY="Part of #0" bash "$0" pr-body
+  expect_fail "Part of owner/repo#0" env PR_BODY="Part of acme/repo#0" bash "$0" pr-body
+  expect_fail "Part of #00" env PR_BODY="Part of #00" bash "$0" pr-body
+  expect_fail "Part of #012" env PR_BODY="Part of #012" bash "$0" pr-body
+  # A fence closes only on the same character, at least as long (vws-deploy guard P2).
+  expect_fail "Part of behind a shorter inner fence" env PR_BODY="~~~~
+\`\`\`
+Part of #12
+~~~~" bash "$0" pr-body
+  expect_fail "Part of behind a three-tilde line in a four-tilde fence" env PR_BODY="~~~~
+~~~
+Part of #12
+~~~~" bash "$0" pr-body
+  expect_fail "Part of behind a fence line with text after it" env PR_BODY="\`\`\`
+\`\`\`go
+Part of #12
+\`\`\`" bash "$0" pr-body
+  expect_pass "Part of after a properly closed long fence" env PR_BODY="~~~~
+x
+~~~~~
+Part of #12" bash "$0" pr-body
+  expect_fail "Part of #0 next to a valid Part of" env PR_BODY="Part of #3
+Part of #0" bash "$0" pr-body
+  expect_pass "Part of #10" env PR_BODY="Part of #10" bash "$0" pr-body
+  printf 'ci: x\n\nPart of #0\n' >"$tmp/msg-zero"
+  expect_fail "commit with Part of #0" cmd_commit_msg "$tmp/msg-zero"
+  printf 'ci: x\n\nPart of acme/repo#0\n' >"$tmp/msg-zero2"
+  expect_fail "commit with Part of owner/repo#0" cmd_commit_msg "$tmp/msg-zero2"
+  printf 'ci: x\n\nPart of #12\n' >"$tmp/msg-ok"
+  expect_pass "commit with Part of #N" cmd_commit_msg "$tmp/msg-ok"
+  # English only: Hangul anywhere in a commit message or pull request text fails.
+  printf 'ci: \352\267\234\354\271\231\n\nPart of #12\n' >"$tmp/msg-ko"
+  expect_fail "commit with Hangul in the subject" cmd_commit_msg "$tmp/msg-ko"
+  printf 'ci: x\n\nVerified-by: \352\262\200\354\246\235\n\nPart of #12\n' >"$tmp/msg-ko2"
+  expect_fail "commit with Hangul in the body" cmd_commit_msg "$tmp/msg-ko2"
+  printf '# \352\267\234\354\271\231\nci: x\n\nPart of #12\n' >"$tmp/msg-ko3"
+  expect_pass "Hangul only in a git comment line" cmd_commit_msg "$tmp/msg-ko3"
+  expect_fail "pr-body with Hangul" env PR_BODY="Part of #12 $(printf '\352\267\234')" bash "$0" pr-body
+  expect_fail "pr-body with Hangul in an HTML comment" env PR_BODY="Part of #12 <!-- $(printf '\352\267\234') -->" bash "$0" pr-body
+  expect_pass "pr-body with other non-ASCII text" env PR_BODY="Part of #12 caf$(printf '\303\251') $(printf '\342\200\224') ok" bash "$0" pr-body
+  # english: tracked files with Hangul fail unless an allowlist glob with a reason covers them.
+  local en="$tmp/en" self
+  self=$(readlink -f "$0")
+  git init -q "$en"
+  printf 'plain\n' >"$en/a.md"; printf 'x \352\267\234\n' >"$en/ko.md"; mkdir "$en/t"; printf '\352\260\222\n' >"$en/t/data.txt"
+  git -C "$en" add -A
+  expect_fail "english with a Hangul file and no allowlist" bash -c 'cd "$1" && bash "$2" english' _ "$en" "$self"
+  printf '# comment\nko.md test input\nt/* locale data\n' >"$en/allow"
+  expect_pass "english with every Hangul file allowlisted" bash -c 'cd "$1" && bash "$2" english allow' _ "$en" "$self"
+  printf 't/* locale data\n' >"$en/allow"
+  expect_fail "english with one Hangul file not allowlisted" bash -c 'cd "$1" && bash "$2" english allow' _ "$en" "$self"
+  printf 'ko.md\nt/* locale data\n' >"$en/allow"
+  expect_fail "english allowlist entry without a reason" bash -c 'cd "$1" && bash "$2" english allow' _ "$en" "$self"
+  printf 'ci: x\n\nPart of #TBD\n' >"$tmp/msg-tbd"
+  expect_pass "commit with Part of #TBD" cmd_commit_msg "$tmp/msg-tbd"
+  printf 'ci: x\n\nCloses #12\n' >"$tmp/msg-closes"
+  expect_fail "commit with Closes #N" cmd_commit_msg "$tmp/msg-closes"
+  printf 'docs: y (fixes acme/repo#7)\n' >"$tmp/msg-fixes"
+  expect_fail "subject with fixes owner/repo#N" cmd_commit_msg "$tmp/msg-fixes"
+  local kw
+  for kw in Closes closes CLOSED close Fix fixes FIXED fixed Resolve resolves RESOLVED resolved; do
+    expect_fail "pr-body ${kw} with a full issue URL" env PR_BODY="Part of #3
+${kw} https://github.com/acme/repo/issues/7" bash "$0" pr-body
+    printf 'ci: x\n\n%s https://github.com/acme/repo/issues/7\n\nPart of #3\n' "$kw" >"$tmp/msg-url"
+    expect_fail "commit-msg ${kw} with a full issue URL" cmd_commit_msg "$tmp/msg-url"
+  done
+  expect_fail "Closes: with a pull request URL" env PR_BODY="Part of #3 Closes: https://github.com/acme/repo/pull/7" bash "$0" pr-body
+  expect_fail "fixes with a URL without the scheme" env PR_BODY="Part of #3 fixes github.com/acme/repo/issues/7" bash "$0" pr-body
+  expect_pass "an issue URL without a closing keyword" env PR_BODY="Part of #3, see https://github.com/acme/repo/issues/7" bash "$0" pr-body
+  printf 'ci: x\n# Closes #12 in a git comment line\n' >"$tmp/msg-comment"
+  expect_pass "Closes in a git comment line" cmd_commit_msg "$tmp/msg-comment"
+
+  # correct: a complete repo passes; each missing piece fails.
+  local cr="$tmp/correct"
+  mkdir -p "$cr/.github/ISSUE_TEMPLATE"
+  printf '# t\n%s\n1. x\n' "$CORRECT_HEADING" >"$cr/AGENTS.md"
+  { echo "name: incident"; echo "labels: [incident]"; echo "body:"; for id in $CORRECT_FIELDS; do echo "  - type: textarea"; echo "    id: ${id}"; done; } >"$cr/.github/ISSUE_TEMPLATE/incident.yml"
+  printf -- '- name: incident\n  color: "b60205"\n' >"$cr/.github/labels.yml"
+  expect_pass "complete /correct loop" cmd_correct "$cr"
+  rm -rf "$tmp/legacy"; cp -r "$cr" "$tmp/legacy"; printf '# t\n%s\n1. x\n' "$CORRECT_HEADING_LEGACY" >"$tmp/legacy/AGENTS.md"
+  expect_pass "the Korean /correct heading until every repo is English" cmd_correct "$tmp/legacy"
+  local cb="$tmp/correct-bad"
+  rm -rf "$cb"; cp -r "$cr" "$cb"; sed -i '/correct/d' "$cb/AGENTS.md"
+  expect_fail "no /correct section" cmd_correct "$cb"
+  rm -rf "$cb"; cp -r "$cr" "$cb"; printf '# t\n%s\n\n## next\n1. x\n' "$CORRECT_HEADING" >"$cb/AGENTS.md"
+  expect_fail "/correct heading with an empty body" cmd_correct "$cb"
+  rm -rf "$cb"; cp -r "$cr" "$cb"; printf '# t\n%s\n\n### 절차\n\n## next\n' "$CORRECT_HEADING" >"$cb/AGENTS.md"
+  expect_pass "/correct body with only a ### subheading" cmd_correct "$cb"
+  rm -rf "$cb"; cp -r "$cr" "$cb"; printf '# t\n%s\n```sh\n# gh issue create --template incident.yml\n```\n## next\n' "$CORRECT_HEADING" >"$cb/AGENTS.md"
+  expect_pass "/correct body with a fenced '#' line" cmd_correct "$cb"
+  rm -rf "$cb"; cp -r "$cr" "$cb"; printf '# t\n%s\n\n```\n```\n\n## next\n1. x\n' "$CORRECT_HEADING" >"$cb/AGENTS.md"
+  expect_fail "/correct body with only an empty code fence" cmd_correct "$cb"
+  rm -rf "$cb"; cp -r "$cr" "$cb"; printf '# t\n%s\n  \t\n```sh\n   \n```\n## next\n' "$CORRECT_HEADING" >"$cb/AGENTS.md"
+  expect_fail "/correct body with whitespace and a blank fence" cmd_correct "$cb"
+  rm -rf "$cb"; cp -r "$cr" "$cb"; printf '# t\r\n%s\r\n1. x\r\n' "$CORRECT_HEADING" >"$cb/AGENTS.md"
+  expect_pass "/correct heading with CRLF line endings" cmd_correct "$cb"
+  rm -rf "$cb"; cp -r "$cr" "$cb"; printf '# t\r\n%s\r\n\r\n## next\r\n' "$CORRECT_HEADING" >"$cb/AGENTS.md"
+  expect_fail "/correct CRLF heading with an empty body" cmd_correct "$cb"
+  rm -rf "$cb"; cp -r "$cr" "$cb"; printf '# t\n%s\n\n\n# top\n1. x\n' "$CORRECT_HEADING" >"$cb/AGENTS.md"
+  expect_fail "/correct body empty before a # heading" cmd_correct "$cb"
+  rm -rf "$cb"; cp -r "$cr" "$cb"; sed -i '/^labels:/d' "$cb/.github/ISSUE_TEMPLATE/incident.yml"
+  expect_fail "template missing only the labels: line" cmd_correct "$cb"
+  rm -rf "$cb"; cp -r "$cr" "$cb"; sed -i '/id: catching-check/d' "$cb/.github/ISSUE_TEMPLATE/incident.yml"
+  expect_fail "template without the catching-check field" cmd_correct "$cb"
+  rm -rf "$cb"; cp -r "$cr" "$cb"; sed -i 's/^labels:.*/labels: [bug]/' "$cb/.github/ISSUE_TEMPLATE/incident.yml"
+  expect_fail "template without the incident label" cmd_correct "$cb"
+  rm -rf "$cb"; cp -r "$cr" "$cb"; rm "$cb/.github/labels.yml"
+  expect_fail "no labels file" cmd_correct "$cb"
+
+  # push-watch against a throwaway repository and a gh that answers from a file.
+  local repo="$tmp/repo" bin="$tmp/bin" c1 c2 c3
+  mkdir -p "$repo" "$bin"
+  git -C "$repo" init -q -b "$MAIN"
+  git -C "$repo" config user.email t@example.invalid
+  git -C "$repo" config user.name t
+  for i in 1 2 3; do
+    echo "$i" >"$repo/f"
+    git -C "$repo" add f
+    git -C "$repo" commit -q -m "c$i"
+  done
+  c1=$(git -C "$repo" rev-parse HEAD~2)
+  c2=$(git -C "$repo" rev-parse HEAD~1)
+  c3=$(git -C "$repo" rev-parse HEAD)
+  cat >"$bin/gh" <<'GH'
+#!/usr/bin/env bash
+# fake gh api repos/R/commits/SHA/pulls --jq length: prints the number of lines for SHA in $FAKE_PULLS
+sha=$(sed -n 's#.*/commits/\([0-9a-f]*\)/pulls.*#\1#p' <<<"$*")
+grep -c "^${sha}$" "$FAKE_PULLS" || true
+GH
+  chmod +x "$bin/gh"
+  : >"$tmp/pulls"
+  printf '%s\n%s\n' "$c2" "$c3" >"$tmp/pulls"
+  push() { (cd "$repo" && PATH="$bin:$PATH" FAKE_PULLS="$tmp/pulls" GITHUB_REPOSITORY=o/r GUARD_RETRY_SECONDS=0 bash "$OLDPWD_SCRIPT" push-watch "$@"); }
+  export OLDPWD_SCRIPT
+  OLDPWD_SCRIPT=$(readlink -f "$0")
+  expect_pass "every pushed commit has a pull request" push "$c1" "$c3"
+  printf '%s\n' "$c3" >"$tmp/pulls"
+  expect_fail "a pushed commit without a pull request" push "$c1" "$c3"
+  git -C "$repo" checkout -q -b rewritten "$c1"
+  echo x >"$repo/g"
+  git -C "$repo" add g
+  git -C "$repo" commit -q -m rewrite
+  expect_fail "rewritten history" push "$c3" "$(git -C "$repo" rev-parse HEAD)"
+  expect_fail "new branch whose head has no pull request" push "$(printf '0%.0s' {1..40})" "$c1"
+  git -C "$repo" checkout -q -b commits "$c3"
+  echo y >"$repo/h"
+  git -C "$repo" add h
+  git -C "$repo" commit -q -m "ci: y" -m "Part of #4"
+  expect_pass "commits with Part of" bash -c 'cd "$1" && bash "$2" pr-commits "$3" HEAD' _ "$repo" "$OLDPWD_SCRIPT" "$c3"
+  git -C "$repo" commit -q --allow-empty -m "ci: z" -m "Closes #4"
+  expect_fail "a commit that closes an issue" bash -c 'cd "$1" && bash "$2" pr-commits "$3" HEAD' _ "$repo" "$OLDPWD_SCRIPT" "$c3"
+  local c4
+  c4=$(git -C "$repo" rev-parse HEAD)
+  git -C "$repo" commit -q --allow-empty -m "ci: u" -m "Resolved https://github.com/acme/repo/issues/4" -m "Part of #4"
+  expect_fail "a commit that closes an issue by URL" bash -c 'cd "$1" && bash "$2" pr-commits "$3" HEAD' _ "$repo" "$OLDPWD_SCRIPT" "$c4"
+  # Stored messages keep their # lines; merge commits are checked; a bad range fails (vws-deploy guard P2).
+  local c5
+  git -C "$repo" reset -q --hard "$c4"
+  c5=$(git -C "$repo" rev-parse HEAD~1)
+  git -C "$repo" reset -q --hard "$c5"
+  git -C "$repo" commit -q --allow-empty -m "ci: v" -m "# Fixes #4" -m "Part of #4"
+  expect_fail "a stored commit message with '# Fixes #N'" bash -c 'cd "$1" && bash "$2" pr-commits "$3" HEAD' _ "$repo" "$OLDPWD_SCRIPT" "$c5"
+  git -C "$repo" reset -q --hard "$c5"
+  git -C "$repo" checkout -q -b side "$c5"
+  git -C "$repo" commit -q --allow-empty -m "ci: side" -m "Part of #4"
+  git -C "$repo" checkout -q commits
+  git -C "$repo" merge -q --no-ff -m "Merge side" -m "Closes #4" side
+  expect_fail "a merge commit that closes an issue" bash -c 'cd "$1" && bash "$2" pr-commits "$3" HEAD' _ "$repo" "$OLDPWD_SCRIPT" "$c5"
+  git -C "$repo" reset -q --hard "$c5"
+  expect_fail "pr-commits on a range git cannot list" bash -c 'cd "$1" && bash "$2" pr-commits no-such-ref HEAD' _ "$repo" "$OLDPWD_SCRIPT"
+  expect_pass "pr-commits on an empty clean range" bash -c 'cd "$1" && bash "$2" pr-commits "$3" HEAD' _ "$repo" "$OLDPWD_SCRIPT" "$c5"
+  # Direct calls see these shell variables. Subprocess cases pass their own.
+  local h1 h2
+  h1=$(printf 'a%.0s' {1..40}); h2=$(printf 'b%.0s' {1..40})
+  GUARD_VERIFY_ACTORS=verifier
+  GUARD_VERIFY_LABELER=verifier
+  expect_pass "a verify-approved label from an allowed labeler" cmd_verify_gate "$h1" $'bug\n'"${VERIFY_LABEL}"
+  expect_fail "a label named x,verify-approved,y" cmd_verify_gate "$h1" "x,${VERIFY_LABEL},y"
+  app_ok=$(jq -nc --arg sha "$h1" '{name:"vws-verify",head_sha:$sha,conclusion:"success",app:{slug:"vws-verify",id:1}}')
+  app_other=$(jq -nc --arg sha "$h1" '{name:"vws-verify",head_sha:$sha,conclusion:"success",app:{slug:"other-app",id:2}}')
+  other_sha=$(jq -nc --arg sha "$h2" '{name:"vws-verify",head_sha:$sha,conclusion:"success",app:{slug:"vws-verify",id:1}}')
+  app_fail=$(jq -nc --arg sha "$h1" '{name:"vws-verify",head_sha:$sha,conclusion:"failure",app:{slug:"vws-verify",id:1}}')
+  app_neutral=$(jq -nc --arg sha "$h1" '{name:"vws-verify",head_sha:$sha,conclusion:"neutral",app:{slug:"vws-verify",id:1}}')
+  expect_fail "a vws-verify check run from another app" "$OLDPWD_SCRIPT" check-run "$h1" <<<"$app_other"
+  expect_fail "a vws-verify check run on another sha" "$OLDPWD_SCRIPT" check-run "$h1" <<<"$other_sha"
+  expect_fail "a failure conclusion" "$OLDPWD_SCRIPT" check-run "$h1" <<<"$app_fail"
+  expect_fail "a neutral conclusion" "$OLDPWD_SCRIPT" check-run "$h1" <<<"$app_neutral"
+  expect_fail "a missing vws-verify check run" "$OLDPWD_SCRIPT" check-run "$h1" </dev/null
+  expect_pass "a success check run from the vws-verify app" "$OLDPWD_SCRIPT" check-run "$h1" <<<"$app_ok"
+  other_name=$(jq -nc --arg sha "$h1" '{name:"other",head_sha:$sha,conclusion:"success",app:{slug:"vws-verify",id:1}}')
+  expect_fail "a success run with another name" "$OLDPWD_SCRIPT" check-run "$h1" <<<"$other_name"
+  newer_fail=$(printf '%s\n' \
+    "$(jq -nc --arg sha "$h1" '{name:"vws-verify",head_sha:$sha,conclusion:"success",completed_at:"2024-06-01T00:00:00Z",id:1,app:{slug:"vws-verify",id:1}}')" \
+    "$(jq -nc --arg sha "$h1" '{name:"vws-verify",head_sha:$sha,conclusion:"failure",completed_at:"2024-06-02T00:00:00Z",id:2,app:{slug:"vws-verify",id:1}}')")
+  expect_fail "a newer failure after an older success" "$OLDPWD_SCRIPT" check-run "$h1" <<<"$newer_fail"
+  newer_ok=$(printf '%s\n' \
+    "$(jq -nc --arg sha "$h1" '{name:"vws-verify",head_sha:$sha,conclusion:"failure",completed_at:"2024-06-01T00:00:00Z",id:1,app:{slug:"vws-verify",id:1}}')" \
+    "$(jq -nc --arg sha "$h1" '{name:"vws-verify",head_sha:$sha,conclusion:"success",completed_at:"2024-06-02T00:00:00Z",id:2,app:{slug:"vws-verify",id:1}}')")
+  expect_pass "a newer success after an older failure" "$OLDPWD_SCRIPT" check-run "$h1" <<<"$newer_ok"
+  app_by_id=$(jq -nc --arg sha "$h1" '{name:"vws-verify",head_sha:$sha,conclusion:"success",app:{slug:"other-app",id:9}}')
+  expect_pass "a check run matched by app id" env GUARD_VERIFY_APP_ID=9 "$OLDPWD_SCRIPT" check-run "$h1" <<<"$app_by_id"
+  grep -F -q 'scripts/guard-agents.sh check-run' .github/workflows/repo-guard.yml ||
+    die "selftest: repo-guard.yml does not run check-run"
+  if grep -E -q 'comment-trust|comment-counts|normalize-comment' .github/workflows/repo-guard.yml; then
+    die "selftest: repo-guard.yml still reads issue comments as the verdict"
+  fi
+  echo "ok: the workflow judges the vws-verify check run"
+  run_jq=$(awk -F"'" '/check-runs/ {getline; if ($0 ~ /--jq/) print $2}' .github/workflows/repo-guard.yml)
+  [[ -n $run_jq ]] || die "selftest: repo-guard.yml lost the check-run filter"
+  page=$(jq -n --arg sha "$h1" '{check_runs:[{name:"vws-verify",head_sha:$sha,conclusion:"success",completed_at:"2024-06-01T00:00:00Z",id:1,app:{slug:"vws-verify",id:1}}]}')
+  rows=$(printf '%s\n' "$page" | jq -c "$run_jq")
+  expect_pass "the workflow check-run filter on a success run" "$OLDPWD_SCRIPT" check-run "$h1" <<<"$rows"
+  local pinrepo="$tmp/pinrepo" pinblock shaA shaB
+  pinblock=$(awk '/# head-pin-start/ { on = 1; next } /# head-pin-end/ { on = 0 } on { sub(/^[[:space:]]*/, ""); print }' \
+    .github/workflows/repo-guard.yml)
+  [[ -n $pinblock ]] || die "selftest: repo-guard.yml has no head pin"
+  mkdir -p "$pinrepo" "$tmp/bin"
+  git -C "$pinrepo" init -q -b "$MAIN"
+  git -C "$pinrepo" config user.email t@example.invalid
+  git -C "$pinrepo" config user.name t
+  echo a >"$pinrepo/a"
+  git -C "$pinrepo" add a
+  git -C "$pinrepo" commit -q -m a
+  shaA=$(git -C "$pinrepo" rev-parse HEAD)
+  echo b >>"$pinrepo/a"
+  git -C "$pinrepo" commit -q -am b
+  shaB=$(git -C "$pinrepo" rev-parse HEAD)
+  cat >"$tmp/bin/git" <<'ENDGIT'
+#!/bin/sh
+real=/usr/bin/git
+if [ "$1" = fetch ]; then
+  gd=$("$real" rev-parse --git-dir)
+  printf '%s\t\t%s\n' "$GUARD_LIE_SHA" lie > "$gd/FETCH_HEAD"
+  exit 0
+fi
+exec "$real" "$@"
+ENDGIT
+  chmod +x "$tmp/bin/git"
+  run_pin() {
+    printf 'set -euo pipefail\n%s\n' "$pinblock" >"$tmp/pin.sh"
+    (cd "$pinrepo" && PATH="$tmp/bin:$PATH" HEAD_SHA="$1" GUARD_LIE_SHA="$2" NUMBER=1 bash "$tmp/pin.sh")
+  }
+  expect_fail "a fetch whose commit is not HEAD_SHA" run_pin "$shaB" "$shaA"
+  msg=$(run_pin "$shaB" "$shaA" 2>&1 >/dev/null || true)
+  [[ $msg == *"fetched ${shaA}, wanted ${shaB}"* ]] || die "selftest: swapped head gave '${msg}'"
+  echo "ok: a swapped head names both shas"
+  expect_pass "a fetch of the event HEAD_SHA" run_pin "$shaB" "$shaB"
+  tsv=$'2024-06-01T00:00:00Z\t2\tnew\n2020-01-01T00:00:00Z\t9\told'
+  got=$(printf '%s\n' "$tsv" | "$OLDPWD_SCRIPT" latest-labeler)
+  [[ $got == new ]] || die "selftest: latest labeler gave '${got}'"
+  echo "ok: the latest labeler is the max created_at"
+  tsv=$'2024-06-01T00:00:00Z\t9\tnine\n2024-06-01T00:00:00Z\t10\tten'
+  got=$(printf '%s\n' "$tsv" | "$OLDPWD_SCRIPT" latest-labeler)
+  [[ $got == ten ]] || die "selftest: same-second labeler gave '${got}'"
+  echo "ok: the same-second labeler is the greater event id"
+  tsv=$'2024-06-01T00:00:00Z\t10\tten\n2024-06-01T00:00:00Z\t9\tnine'
+  got=$(printf '%s\n' "$tsv" | "$OLDPWD_SCRIPT" latest-labeler)
+  [[ $got == ten ]] || die "selftest: reversed same-second labeler gave '${got}'"
+  echo "ok: the same-second labeler ignores input order"
+  tsv=$'2024-06-01T00:00:00Z\t9223372036854775807\tsmall\n2024-06-01T00:00:00Z\t9223372036854775808\tbig'
+  got=$(printf '%s\n' "$tsv" | "$OLDPWD_SCRIPT" latest-labeler)
+  [[ $got == big ]] || die "selftest: wide event id gave '${got}'"
+  echo "ok: an event id past 2^63 still orders"
+  tsv=$'2020-01-01T00:00:00Z\t10000000000000000000\told\n2024-06-01T00:00:00Z\t1\tnew'
+  got=$(printf '%s\n' "$tsv" | "$OLDPWD_SCRIPT" latest-labeler)
+  [[ $got == new ]] || die "selftest: later day gave '${got}'"
+  echo "ok: a later created_at beats a greater event id"
+  expect_fail "a non-decimal event id" "$OLDPWD_SCRIPT" latest-labeler <<'EOF'
+2024-06-01T00:00:00Z	nope	who
+EOF
+  label_jq=$(awk -F"'" '/@tsv/ && /verify-approved/ {print $2}' .github/workflows/repo-guard.yml)
+  [[ -n $label_jq ]] || die "selftest: repo-guard.yml lost the labeler filter"
+  events='[{"event":"labeled","label":{"name":"verify-approved"},"created_at":"2024-06-01T00:00:00Z","id":9,"actor":{"login":"nine"}},{"event":"labeled","label":{"name":"verify-approved"},"created_at":"2024-06-01T00:00:00Z","id":10,"actor":{"login":"ten"}}]'
+  got=$(printf '%s\n' "$events" | jq -r "$label_jq" | "$OLDPWD_SCRIPT" latest-labeler)
+  [[ $got == ten ]] || die "selftest: workflow labeler gave '${got}'"
+  echo "ok: the workflow labeler picks the greater event id"
+  expect_fail "no label" cmd_verify_gate "$h1" "bug"
+  expect_fail "short SHA" cmd_verify_gate "${h1:0:12}" "$VERIFY_LABEL"
+  expect_fail "a label added by someone who may not approve" env GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=intruder \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL"
+  expect_fail "an unknown labeler when actors are set" env GUARD_VERIFY_ACTORS=verifier \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL"
+  expect_fail "a label added by the pusher" env GUARD_VERIFY_ACTORS=verifier,pusher GUARD_VERIFY_EXCLUDE=author,pusher \
+    GUARD_VERIFY_LABELER=pusher "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL"
+  expect_pass "a verdict by someone other than the author" env GUARD_VERIFY_ACTORS=verifier GUARD_VERIFY_LABELER=verifier \
+    GUARD_VERIFY_EXCLUDE=author,pusher "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL"
+  expect_pass "the vws-verify identity on the same account (known gap)" env GUARD_VERIFY_ACTORS=verifier \
+    GUARD_VERIFY_EXCLUDE=verifier GUARD_VERIFY_IDENTITY=verifier \
+    GUARD_VERIFY_LABELER=verifier "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL"
+  expect_fail "an empty actor list" env GUARD_VERIFY_ACTORS= GUARD_VERIFY_LABELER=outsider \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL"
+  msg=$( (env GUARD_VERIFY_ACTORS= GUARD_VERIFY_LABELER=outsider "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL") 2>&1 >/dev/null || true)
+  [[ $msg == *"GUARD_VERIFY_ACTORS is empty"* ]] || die "selftest: empty actors gave '${msg}'"
+  echo "ok: empty actors names the allow-list"
+  expect_fail "a whitespace actor list" env GUARD_VERIFY_ACTORS=' , ' GUARD_VERIFY_LABELER=outsider \
+    "$OLDPWD_SCRIPT" verify-gate "$h1" "$VERIFY_LABEL"
+  local arepo="$tmp/arepo" aallow="$tmp/trusted.sha256"
+  seed_locked() {
+    aallow="$tmp/trusted.sha256"
+    rm -rf "$arepo"
+    mkdir -p "$arepo/.github/workflows" "$arepo/scripts"
+    cp .github/workflows/repo-guard.yml "$arepo/.github/workflows/repo-guard.yml"
+    cp scripts/guard-agents.sh "$arepo/scripts/guard-agents.sh"
+    cp scripts/guard-agents.sh.sha256 "$arepo/scripts/guard-agents.sh.sha256"
+    git -C "$arepo" init -q -b "$MAIN"
+    git -C "$arepo" config user.email t@example.invalid
+    git -C "$arepo" config user.name t
+    git -C "$arepo" add .github scripts
+    git -C "$arepo" commit -q -m base
+    : >"$aallow"
+    local p h
+    for p in "${LOCKED_PATHS[@]}"; do
+      h=$(git -C "$arepo" show "HEAD:${p}" | sha256sum | awk '{print $1}')
+      printf '%s  %s\n' "$h" "$p" >>"$aallow"
+    done
+  }
+  commit_locked() {
+    git -C "$arepo" add -A
+    git -C "$arepo" commit -q -m mut
+  }
+  run_allow() {
+    (cd "$arepo" && bash "$OLDPWD_SCRIPT" allow "$aallow" HEAD)
+  }
+  seed_locked
+  expect_pass "locked files that match the trusted digest list" run_allow
+  local p h
+  for p in "${LOCKED_PATHS[@]}"; do
+    h=$(sha256sum "$p" | awk '{print $1}')
+    grep -F -x -q "${h}  ${p}" scripts/guard-allowed.sha256 ||
+      die "selftest: ${p} is not in scripts/guard-allowed.sha256"
+  done
+  echo "ok: scripts/guard-allowed.sha256 matches the locked files"
+  seed_locked
+  awk '
+    /set -euo pipefail/ && !w { print; print "          if false; then"; w = 1; next }
+    /scripts\/guard-agents.sh verify-gate/ && !done { print; print "          fi"; done = 1; next }
+    { print }
+  ' "$arepo/.github/workflows/repo-guard.yml" >"$tmp/wrap.yml"
+  mv "$tmp/wrap.yml" "$arepo/.github/workflows/repo-guard.yml"
+  commit_locked
+  expect_fail "if false around the approval body" run_allow
+  seed_locked
+  sed -i '/- name: Approved for this head/a\        shell: /bin/true' "$arepo/.github/workflows/repo-guard.yml"
+  commit_locked
+  expect_fail "shell /bin/true on the approval step" run_allow
+  msg=$(run_allow 2>&1 >/dev/null || true)
+  [[ $msg == *".github/workflows/repo-guard.yml"* && $msg == *"not in the trusted digest list"* ]] ||
+    die "selftest: shell /bin/true gave '${msg}'"
+  echo "ok: an unlisted digest names the list"
+  seed_locked
+  sed -i '/persist-credentials: false/i\          repository: attacker/x' "$arepo/.github/workflows/repo-guard.yml"
+  commit_locked
+  expect_fail "checkout with.repository attacker/x" run_allow
+  seed_locked
+  sed -i \
+    -e 's|GUARD_VERIFY_ACTORS: ${{ vars.VWS_VERIFY_ACTORS }}|GUARD_VERIFY_ACTORS: ${{ github.event.pull_request.user.login }}|' \
+    -e 's|GUARD_VERIFY_IDENTITY: ${{ vars.VWS_VERIFY_IDENTITY }}|GUARD_VERIFY_IDENTITY: ${{ github.event.pull_request.user.login }}|' \
+    "$arepo/.github/workflows/repo-guard.yml"
+  commit_locked
+  expect_fail "GUARD_VERIFY_ACTORS rebound to the PR author" run_allow
+  seed_locked
+  sed -i '/- name: Approved for this head/a\        continue-on-error: true' "$arepo/.github/workflows/repo-guard.yml"
+  commit_locked
+  expect_fail "continue-on-error on the approval step" run_allow
+  seed_locked
+  sed -i '/- name: Approved for this head/a\        "\\u0069f": false' "$arepo/.github/workflows/repo-guard.yml"
+  commit_locked
+  expect_fail "a unicode-escaped if on the approval step" run_allow
+  seed_locked
+  sed -i '/set -euo pipefail/a\          exit 0' "$arepo/.github/workflows/repo-guard.yml"
+  commit_locked
+  expect_fail "exit 0 before the approval checks" run_allow
+  seed_locked
+  sed -i 's|^          ref: .*|          ref: ${{ github.event.pull_request.head.sha }}|' "$arepo/.github/workflows/repo-guard.yml"
+  commit_locked
+  expect_fail "checkout of the pull request head" run_allow
+  seed_locked
+  printf '#!/bin/sh\nexit 0\n' >"$arepo/scripts/guard-agents.sh"
+  (cd "$arepo" && sha256sum scripts/guard-agents.sh >scripts/guard-agents.sh.sha256)
+  [[ $(awk 'NR==1 { print $1 }' "$arepo/scripts/guard-agents.sh.sha256") == $(sha256sum "$arepo/scripts/guard-agents.sh" | awk '{print $1}') ]] ||
+    die "selftest: exit 0 fixture digest does not match the script"
+  commit_locked
+  expect_fail "a guard script replaced by exit 0 with a matching digest" run_allow
+  seed_locked
+  sed -i '/- name: Approved for this head/a\        shell: /bin/true' "$arepo/.github/workflows/repo-guard.yml"
+  commit_locked
+  h=$(git -C "$arepo" show "HEAD:.github/workflows/repo-guard.yml" | sha256sum | awk '{print $1}')
+  printf '%s  %s\n' "$h" ".github/workflows/repo-guard.yml" >>"$aallow"
+  expect_pass "a digest landed on the trusted list before the blob change" run_allow
+  seed_locked
+  cp "$aallow" "$tmp/old-allow.sha256"
+  sed -i '/- name: Approved for this head/a\        shell: /bin/true' "$arepo/.github/workflows/repo-guard.yml"
+  commit_locked
+  h=$(git -C "$arepo" show "HEAD:.github/workflows/repo-guard.yml" | sha256sum | awk '{print $1}')
+  cat "$tmp/old-allow.sha256" >"$arepo/scripts/guard-allowed.sha256"
+  printf '%s  %s\n' "$h" ".github/workflows/repo-guard.yml" >>"$arepo/scripts/guard-allowed.sha256"
+  commit_locked
+  git -C "$arepo" show "HEAD:scripts/guard-allowed.sha256" | grep -F -x -q "${h}  .github/workflows/repo-guard.yml" ||
+    die "selftest: same-PR fixture did not record the new digest"
+  aallow="$tmp/old-allow.sha256"
+  expect_fail "a digest list edited in the same commit" run_allow
+  seed_locked
+  git -C "$arepo" rm -q .github/workflows/repo-guard.yml
+  git -C "$arepo" commit -q -m gone
+  expect_fail "a deleted repo-guard.yml" run_allow
+  local brepo="$tmp/brepo" bbase="$tmp/bbase" bhead block out got
+  block=$(awk '/# bootstrap-guard-start/ { on = 1; next } /# bootstrap-guard-end/ { on = 0 } on { sub(/^[[:space:]]*/, ""); print }' \
+    .github/workflows/repo-guard.yml)
+  [[ $block == *'refusing the PR head copy'* ]] ||
+    die "selftest: repo-guard.yml has no bootstrap block"
+  [[ $block != *'HEAD_SHA:scripts/guard-agents.sh'* && $block != *'HEAD_SHA}:scripts/guard-agents.sh'* ]] ||
+    die "selftest: bootstrap still loads the head script"
+  run_boot() {
+    local dir=$1 sha=$2 script=$3
+    (cd "$dir" && HEAD_SHA=$sha bash -c "$script"$'\n''printf "%s\n" "$guard"')
+  }
+  mkdir -p "$brepo/scripts" "$bbase"
+  git -C "$brepo" init -q -b "$MAIN"
+  git -C "$brepo" config user.email t@example.invalid
+  git -C "$brepo" config user.name t
+  printf '#!/bin/sh\necho head-copy\n' >"$brepo/scripts/guard-agents.sh"
+  (cd "$brepo" && sha256sum scripts/guard-agents.sh | cut -d' ' -f1 >scripts/guard-agents.sh.sha256)
+  git -C "$brepo" add scripts
+  git -C "$brepo" commit -q -m head
+  bhead=$(git -C "$brepo" rev-parse HEAD)
+  git -C "$bbase" init -q -b "$MAIN"
+  git -C "$bbase" remote add origin "$brepo"
+  git -C "$bbase" fetch -q --depth=1 origin "$bhead"
+  expect_fail "a head copy whose sha256 matches is still untrusted" run_boot "$bbase" "$bhead" "$block"
+  msg=$(run_boot "$bbase" "$bhead" "$block" 2>&1 >/dev/null || true)
+  [[ $msg == *"refusing the PR head copy"* ]] || die "selftest: untrusted head copy gave '${msg}'"
+  echo "ok: an untrusted head copy names the refusal"
+  echo 'echo edited' >>"$brepo/scripts/guard-agents.sh"
+  git -C "$brepo" add scripts/guard-agents.sh
+  git -C "$brepo" commit -q -m edited
+  bhead=$(git -C "$brepo" rev-parse HEAD)
+  git -C "$bbase" fetch -q --depth=1 origin "$bhead"
+  expect_fail "a head copy whose sha256 does not match" run_boot "$bbase" "$bhead" "$block"
+  mkdir -p "$bbase/scripts"
+  printf '#!/bin/sh\necho base-copy\n' >"$bbase/scripts/guard-agents.sh"
+  expect_fail "a base script without its digest" run_boot "$bbase" "$bhead" "$block"
+  (cd "$bbase" && sha256sum scripts/guard-agents.sh >scripts/guard-agents.sh.sha256)
+  out=$(run_boot "$bbase" "$bhead" "$block")
+  [[ $out == scripts/guard-agents.sh && $(cat "$bbase/$out") == $'#!/bin/sh\necho base-copy' ]] ||
+    die "selftest: the base script was not used"
+  echo "ok: the base script is used when it exists"
+  echo "selftest passed"
+}
+
+command_name=${1:-}
+shift || true
+case "$command_name" in
+  agents) cmd_agents "$@" ;;
+  pr-base) cmd_pr_base "$@" ;;
+  pr-body) cmd_pr_body "$@" ;;
+  rules | judgment) cmd_rules "$@" ;;
+  archtest) cmd_archtest "$@" ;;
+  verify-gate) cmd_verify_gate "$@" ;;
+  identity) cmd_identity "$@" ;;
+  allow) cmd_allow "$@" ;;
+  latest-labeler) cmd_latest_labeler "$@" ;;
+  check-run) cmd_check_run "$@" ;;
+  commit-msg) cmd_commit_msg "$@" ;;
+  pr-commits) cmd_pr_commits "$@" ;;
+  push-watch) cmd_push_watch "$@" ;;
+  correct) cmd_correct "$@" ;;
+  english) cmd_english "$@" ;;
+  selftest) cmd_selftest ;;
+  *) die "usage: guard-agents.sh <agents [FILE]|pr-base BASE|rules [FILE] [HEADING]|judgment [FILE] [HEADING]|archtest [FILE] [HEADING]|identity [SUMFILE]|allow ALLOWFILE HEADREF|latest-labeler|check-run|pr-body [FILE]|commit-msg FILE|pr-commits BASE HEAD|push-watch BEFORE AFTER|verify-gate HEAD LABELS|correct [DIR]|english [ALLOWLIST]|selftest>" ;;
+esac
