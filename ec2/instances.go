@@ -2,6 +2,7 @@ package ec2
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -101,21 +102,21 @@ func Instances() bind.Group {
 				Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{
 					HTTP: 400,
 					Code: "InvalidInstanceID.NotFound",
-				}, Impl: "yes",
+				}, Skip: cases.SkipUnsafeFixedID, Impl: "yes",
 			},
 			{
 				ID: "EC2-START-101", Service: "ec2", Group: "instances", Op: "StartInstances", Kind: cases.KindError,
 				Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{
 					HTTP: 400,
 					Code: "InvalidInstanceID.NotFound",
-				}, Impl: "yes",
+				}, Skip: cases.SkipUnsafeFixedID, Impl: "yes",
 			},
 			{
 				ID: "EC2-TERM-101", Service: "ec2", Group: "instances", Op: "TerminateInstances", Kind: cases.KindError,
 				Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{
 					HTTP: 400,
 					Code: "InvalidInstanceID.NotFound",
-				}, Impl: "yes",
+				}, Skip: cases.SkipUnsafeFixedID, Impl: "yes",
 			},
 			{
 				ID: "EC2-DIA-101", Service: "ec2", Group: "instances", Op: "DescribeInstanceAttribute", Kind: cases.KindError,
@@ -173,24 +174,15 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 			})
 			return callOut, wrapErr("runInstances", callErr)
 		}
-	case "EC2-STOP-101", "EC2-START-101", "EC2-TERM-101", "EC2-DIA-101":
-		id := "i-0123456789abcdef0"
+	case "EC2-STOP-101", "EC2-START-101", "EC2-TERM-101":
+		return cases.Outcome{}, errors.New(cases.SkipUnsafeFixedID)
+	case "EC2-DIA-101":
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				var err error
-				switch c.ID {
-				case "EC2-STOP-101":
-					_, err = api.StopInstances(ctx, &awsec2.StopInstancesInput{InstanceIds: []string{id}})
-				case "EC2-START-101":
-					_, err = api.StartInstances(ctx, &awsec2.StartInstancesInput{InstanceIds: []string{id}})
-				case "EC2-TERM-101":
-					_, err = api.TerminateInstances(ctx, &awsec2.TerminateInstancesInput{InstanceIds: []string{id}})
-				default:
-					_, err = api.DescribeInstanceAttribute(ctx, &awsec2.DescribeInstanceAttributeInput{
-						InstanceId: aws.String(id),
-						Attribute:  types.InstanceAttributeNameUserData,
-					})
-				}
+				_, err := api.DescribeInstanceAttribute(ctx, &awsec2.DescribeInstanceAttributeInput{
+					InstanceId: aws.String("i-0123456789abcdef0"),
+					Attribute:  types.InstanceAttributeNameUserData,
+				})
 				return wrapErr("runInstances", err)
 			})
 			return callOut, wrapErr("runInstances", callErr)

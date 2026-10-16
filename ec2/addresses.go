@@ -2,6 +2,7 @@ package ec2
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -57,7 +58,7 @@ func Addresses() bind.Group {
 				Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{
 					HTTP: 400,
 					Code: "InvalidAssociationID.NotFound",
-				}, Impl: "yes",
+				}, Skip: cases.SkipUnsafeFixedID, Impl: "yes",
 			},
 			{
 				ID: "EC2-EIP-103", Service: "ec2", Group: "addresses", Op: "DescribeAddresses", Kind: cases.KindError,
@@ -127,14 +128,7 @@ func runAddr(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 			return callOut, wrapErr("runAddr", callErr)
 		}
 	case "EC2-EIP-102":
-		{
-			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.DisassociateAddress(ctx,
-					&awsec2.DisassociateAddressInput{AssociationId: aws.String("eipassoc-0123456789abcdef0")})
-				return wrapErr("runAddr", err)
-			})
-			return callOut, wrapErr("runAddr", callErr)
-		}
+		return cases.Outcome{}, errors.New(cases.SkipUnsafeFixedID)
 	case "EC2-EIP-103":
 		id, err := goneAlloc(ctx, rt, api)
 		if err != nil {
