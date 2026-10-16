@@ -61,6 +61,10 @@ func TestMalformedOwnerVetoesMutation(t *testing.T) {
 	if AllowMutation(false, tagOwners(tags), nil, keep) {
 		t.Fatal("malformed owner was discarded")
 	}
+	merged := mergeOwners([]string{valid}, tagOwners(tags))
+	if AllowMutation(false, merged, nil, keep) {
+		t.Fatal("malformed owner was discarded by merge")
+	}
 }
 
 func TestOwnRegistersDeletion(t *testing.T) {
