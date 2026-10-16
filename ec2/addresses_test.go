@@ -127,6 +127,16 @@ func TestAllocIDReleasesWhenLedgerFails(t *testing.T) {
 			panic(queryErr)
 		}
 		w.Header().Set("Content-Type", "text/xml")
+		if vals.Get("Action") == "DescribeAddresses" {
+			if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+				`<DescribeAddressesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">`+
+				`<requestId>r</requestId><addressesSet><item>`+
+				`<allocationId>eipalloc-1</allocationId><domain>vpc</domain>`+
+				`<publicIp>203.0.113.10</publicIp></item></addressesSet></DescribeAddressesResponse>`); writeErr != nil {
+				panic(writeErr)
+			}
+			return
+		}
 		if vals.Get("Action") == "ReleaseAddress" {
 			releases.Add(1)
 			if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+

@@ -201,6 +201,15 @@ func ownedTag(tags []ec2types.Tag, keep func(string) bool) bool {
 	return false
 }
 
+func appendUnverified(owners []string) []string {
+	for _, owner := range owners {
+		if owner == "" {
+			return owners
+		}
+	}
+	return append(owners, "")
+}
+
 func appendOwner(owners []string, id string) []string {
 	if ValidateRunID(id) != nil {
 		return owners
@@ -215,6 +224,10 @@ func appendOwner(owners []string, id string) []string {
 
 func mergeOwners(dst, src []string) []string {
 	for _, id := range src {
+		if id == "" {
+			dst = appendUnverified(dst)
+			continue
+		}
 		dst = appendOwner(dst, id)
 	}
 	return dst
@@ -263,6 +276,10 @@ func tagOwners(tags []ec2types.Tag) []string {
 		key := aws.ToString(tag.Key)
 		val := aws.ToString(tag.Value)
 		if key == "vws:conformance-run" {
+			if ValidateRunID(val) != nil {
+				owners = appendUnverified(owners)
+				continue
+			}
 			owners = appendOwner(owners, val)
 		}
 		if key == "Name" {

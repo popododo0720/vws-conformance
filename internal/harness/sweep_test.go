@@ -808,6 +808,9 @@ func groupItem(id, name string) string {
 }
 
 func tagXML(run string) string {
+	if run == "" {
+		return ""
+	}
 	return `<tagSet><item><key>vws:conformance-run</key><value>` + run + `</value></item></tagSet>`
 }
 

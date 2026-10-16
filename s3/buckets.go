@@ -114,8 +114,10 @@ func runBuckets(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.O
 		})
 		if created && harness.AllowMutation(true, nil, nil, func(string) bool { return false }) {
 			rt.Cleanup(func(ctx context.Context) error {
-				_, err := api.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(name)})
-				return ignoreNoSuch(err)
+				return rt.Keep(ctx, true, nil, nil, func(ctx context.Context) error {
+					_, err := api.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(name)})
+					return ignoreNoSuch(err)
+				})
 			})
 			if err := rt.Track("bucket", name, name); err != nil {
 				return callOut, wrapErr("runBuckets", err)
@@ -147,13 +149,25 @@ func runBuckets(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.O
 			return callOut, wrapErr("runBuckets", callErr)
 		}
 	case "S3-BKT-101":
-		{
-			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String("NO")})
-				return wrapErr("runBuckets", err)
+		const name = "NO"
+		var created bool
+		callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+			_, err := api.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(name)})
+			created = err == nil
+			return wrapErr("runBuckets", err)
+		})
+		if created {
+			rt.Cleanup(func(ctx context.Context) error {
+				return rt.Keep(ctx, true, nil, nil, func(ctx context.Context) error {
+					_, err := api.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(name)})
+					return ignoreNoSuch(err)
+				})
 			})
-			return callOut, wrapErr("runBuckets", callErr)
+			if err := rt.Track("bucket", name, name); err != nil {
+				return callOut, wrapErr("runBuckets", err)
+			}
 		}
+		return callOut, wrapErr("runBuckets", callErr)
 	case "S3-BKT-102":
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {

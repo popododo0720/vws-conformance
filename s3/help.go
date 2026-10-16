@@ -119,11 +119,13 @@ func createFresh(ctx context.Context, rt *harness.Runtime, api *s3.Client, name 
 		return fmt.Errorf("preserve bucket %s", name)
 	}
 	rt.Cleanup(func(ctx context.Context) error {
-		if err := deleteAllObjects(ctx, api, name); err != nil {
-			return err
-		}
-		_, err := api.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(name)})
-		return ignoreNoSuch(err)
+		return rt.Keep(ctx, true, nil, nil, func(ctx context.Context) error {
+			if err := deleteAllObjects(ctx, api, name); err != nil {
+				return err
+			}
+			_, err := api.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(name)})
+			return ignoreNoSuch(err)
+		})
 	})
 	if err := rt.Track("bucket", name, name); err != nil {
 		return wrapErr("createFresh", err)

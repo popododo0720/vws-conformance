@@ -184,6 +184,9 @@ type Runtime struct {
 	netMu     sync.Mutex
 	netFlight *netFlight
 	net       netIDs
+	devMu     sync.Mutex
+	devices   map[string]struct{}
+	swept     map[string]struct{}
 }
 
 func NewRuntime(cfg Config, cl *Clients) *Runtime {
@@ -197,6 +200,22 @@ func (rt *Runtime) Region() string { return rt.Cfg.Region }
 func (rt *Runtime) Name(suffix string) string { return ResourceName(rt.Cfg.RunID, suffix) }
 
 func (rt *Runtime) Cleanup(fn func(context.Context) error) { rt.Clean.Add(fn) }
+
+// HoldEC2 records a client the caller already used so ownership checks
+// describe through that same client.
+func (rt *Runtime) HoldEC2(api *ec2.Client) {
+	if api == nil {
+		return
+	}
+	if rt.Clients != nil && rt.Clients.EC2 != nil {
+		return
+	}
+	if rt.Clients == nil {
+		rt.Clients = &Clients{EC2: api}
+		return
+	}
+	rt.Clients.EC2 = api
+}
 
 func (rt *Runtime) Call(ctx context.Context, fn func(context.Context) error) (cases.Outcome, error) {
 	cap := &Capture{}

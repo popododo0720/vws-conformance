@@ -165,13 +165,23 @@ func runAddr(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 			return callOut, wrapErr("runAddr", callErr)
 		}
 	case "EC2-EIP-105":
-		{
-			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.AllocateAddress(ctx, &awsec2.AllocateAddressInput{Domain: types.DomainType("nope")})
-				return wrapErr("runAddr", err)
-			})
-			return callOut, wrapErr("runAddr", callErr)
+		var id string
+		callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+			out, err := api.AllocateAddress(ctx, &awsec2.AllocateAddressInput{Domain: types.DomainType("nope")})
+			if err == nil && out != nil {
+				id = aws.ToString(out.AllocationId)
+			}
+			return wrapErr("runAddr", err)
+		})
+		if id != "" {
+			if err := rememberAddress(rt, api, id); err != nil {
+				return callOut, wrapErr("runAddr", err)
+			}
 		}
+		if harness.SetupReady(callOut, callErr) && id == "" {
+			return callOut, fmt.Errorf("allocate: success did not identify an address")
+		}
+		return callOut, wrapErr("runAddr", callErr)
 	case "EC2-EIP-002", "EC2-EIP-004":
 		_, subnet, err := rt.EnsureNet(ctx)
 		if err != nil {
@@ -197,8 +207,11 @@ func runAddr(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 			return wrapErr("runAddr", err)
 		})
 		o.Fields["id"] = assoc
-		if c.ID == "EC2-EIP-002" || !harness.SetupReady(o, err) || assoc == "" {
+		if c.ID == "EC2-EIP-002" || !harness.SetupReady(o, err) {
 			return o, wrapErr("runAddr", err)
+		}
+		if assoc == "" {
+			return o, fmt.Errorf("associate returned no association id")
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
@@ -270,9 +283,9 @@ func rememberAddress(rt *harness.Runtime, api *awsec2.Client, id string) error {
 	if id == "" {
 		return fmt.Errorf("allocate: empty id")
 	}
+	rt.HoldEC2(api)
 	rt.Cleanup(func(ctx context.Context) error {
-		_, err := api.ReleaseAddress(ctx, &awsec2.ReleaseAddressInput{AllocationId: aws.String(id)})
-		return harness.IgnoreCleanup(err)
+		return rt.ReleaseOwned(ctx, id)
 	})
 	return wrapErr("rememberAddress", rt.Track("address", id, rt.Name("eip")))
 }

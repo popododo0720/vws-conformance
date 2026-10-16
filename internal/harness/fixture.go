@@ -54,7 +54,9 @@ func (rt *Runtime) Own(kind, id, name string, del func(context.Context) error) e
 	if err := rt.Track(kind, id, name); err != nil {
 		return err
 	}
-	rt.Cleanup(del)
+	rt.Cleanup(func(ctx context.Context) error {
+		return rt.Keep(ctx, true, nil, nil, del)
+	})
 	return nil
 }
 
@@ -156,10 +158,12 @@ func (rt *Runtime) createNet(ctx context.Context) (string, string, error) {
 		return "", "", err
 	}
 	rt.Cleanup(func(ctx context.Context) error {
-		_, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteVpcOutput, error) {
-			return rt.Clients.EC2.DeleteVpc(ctx, &ec2.DeleteVpcInput{VpcId: aws.String(vpcID)})
+		return rt.Keep(ctx, true, nil, nil, func(ctx context.Context) error {
+			_, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteVpcOutput, error) {
+				return rt.Clients.EC2.DeleteVpc(ctx, &ec2.DeleteVpcInput{VpcId: aws.String(vpcID)})
+			})
+			return IgnoreCleanup(err)
 		})
-		return IgnoreCleanup(err)
 	})
 	subOut, err := withDeadline(ctx, func(ctx context.Context) (*ec2.CreateSubnetOutput, error) {
 		return rt.Clients.EC2.CreateSubnet(ctx, &ec2.CreateSubnetInput{
@@ -177,10 +181,12 @@ func (rt *Runtime) createNet(ctx context.Context) (string, string, error) {
 		return "", "", err
 	}
 	rt.Cleanup(func(ctx context.Context) error {
-		_, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteSubnetOutput, error) {
-			return rt.Clients.EC2.DeleteSubnet(ctx, &ec2.DeleteSubnetInput{SubnetId: aws.String(subID)})
+		return rt.Keep(ctx, true, nil, nil, func(ctx context.Context) error {
+			_, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteSubnetOutput, error) {
+				return rt.Clients.EC2.DeleteSubnet(ctx, &ec2.DeleteSubnetInput{SubnetId: aws.String(subID)})
+			})
+			return IgnoreCleanup(err)
 		})
-		return IgnoreCleanup(err)
 	})
 	return vpcID, subID, nil
 }
@@ -208,6 +214,9 @@ func IgnoreCleanup(err error) error {
 }
 
 func (rt *Runtime) Sweep(ctx context.Context) error {
+	rt.devMu.Lock()
+	rt.swept = nil
+	rt.devMu.Unlock()
 	if rt.Cfg.AccountID == "" {
 		return fmt.Errorf("ledger account is empty")
 	}
@@ -477,6 +486,7 @@ type sweepItem struct {
 	vpcs   []string
 	owners []string
 	peers  [][]string
+	direct bool
 }
 
 type ec2View struct {
@@ -716,7 +726,7 @@ func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool, keep func(stri
 		vpcSeen[id] = true
 		vpcOwners[id] = tagOwners(v.Tags)
 	}
-	instPeers := instanceVolumePeers(view.volumes)
+	instPeers := instanceVolumePeers(view.volumes, rows, scope)
 	add := func(it sweepItem) {
 		key := it.kind + " " + it.id
 		if it.id == "" {
@@ -771,7 +781,10 @@ func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool, keep func(stri
 	if ghosts {
 		for _, row := range rows {
 			if row.Kind == "volume" && keep(row.LedgerRunID) && rowInScope(row, scope) && !blocked["volume "+row.ID] {
-				add(sweepItem{kind: "volume", id: row.ID, owners: ledgerOwners(rows, "volume", row.ID, scope)})
+				add(sweepItem{
+					kind: "volume", id: row.ID, direct: true,
+					owners: ledgerOwners(rows, "volume", row.ID, scope),
+				})
 			}
 		}
 	}
@@ -807,7 +820,10 @@ func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool, keep func(stri
 	if ghosts {
 		for _, row := range rows {
 			if row.Kind == "address" && keep(row.LedgerRunID) && rowInScope(row, scope) && !blocked["address "+row.ID] {
-				add(sweepItem{kind: "address", id: row.ID, owners: ledgerOwners(rows, "address", row.ID, scope)})
+				add(sweepItem{
+					kind: "address", id: row.ID, direct: true,
+					owners: ledgerOwners(rows, "address", row.ID, scope),
+				})
 			}
 		}
 	}
@@ -920,6 +936,7 @@ func volumePeers(v ec2types.Volume, seen map[string]bool, owners map[string][]st
 		}
 		inst := aws.ToString(a.InstanceId)
 		if inst == "" {
+			peers = append(peers, []string{})
 			continue
 		}
 		peers = append(peers, peerGroup(inst, seen, owners))
@@ -940,6 +957,7 @@ func gatewayPeers(g ec2types.InternetGateway, seen map[string]bool, owners map[s
 	for _, a := range g.Attachments {
 		vpc := aws.ToString(a.VpcId)
 		if vpc == "" {
+			peers = append(peers, []string{})
 			continue
 		}
 		peers = append(peers, peerGroup(vpc, seen, owners))
@@ -947,10 +965,11 @@ func gatewayPeers(g ec2types.InternetGateway, seen map[string]bool, owners map[s
 	return peers
 }
 
-func instanceVolumePeers(volumes []ec2types.Volume) map[string][][]string {
+func instanceVolumePeers(volumes []ec2types.Volume, rows []sweep.Resource, scope ledgerScope) map[string][][]string {
 	out := map[string][][]string{}
 	for _, v := range volumes {
-		owners := tagOwners(v.Tags)
+		id := aws.ToString(v.VolumeId)
+		owners := resourceOwners(v.Tags, rows, "volume", id, scope)
 		for _, a := range v.Attachments {
 			if a.State == ec2types.VolumeAttachmentStateDetached {
 				continue
@@ -960,11 +979,6 @@ func instanceVolumePeers(volumes []ec2types.Volume) map[string][][]string {
 				continue
 			}
 			if len(owners) == 0 {
-				// DeleteOnTermination marks the instance's own device. AWS deletes
-				// that volume with the instance, and it has no conformance owner.
-				if aws.ToBool(a.DeleteOnTermination) {
-					continue
-				}
 				out[inst] = append(out[inst], []string{})
 				continue
 			}
@@ -974,10 +988,263 @@ func instanceVolumePeers(volumes []ec2types.Volume) map[string][][]string {
 	return out
 }
 
+func (rt *Runtime) Keep(
+	ctx context.Context, created bool, owners []string, peers [][]string, mutate func(context.Context) error,
+) error {
+	if !AllowMutation(created, owners, peers, rt.keepRun) {
+		return fmt.Errorf("preserve unverified")
+	}
+	return mutate(ctx)
+}
+
+func (rt *Runtime) NoteDevice(id string) error {
+	if id == "" {
+		return nil
+	}
+	rt.devMu.Lock()
+	if rt.devices == nil {
+		rt.devices = map[string]struct{}{}
+	}
+	rt.devices[id] = struct{}{}
+	rt.devMu.Unlock()
+	return rt.Track("volume", id, rt.Name("root"))
+}
+
+func (rt *Runtime) notedDevice(id string) bool {
+	rt.devMu.Lock()
+	defer rt.devMu.Unlock()
+	_, ok := rt.devices[id]
+	return ok
+}
+
+func (rt *Runtime) TerminateOwned(ctx context.Context, id string) error {
+	peers, err := rt.instanceAttachmentPeers(ctx, id)
+	if err != nil {
+		if strings.Contains(err.Error(), "NotFound") {
+			return nil
+		}
+		return fmt.Errorf("preserve instance %s: %w", id, err)
+	}
+	if !AllowMutation(true, nil, peers, rt.keepRun) {
+		return fmt.Errorf("preserve instance %s", id)
+	}
+	_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.TerminateInstancesOutput, error) {
+		return rt.Clients.EC2.TerminateInstances(ctx, &ec2.TerminateInstancesInput{InstanceIds: []string{id}})
+	})
+	return IgnoreCleanup(err)
+}
+
+func (rt *Runtime) DeleteOwnedVolume(ctx context.Context, id string) error {
+	item, gone, err := rt.observeVolume(ctx, sweepItem{id: id, owners: []string{rt.Cfg.RunID}})
+	if gone {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("preserve volume %s: %w", id, err)
+	}
+	if !AllowMutation(false, item.owners, item.peers, rt.keepRun) {
+		return fmt.Errorf("preserve volume %s", id)
+	}
+	_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteVolumeOutput, error) {
+		return rt.Clients.EC2.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(id)})
+	})
+	return IgnoreCleanup(err)
+}
+
+func (rt *Runtime) ReleaseOwned(ctx context.Context, id string) error {
+	item, gone, err := rt.observeAddress(ctx, sweepItem{id: id, owners: []string{rt.Cfg.RunID}})
+	if gone {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("preserve address %s: %w", id, err)
+	}
+	if !AllowMutation(false, item.owners, item.peers, rt.keepRun) {
+		return fmt.Errorf("preserve address %s", id)
+	}
+	_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.ReleaseAddressOutput, error) {
+		return rt.Clients.EC2.ReleaseAddress(ctx, &ec2.ReleaseAddressInput{AllocationId: aws.String(id)})
+	})
+	return IgnoreCleanup(err)
+}
+
+func (rt *Runtime) DeleteOwnedKey(ctx context.Context, name string) error {
+	if !AllowMutation(false, runOwners(name), nil, rt.keepRun) {
+		return fmt.Errorf("preserve key %s", name)
+	}
+	_, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteKeyPairOutput, error) {
+		return rt.Clients.EC2.DeleteKeyPair(ctx, &ec2.DeleteKeyPairInput{KeyName: aws.String(name)})
+	})
+	return IgnoreCleanup(err)
+}
+
+func (rt *Runtime) instanceAttachmentPeers(ctx context.Context, instanceID string) ([][]string, error) {
+	if rt.Clients == nil || rt.Clients.EC2 == nil {
+		return nil, fmt.Errorf("ec2 client is unset")
+	}
+	out, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeVolumesOutput, error) {
+		return rt.Clients.EC2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{})
+	})
+	if err != nil {
+		return nil, err
+	}
+	rows, err := readLedger(rt.Cfg.OutDir)
+	if err != nil {
+		return nil, err
+	}
+	var peers [][]string
+	if out == nil {
+		return nil, fmt.Errorf("describe volumes returned nothing")
+	}
+	for _, v := range out.Volumes {
+		volID := aws.ToString(v.VolumeId)
+		owners := resourceOwners(v.Tags, rows, "volume", volID, rt.ledgerScope())
+		if rt.notedDevice(volID) {
+			owners = appendOwner(owners, rt.Cfg.RunID)
+		}
+		for _, a := range v.Attachments {
+			if a.State == ec2types.VolumeAttachmentStateDetached || aws.ToString(a.InstanceId) != instanceID {
+				continue
+			}
+			if len(owners) == 0 {
+				peers = append(peers, []string{})
+				continue
+			}
+			peers = append(peers, append([]string{}, owners...))
+		}
+	}
+	return peers, nil
+}
+
+func (rt *Runtime) markSwept(id string) {
+	rt.devMu.Lock()
+	defer rt.devMu.Unlock()
+	if rt.swept == nil {
+		rt.swept = map[string]struct{}{}
+	}
+	rt.swept[id] = struct{}{}
+}
+
+func (rt *Runtime) wasSwept(id string) bool {
+	rt.devMu.Lock()
+	defer rt.devMu.Unlock()
+	_, ok := rt.swept[id]
+	return ok
+}
+
+func (rt *Runtime) observe(ctx context.Context, item sweepItem) (sweepItem, bool, error) {
+	if rt.wasSwept(item.id) {
+		return item, true, nil
+	}
+	switch item.kind {
+	case "volume":
+		return rt.observeVolume(ctx, item)
+	case "address":
+		return rt.observeAddress(ctx, item)
+	default:
+		return item, false, fmt.Errorf("preserve %s %s", item.kind, item.id)
+	}
+}
+
+func (rt *Runtime) observeVolume(ctx context.Context, item sweepItem) (sweepItem, bool, error) {
+	if rt.Clients == nil || rt.Clients.EC2 == nil {
+		return item, false, fmt.Errorf("ec2 client is unset")
+	}
+	out, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeVolumesOutput, error) {
+		return rt.Clients.EC2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: []string{item.id}})
+	})
+	if err != nil {
+		if strings.Contains(err.Error(), "NotFound") {
+			return item, true, nil
+		}
+		return item, false, err
+	}
+	if out == nil || len(out.Volumes) == 0 {
+		return item, false, fmt.Errorf("preserve volume %s", item.id)
+	}
+	v := out.Volumes[0]
+	item.owners = mergeOwners(item.owners, tagOwners(v.Tags))
+	var peers [][]string
+	for _, a := range v.Attachments {
+		if a.State == ec2types.VolumeAttachmentStateDetached {
+			continue
+		}
+		inst := aws.ToString(a.InstanceId)
+		if inst == "" {
+			peers = append(peers, []string{})
+			continue
+		}
+		peers = append(peers, rt.describedInstanceOwners(ctx, inst))
+	}
+	item.peers = peers
+	item.direct = false
+	return item, false, nil
+}
+
+func (rt *Runtime) observeAddress(ctx context.Context, item sweepItem) (sweepItem, bool, error) {
+	if rt.Clients == nil || rt.Clients.EC2 == nil {
+		return item, false, fmt.Errorf("ec2 client is unset")
+	}
+	out, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeAddressesOutput, error) {
+		return rt.Clients.EC2.DescribeAddresses(ctx, &ec2.DescribeAddressesInput{AllocationIds: []string{item.id}})
+	})
+	if err != nil {
+		if strings.Contains(err.Error(), "NotFound") {
+			return item, true, nil
+		}
+		return item, false, err
+	}
+	if out == nil || len(out.Addresses) == 0 {
+		return item, false, fmt.Errorf("preserve address %s", item.id)
+	}
+	addr := out.Addresses[0]
+	item.assoc = aws.ToString(addr.AssociationId)
+	item.owners = mergeOwners(item.owners, tagOwners(addr.Tags))
+	inst := aws.ToString(addr.InstanceId)
+	if item.assoc == "" && inst == "" {
+		item.peers = nil
+	} else {
+		item.peers = [][]string{rt.describedInstanceOwners(ctx, inst)}
+	}
+	item.direct = false
+	return item, false, nil
+}
+
+func (rt *Runtime) describedInstanceOwners(ctx context.Context, id string) []string {
+	if id == "" || rt.Clients == nil || rt.Clients.EC2 == nil {
+		return []string{}
+	}
+	out, err := withDeadline(ctx, func(ctx context.Context) (*ec2.DescribeInstancesOutput, error) {
+		return rt.Clients.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{id}})
+	})
+	if err != nil || out == nil {
+		return []string{}
+	}
+	for _, res := range out.Reservations {
+		for _, inst := range res.Instances {
+			if aws.ToString(inst.InstanceId) == id {
+				return tagOwners(inst.Tags)
+			}
+		}
+	}
+	return []string{}
+}
+
 func (rt *Runtime) deleteItems(ctx context.Context, items []sweepItem) error {
 	var safe []sweepItem
 	var held []string
 	for _, item := range items {
+		if item.direct {
+			observed, gone, err := rt.observe(ctx, item)
+			if gone {
+				continue
+			}
+			if err != nil {
+				held = append(held, item.kind+" "+item.id)
+				continue
+			}
+			item = observed
+		}
 		if AllowMutation(false, item.owners, item.peers, rt.keepRun) {
 			safe = append(safe, item)
 			continue
@@ -1025,6 +1292,9 @@ func deleteEC2(ctx context.Context, rt *Runtime, items []sweepItem) error {
 		if err != nil && !strings.Contains(err.Error(), "NotFound") {
 			return fmt.Errorf("terminate: %w", err)
 		}
+		for _, id := range ids[:n] {
+			rt.markSwept(id)
+		}
 		ids = ids[n:]
 	}
 	for _, item := range items {
@@ -1043,6 +1313,7 @@ func deleteEC2(ctx context.Context, rt *Runtime, items []sweepItem) error {
 			if err != nil && !strings.Contains(err.Error(), "NotFound") {
 				return fmt.Errorf("delete volume %s: %w", item.id, err)
 			}
+			rt.markSwept(item.id)
 		case "snapshot":
 			_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteSnapshotOutput, error) {
 				return c.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: aws.String(item.id)})
@@ -1050,6 +1321,7 @@ func deleteEC2(ctx context.Context, rt *Runtime, items []sweepItem) error {
 			if err != nil && !strings.Contains(err.Error(), "NotFound") {
 				return fmt.Errorf("delete snapshot: %w", err)
 			}
+			rt.markSwept(item.id)
 		case "address":
 			if item.assoc != "" {
 				if _, assocErr := withDeadline(ctx, func(ctx context.Context) (*ec2.DisassociateAddressOutput, error) {
@@ -1065,6 +1337,7 @@ func deleteEC2(ctx context.Context, rt *Runtime, items []sweepItem) error {
 			if err != nil && !strings.Contains(err.Error(), "NotFound") {
 				return fmt.Errorf("release address: %w", err)
 			}
+			rt.markSwept(item.id)
 		case "key-pair":
 			_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteKeyPairOutput, error) {
 				return c.DeleteKeyPair(ctx, &ec2.DeleteKeyPairInput{KeyName: aws.String(item.id)})
@@ -1072,6 +1345,7 @@ func deleteEC2(ctx context.Context, rt *Runtime, items []sweepItem) error {
 			if err != nil && !strings.Contains(err.Error(), "NotFound") {
 				return fmt.Errorf("delete key pair: %w", err)
 			}
+			rt.markSwept(item.id)
 		case "security-group":
 			_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteSecurityGroupOutput, error) {
 				return c.DeleteSecurityGroup(ctx, &ec2.DeleteSecurityGroupInput{GroupId: aws.String(item.id)})
@@ -1079,6 +1353,7 @@ func deleteEC2(ctx context.Context, rt *Runtime, items []sweepItem) error {
 			if err != nil && !strings.Contains(err.Error(), "NotFound") {
 				return fmt.Errorf("delete security group: %w", err)
 			}
+			rt.markSwept(item.id)
 		case "internet-gateway":
 			for _, vpc := range item.vpcs {
 				if _, gwErr := withDeadline(ctx, func(ctx context.Context) (*ec2.DetachInternetGatewayOutput, error) {
@@ -1096,6 +1371,7 @@ func deleteEC2(ctx context.Context, rt *Runtime, items []sweepItem) error {
 			if err != nil && !strings.Contains(err.Error(), "NotFound") {
 				return fmt.Errorf("delete internet gateway: %w", err)
 			}
+			rt.markSwept(item.id)
 		case "subnet":
 			_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteSubnetOutput, error) {
 				return c.DeleteSubnet(ctx, &ec2.DeleteSubnetInput{SubnetId: aws.String(item.id)})
@@ -1103,6 +1379,7 @@ func deleteEC2(ctx context.Context, rt *Runtime, items []sweepItem) error {
 			if err != nil && !strings.Contains(err.Error(), "NotFound") {
 				return fmt.Errorf("delete subnet: %w", err)
 			}
+			rt.markSwept(item.id)
 		case "vpc":
 			_, err = withDeadline(ctx, func(ctx context.Context) (*ec2.DeleteVpcOutput, error) {
 				return c.DeleteVpc(ctx, &ec2.DeleteVpcInput{VpcId: aws.String(item.id)})
@@ -1110,6 +1387,7 @@ func deleteEC2(ctx context.Context, rt *Runtime, items []sweepItem) error {
 			if err != nil && !strings.Contains(err.Error(), "NotFound") {
 				return fmt.Errorf("delete vpc: %w", err)
 			}
+			rt.markSwept(item.id)
 		}
 	}
 	return nil

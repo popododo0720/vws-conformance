@@ -53,8 +53,16 @@ func negativeCreateCleans(t *testing.T, id, create, clean string, groups ...[]ca
 			}
 			return
 		}
-		if action == "DescribeVolumes" || action == "DescribeAddresses" || action == "DescribeInstances" {
+		if action == "DescribeVolumes" || action == "DescribeInstances" {
 			if _, writeErr := io.WriteString(w, emptyDescribe(action)); writeErr != nil {
+				panic(writeErr)
+			}
+			return
+		}
+		if action == "DescribeAddresses" {
+			if _, writeErr := io.WriteString(w, ec2Item("DescribeAddressesResponse",
+				"<addressesSet><item><allocationId>eipalloc-leak</allocationId><domain>vpc</domain>"+
+					"<publicIp>203.0.113.10</publicIp></item></addressesSet>")); writeErr != nil {
 				panic(writeErr)
 			}
 			return

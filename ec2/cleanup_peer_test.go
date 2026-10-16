@@ -84,7 +84,8 @@ func TestTerminateCleanupChecksCurrentPeers(t *testing.T) {
 			}))
 			defer srv.Close()
 			rt := keyRuntime(t, srv.URL)
-			if _, err := launch(context.Background(), rt, rt.Clients.EC2, "subnet-1", rt.Token("peer")); err != nil && row.wantEnd {
+			_, err := launch(context.Background(), rt, rt.Clients.EC2, "subnet-1", rt.Token("peer"))
+			if err != nil && row.wantEnd {
 				t.Fatal(err)
 			}
 			if err := rt.Clean.Run(context.Background()); err != nil && row.wantEnd {

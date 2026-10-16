@@ -126,7 +126,8 @@ func TestEmptyAssociationDoesNotPassDisassociate(t *testing.T) {
 			followed = true
 			mu.Unlock()
 			w.WriteHeader(http.StatusOK)
-			if _, writeErr := io.WriteString(w, ec2Item("DisassociateAddressResponse", "<return>true</return>")); writeErr != nil {
+			if _, writeErr := io.WriteString(w, ec2Item("DisassociateAddressResponse",
+				"<return>true</return>")); writeErr != nil {
 				panic(writeErr)
 			}
 		case "AssociateAddress":

@@ -57,17 +57,19 @@ func ownBucket(ctx context.Context, rt *harness.Runtime, name string) error {
 		return fmt.Errorf("bucket: %w", err)
 	}
 	rt.Cleanup(func(ctx context.Context) error {
-		_, objErr := rt.Clients.S3.DeleteObject(ctx, &s3.DeleteObjectInput{
-			Bucket: aws.String(name), Key: aws.String("k"),
+		return rt.Keep(ctx, true, nil, nil, func(ctx context.Context) error {
+			_, objErr := rt.Clients.S3.DeleteObject(ctx, &s3.DeleteObjectInput{
+				Bucket: aws.String(name), Key: aws.String("k"),
+			})
+			if objErr != nil && !strings.Contains(objErr.Error(), "NoSuch") && !strings.Contains(objErr.Error(), "NotFound") {
+				return fmt.Errorf("delete object %s: %w", name, objErr)
+			}
+			_, delErr := rt.Clients.S3.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(name)})
+			if delErr != nil && !strings.Contains(delErr.Error(), "NoSuch") && !strings.Contains(delErr.Error(), "NotFound") {
+				return fmt.Errorf("delete bucket %s: %w", name, delErr)
+			}
+			return nil
 		})
-		if objErr != nil && !strings.Contains(objErr.Error(), "NoSuch") && !strings.Contains(objErr.Error(), "NotFound") {
-			return fmt.Errorf("delete object %s: %w", name, objErr)
-		}
-		_, delErr := rt.Clients.S3.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(name)})
-		if delErr != nil && !strings.Contains(delErr.Error(), "NoSuch") && !strings.Contains(delErr.Error(), "NotFound") {
-			return fmt.Errorf("delete bucket %s: %w", name, delErr)
-		}
-		return nil
 	})
 	return nil
 }

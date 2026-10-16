@@ -76,20 +76,24 @@ func runKeys(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	name := rt.Name(strings.ToLower(c.ID))
 	switch c.ID {
 	case "EC2-KP-001":
+		var created bool
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
 			_, err := api.CreateKeyPair(ctx, &awsec2.CreateKeyPairInput{
 				KeyName: aws.String(name), KeyType: types.KeyTypeRsa,
 				KeyFormat: types.KeyFormatPem,
 			})
+			created = err == nil
 			return wrapErr("runKeys", err)
 		})
-		deleteKey(rt, api, name)
+		if created {
+			deleteKey(rt, name)
+		}
 		return o, wrapErr("runKeys", err)
 	case "EC2-KP-002":
 		if _, err := api.CreateKeyPair(ctx, &awsec2.CreateKeyPairInput{KeyName: aws.String(name)}); err != nil {
 			return cases.Outcome{}, fmt.Errorf("create: %w", err)
 		}
-		deleteKey(rt, api, name)
+		deleteKey(rt, name)
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
 				_, err := api.DescribeKeyPairs(ctx, &awsec2.DescribeKeyPairsInput{KeyNames: []string{name}})
@@ -113,17 +117,21 @@ func runKeys(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		if err != nil {
 			return cases.Outcome{}, err
 		}
+		var created bool
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
 			_, err := api.ImportKeyPair(ctx, &awsec2.ImportKeyPairInput{KeyName: aws.String(name), PublicKeyMaterial: pub})
+			created = err == nil
 			return wrapErr("runKeys", err)
 		})
-		deleteKey(rt, api, name)
+		if created {
+			deleteKey(rt, name)
+		}
 		return o, wrapErr("runKeys", err)
 	case "EC2-KP-101":
 		if _, err := api.CreateKeyPair(ctx, &awsec2.CreateKeyPairInput{KeyName: aws.String(name)}); err != nil {
 			return cases.Outcome{}, fmt.Errorf("create: %w", err)
 		}
-		deleteKey(rt, api, name)
+		deleteKey(rt, name)
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
 				_, err := api.CreateKeyPair(ctx, &awsec2.CreateKeyPairInput{KeyName: aws.String(name)})
@@ -148,25 +156,30 @@ func runKeys(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 			return callOut, wrapErr("runKeys", callErr)
 		}
 	case "EC2-KP-104":
-		{
-			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.ImportKeyPair(ctx, &awsec2.ImportKeyPairInput{
-					KeyName:           aws.String(name),
-					PublicKeyMaterial: []byte("not-a-key"),
-				})
-				return wrapErr("runKeys", err)
+		var created bool
+		callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+			_, err := api.ImportKeyPair(ctx, &awsec2.ImportKeyPairInput{
+				KeyName:           aws.String(name),
+				PublicKeyMaterial: []byte("not-a-key"),
 			})
-			return callOut, wrapErr("runKeys", callErr)
+			created = err == nil
+			return wrapErr("runKeys", err)
+		})
+		if created {
+			deleteKey(rt, name)
 		}
+		if harness.SetupReady(callOut, callErr) && !created {
+			return callOut, fmt.Errorf("import: success did not identify a key")
+		}
+		return callOut, wrapErr("runKeys", callErr)
 	default:
 		return cases.Outcome{}, fmt.Errorf("no runner for %s", c.ID)
 	}
 }
 
-func deleteKey(rt *harness.Runtime, api *awsec2.Client, name string) {
+func deleteKey(rt *harness.Runtime, name string) {
 	rt.Cleanup(func(ctx context.Context) error {
-		_, err := api.DeleteKeyPair(ctx, &awsec2.DeleteKeyPairInput{KeyName: aws.String(name)})
-		return harness.IgnoreCleanup(err)
+		return rt.DeleteOwnedKey(ctx, name)
 	})
 }
 

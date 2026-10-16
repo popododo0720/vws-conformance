@@ -151,13 +151,19 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 	api := rt.Clients.EC2
 	switch c.ID {
 	case "EC2-RUN-101":
-		{
-			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.RunInstances(ctx, &awsec2.RunInstancesInput{MinCount: aws.Int32(1), MaxCount: aws.Int32(1)})
-				return wrapErr("runInstances", err)
-			})
-			return callOut, wrapErr("runInstances", callErr)
+		var launched *awsec2.RunInstancesOutput
+		callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+			var err error
+			launched, err = api.RunInstances(ctx, &awsec2.RunInstancesInput{MinCount: aws.Int32(1), MaxCount: aws.Int32(1)})
+			return wrapErr("runInstances", err)
+		})
+		if err := keepLaunched(rt, api, launched, "run101"); err != nil {
+			return callOut, wrapErr("runInstances", err)
 		}
+		if harness.SetupReady(callOut, callErr) && (launched == nil || len(launched.Instances) == 0) {
+			return callOut, fmt.Errorf("run: success did not identify an instance")
+		}
+		return callOut, wrapErr("runInstances", callErr)
 	case "EC2-DI-101":
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
@@ -298,7 +304,7 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 			return cases.Outcome{}, fmt.Errorf("first run: %w", err)
 		}
 		id1 := aws.ToString(first.Instances[0].InstanceId)
-		if err := rememberInstance(rt, api, id1, "idem"); err != nil {
+		if err := rememberInstance(rt, api, first.Instances[0], "idem"); err != nil {
 			return cases.Outcome{}, err
 		}
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
@@ -327,7 +333,7 @@ func runInstances(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases
 		if err != nil {
 			return cases.Outcome{}, fmt.Errorf("first run: %w", err)
 		}
-		if err := rememberInstance(rt, api, aws.ToString(first.Instances[0].InstanceId), "i"); err != nil {
+		if err := rememberInstance(rt, api, first.Instances[0], "i"); err != nil {
 			return cases.Outcome{}, err
 		}
 		in.ImageId = aws.String("ami-0000000000000001")
@@ -385,21 +391,26 @@ func describedInstance(out *awsec2.DescribeInstancesOutput, launched string, sta
 
 func runOne(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, subnet, token string) (cases.Outcome, error) {
 	var id string
+	var launched types.Instance
 	o, err := rt.Call(ctx, func(ctx context.Context) error {
 		out, err := api.RunInstances(ctx, LaunchRequest(rt, subnet, token))
 		if err == nil && len(out.Instances) > 0 {
-			id = aws.ToString(out.Instances[0].InstanceId)
+			launched = out.Instances[0]
+			id = aws.ToString(launched.InstanceId)
 		}
 		return wrapErr("runOne", err)
 	})
 	o.Fields["id"] = id
 	if id != "" {
+		if err := noteInstanceDevices(rt, launched); err != nil {
+			return o, wrapErr("runOne", err)
+		}
 		if err := rt.Track("instance", id, rt.Name("i")); err != nil {
 			return o, wrapErr("runOne", err)
 		}
+		rt.HoldEC2(api)
 		rt.Cleanup(func(ctx context.Context) error {
-			_, err := api.TerminateInstances(ctx, &awsec2.TerminateInstancesInput{InstanceIds: []string{id}})
-			return harness.IgnoreCleanup(err)
+			return rt.TerminateOwned(ctx, id)
 		})
 	}
 	return o, wrapErr("runOne", err)
@@ -409,19 +420,23 @@ func keepLaunched(rt *harness.Runtime, api *awsec2.Client, out *awsec2.RunInstan
 	if out == nil || len(out.Instances) == 0 {
 		return nil
 	}
-	return rememberInstance(rt, api, aws.ToString(out.Instances[0].InstanceId), suffix)
+	return rememberInstance(rt, api, out.Instances[0], suffix)
 }
 
-func rememberInstance(rt *harness.Runtime, api *awsec2.Client, id, suffix string) error {
+func rememberInstance(rt *harness.Runtime, api *awsec2.Client, inst types.Instance, suffix string) error {
+	id := aws.ToString(inst.InstanceId)
 	if id == "" {
 		return fmt.Errorf("run: empty id")
+	}
+	if err := noteInstanceDevices(rt, inst); err != nil {
+		return err
 	}
 	if err := rt.Track("instance", id, rt.Name(suffix)); err != nil {
 		return wrapErr("rememberInstance", err)
 	}
+	rt.HoldEC2(api)
 	rt.Cleanup(func(ctx context.Context) error {
-		_, err := api.TerminateInstances(ctx, &awsec2.TerminateInstancesInput{InstanceIds: []string{id}})
-		return harness.IgnoreCleanup(err)
+		return rt.TerminateOwned(ctx, id)
 	})
 	return nil
 }
@@ -431,18 +446,34 @@ func launch(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, subnet
 	if err != nil {
 		return "", fmt.Errorf("run: %w", err)
 	}
+	if err := noteInstanceDevices(rt, out.Instances[0]); err != nil {
+		return "", wrapErr("launch", err)
+	}
 	id := aws.ToString(out.Instances[0].InstanceId)
 	if err := rt.Track("instance", id, rt.Name("i")); err != nil {
 		return "", wrapErr("launch", err)
 	}
+	rt.HoldEC2(api)
 	rt.Cleanup(func(ctx context.Context) error {
-		_, err := api.TerminateInstances(ctx, &awsec2.TerminateInstancesInput{InstanceIds: []string{id}})
-		return harness.IgnoreCleanup(err)
+		return rt.TerminateOwned(ctx, id)
 	})
 	if err := waitRunning(ctx, api, id); err != nil {
 		return "", err
 	}
 	return id, nil
+}
+
+func noteInstanceDevices(rt *harness.Runtime, inst types.Instance) error {
+	var err error
+	for _, block := range inst.BlockDeviceMappings {
+		if block.Ebs == nil {
+			continue
+		}
+		if trackErr := rt.NoteDevice(aws.ToString(block.Ebs.VolumeId)); trackErr != nil && err == nil {
+			err = trackErr
+		}
+	}
+	return err
 }
 
 func waitRunning(ctx context.Context, api *awsec2.Client, id string) error {

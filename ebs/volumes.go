@@ -199,13 +199,23 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 		}
 	case "EBS-VOL-103":
 		in := VolumeRequest("vws-1a", 0)
-		{
-			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.CreateVolume(ctx, in)
-				return wrapErr("runVol", err)
-			})
-			return callOut, wrapErr("runVol", callErr)
+		var id string
+		callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+			out, err := api.CreateVolume(ctx, in)
+			if err == nil && out != nil {
+				id = aws.ToString(out.VolumeId)
+			}
+			return wrapErr("runVol", err)
+		})
+		if id != "" {
+			if err := trackVol(rt, api, id); err != nil {
+				return callOut, wrapErr("runVol", err)
+			}
 		}
+		if harness.SetupReady(callOut, callErr) && id == "" {
+			return callOut, fmt.Errorf("create volume: success did not identify a volume")
+		}
+		return callOut, wrapErr("runVol", callErr)
 	case "EBS-VOL-003", "EBS-VOL-102", "EBS-VOL-006":
 		_, subnet, err := rt.EnsureNet(ctx)
 		if err != nil {
@@ -227,9 +237,12 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 		if err := rt.Track("instance", inst, rt.Name("volinst")); err != nil {
 			return cases.Outcome{}, wrapErr("attachVol", err)
 		}
+		if err := noteBlocks(rt, run.Instances[0]); err != nil {
+			return cases.Outcome{}, wrapErr("attachVol", err)
+		}
+		rt.HoldEC2(api)
 		rt.Cleanup(func(ctx context.Context) error {
-			_, err := api.TerminateInstances(ctx, &awsec2.TerminateInstancesInput{InstanceIds: []string{inst}})
-			return harness.IgnoreCleanup(err)
+			return rt.TerminateOwned(ctx, inst)
 		})
 		if _, err := api.DescribeInstances(ctx, &awsec2.DescribeInstancesInput{InstanceIds: []string{inst}}); err != nil {
 			return cases.Outcome{}, fmt.Errorf("describe instance: %w", err)
@@ -248,8 +261,14 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 			})
 			return wrapErr("runVol", err)
 		})
-		if c.ID == "EBS-VOL-003" || !harness.SetupReady(o, err) {
+		if c.ID == "EBS-VOL-003" {
 			return o, wrapErr("runVol", err)
+		}
+		if !harness.SetupReady(o, err) {
+			if err != nil || (o.HTTP == c.Expect.HTTP && o.Code == c.Expect.Code) {
+				return o, fmt.Errorf("attach setup: http %d code %s", o.HTTP, o.Code)
+			}
+			return o, nil
 		}
 		if c.ID == "EBS-VOL-006" {
 			{
@@ -357,12 +376,15 @@ func ownedInstance(ctx context.Context, rt *harness.Runtime, api *awsec2.Client,
 		return "", fmt.Errorf("run: %w", err)
 	}
 	inst := aws.ToString(run.Instances[0].InstanceId)
+	rt.HoldEC2(api)
 	if err := rt.Track("instance", inst, rt.Name(token)); err != nil {
 		return "", wrapErr("ownedInstance", err)
 	}
+	if err := noteBlocks(rt, run.Instances[0]); err != nil {
+		return "", wrapErr("ownedInstance", err)
+	}
 	rt.Cleanup(func(ctx context.Context) error {
-		_, err := api.TerminateInstances(ctx, &awsec2.TerminateInstancesInput{InstanceIds: []string{inst}})
-		return harness.IgnoreCleanup(err)
+		return rt.TerminateOwned(ctx, inst)
 	})
 	if _, err := api.DescribeInstances(ctx, &awsec2.DescribeInstancesInput{InstanceIds: []string{inst}}); err != nil {
 		return "", fmt.Errorf("describe instance: %w", err)
@@ -370,13 +392,26 @@ func ownedInstance(ctx context.Context, rt *harness.Runtime, api *awsec2.Client,
 	return inst, nil
 }
 
+func noteBlocks(rt *harness.Runtime, inst types.Instance) error {
+	var err error
+	for _, block := range inst.BlockDeviceMappings {
+		if block.Ebs == nil {
+			continue
+		}
+		if trackErr := rt.NoteDevice(aws.ToString(block.Ebs.VolumeId)); trackErr != nil && err == nil {
+			err = trackErr
+		}
+	}
+	return err
+}
+
 func trackVol(rt *harness.Runtime, api *awsec2.Client, id string) error {
 	if id == "" {
 		return nil
 	}
+	rt.HoldEC2(api)
 	rt.Cleanup(func(ctx context.Context) error {
-		_, err := api.DeleteVolume(ctx, &awsec2.DeleteVolumeInput{VolumeId: aws.String(id)})
-		return harness.IgnoreCleanup(err)
+		return rt.DeleteOwnedVolume(ctx, id)
 	})
 	if err := rt.Track("volume", id, rt.Name("vol")); err != nil {
 		return wrapErr("trackVol", err)

@@ -80,16 +80,32 @@ func runSnap(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		if err != nil {
 			return cases.Outcome{}, err
 		}
-		{
-			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
-				_, err := api.CreateSnapshot(ctx, &awsec2.CreateSnapshotInput{
-					VolumeId:    aws.String(vol),
-					Description: aws.String(rt.Name("missing")),
-				})
-				return wrapErr("runSnap", err)
+		var id string
+		callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+			out, err := api.CreateSnapshot(ctx, &awsec2.CreateSnapshotInput{
+				VolumeId:    aws.String(vol),
+				Description: aws.String(rt.Name("missing")),
 			})
-			return callOut, wrapErr("runSnap", callErr)
+			if err == nil && out != nil {
+				id = aws.ToString(out.SnapshotId)
+			}
+			return wrapErr("runSnap", err)
+		})
+		if id != "" {
+			if err := rt.Track("snapshot", id, rt.Name("missing")); err != nil {
+				return callOut, wrapErr("runSnap", err)
+			}
+			rt.Cleanup(func(ctx context.Context) error {
+				return rt.Keep(ctx, true, nil, nil, func(ctx context.Context) error {
+					_, err := api.DeleteSnapshot(ctx, &awsec2.DeleteSnapshotInput{SnapshotId: aws.String(id)})
+					return harness.IgnoreCleanup(err)
+				})
+			})
 		}
+		if harness.SetupReady(callOut, callErr) && id == "" {
+			return callOut, fmt.Errorf("snapshot: success did not identify a snapshot")
+		}
+		return callOut, wrapErr("runSnap", callErr)
 	}
 	vol, err := makeVol(ctx, rt, api, "snapvol")
 	if err != nil {
@@ -167,8 +183,10 @@ func goneSnap(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, toke
 		return "", wrapErr("goneSnap", err)
 	}
 	rt.Cleanup(func(ctx context.Context) error {
-		_, err := api.DeleteSnapshot(ctx, &awsec2.DeleteSnapshotInput{SnapshotId: aws.String(id)})
-		return harness.IgnoreCleanup(err)
+		return rt.Keep(ctx, true, nil, nil, func(ctx context.Context) error {
+			_, err := api.DeleteSnapshot(ctx, &awsec2.DeleteSnapshotInput{SnapshotId: aws.String(id)})
+			return harness.IgnoreCleanup(err)
+		})
 	})
 	if _, err := api.DeleteSnapshot(ctx, &awsec2.DeleteSnapshotInput{SnapshotId: aws.String(id)}); err != nil {
 		return "", fmt.Errorf("delete snapshot %s: %w", id, err)

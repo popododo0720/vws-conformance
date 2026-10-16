@@ -122,8 +122,15 @@ func TestAttachFailureIsTheCaseOutcome(t *testing.T) {
 			got, err := runVol(context.Background(), rt, spec)
 			mu.Lock()
 			defer mu.Unlock()
-			if err == nil || len(followed) != 0 {
+			if len(followed) != 0 {
 				t.Fatalf("http %d code %q err %v followed %v", got.HTTP, got.Code, err, followed)
+			}
+			matches := got.HTTP == spec.Expect.HTTP && got.Code == spec.Expect.Code
+			if matches && err == nil {
+				t.Fatalf("setup outcome satisfied %s", id)
+			}
+			if !matches && err != nil {
+				t.Fatalf("http %d code %q err %v", got.HTTP, got.Code, err)
 			}
 		})
 	}

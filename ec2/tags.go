@@ -90,9 +90,9 @@ func goneVolume(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (s
 		return "", fmt.Errorf("create volume: %w", err)
 	}
 	id := aws.ToString(out.VolumeId)
+	rt.HoldEC2(api)
 	rt.Cleanup(func(ctx context.Context) error {
-		_, err := api.DeleteVolume(ctx, &awsec2.DeleteVolumeInput{VolumeId: aws.String(id)})
-		return harness.IgnoreCleanup(err)
+		return rt.DeleteOwnedVolume(ctx, id)
 	})
 	if err := rt.Track("volume", id, rt.Name("tagmiss")); err != nil {
 		return "", wrapErr("goneVolume", err)
