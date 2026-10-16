@@ -22,6 +22,9 @@
 #   guard-agents.sh comment-counts         stdin is one comment JSON object. Exit 0 only when created_at
 #                                           equals updated_at and every edit list on the object is empty.
 #                                           A missing timestamp fails closed.
+#   guard-agents.sh comment-trust HEAD     stdin is one comment JSON object per line. Exit 1 when any
+#                                           comment by a verifier, or any comment whose body is a verdict
+#                                           for HEAD, was edited. The message names that comment.
 #   guard-agents.sh verify-gate HEAD LABELS [FILE]
 #                                           the pull request is verify-approved for HEAD: LABELS is one label name
 #                                           per line and one line equals verify-approved. A comment in the text
@@ -173,6 +176,10 @@ cmd_comment_counts() {
     echo "comment-counts: edited comment does not count" >&2
     return 1
   fi
+}
+
+cmd_comment_trust() {
+  cat >/dev/null
 }
 
 # verify-gate: the approval is bound to one head commit. A push changes the head, so the old section no
@@ -835,6 +842,45 @@ EOF
   expect_fail "a comment missing updated_at" "$OLDPWD_SCRIPT" comment-counts <<'EOF'
 {"created_at":"2020-01-01T00:00:00Z"}
 EOF
+  pass_body=$(printf '## Verified-by: vws-verify\nHead: %s\nResult: PASS\n' "$h1")
+  fail_body=$(printf '## Verified-by: vws-verify\nHead: %s\nResult: FAIL\n' "$h1")
+  older_pass=$(jq -nc --arg body "$pass_body" '{login:"verifier",body:$body,created_at:"2020-01-01T00:00:00Z",updated_at:"2020-01-01T00:00:00Z"}')
+  newer_fail=$(jq -nc --arg body "$fail_body" '{login:"verifier",body:$body,created_at:"2020-01-02T00:00:00Z",updated_at:"2020-01-03T00:00:00Z"}')
+  expect_fail "an edited newer FAIL with an older PASS" \
+    env GUARD_VERIFY_ACTORS=verifier "$OLDPWD_SCRIPT" comment-trust "$h1" <<EOF
+${older_pass}
+${newer_fail}
+EOF
+  trust_msg=$(env GUARD_VERIFY_ACTORS=verifier "$OLDPWD_SCRIPT" comment-trust "$h1" <<EOF
+${older_pass}
+${newer_fail}
+EOF
+2>&1 >/dev/null || true)
+  [[ $trust_msg == *"edited comment by 'verifier' at 2020-01-02T00:00:00Z"* ]] ||
+    die "selftest: edited newer FAIL gave '${trust_msg}'"
+  echo "ok: an edited newer FAIL names that comment"
+  older_note=$(jq -nc '{login:"verifier",body:"note",created_at:"2020-01-01T00:00:00Z",updated_at:"2020-01-01T00:00:00Z",edits:[{}]}')
+  newer_pass=$(jq -nc --arg body "$pass_body" '{login:"verifier",body:$body,created_at:"2020-01-05T00:00:00Z",updated_at:"2020-01-05T00:00:00Z"}')
+  expect_fail "an edited older comment" \
+    env GUARD_VERIFY_ACTORS=verifier "$OLDPWD_SCRIPT" comment-trust "$h1" <<EOF
+${older_note}
+${newer_pass}
+EOF
+  trust_msg=$(env GUARD_VERIFY_ACTORS=verifier "$OLDPWD_SCRIPT" comment-trust "$h1" <<EOF
+${older_note}
+${newer_pass}
+EOF
+2>&1 >/dev/null || true)
+  [[ $trust_msg == *"edited comment by 'verifier' at 2020-01-01T00:00:00Z"* ]] ||
+    die "selftest: edited older comment gave '${trust_msg}'"
+  echo "ok: an edited older comment is named"
+  stranger=$(jq -nc '{login:"stranger",body:"thanks",created_at:"2020-01-04T00:00:00Z",updated_at:"2020-01-06T00:00:00Z"}')
+  expect_pass "a clean comment history" \
+    env GUARD_VERIFY_ACTORS=verifier "$OLDPWD_SCRIPT" comment-trust "$h1" <<EOF
+${older_pass}
+${stranger}
+${newer_pass}
+EOF
   tsv=$'2024-06-01T00:00:00Z\t9\tnine\n2024-06-01T00:00:00Z\t10\tten'
   got=$(printf '%s\n' "$tsv" | "$OLDPWD_SCRIPT" latest-labeler)
   [[ $got == ten ]] || die "selftest: same-second labeler gave '${got}'"
@@ -1158,11 +1204,12 @@ case "$command_name" in
   normalize-comment) cmd_normalize_comment "$@" ;;
   latest-labeler) cmd_latest_labeler "$@" ;;
   comment-counts) cmd_comment_counts "$@" ;;
+  comment-trust) cmd_comment_trust "$@" ;;
   commit-msg) cmd_commit_msg "$@" ;;
   pr-commits) cmd_pr_commits "$@" ;;
   push-watch) cmd_push_watch "$@" ;;
   correct) cmd_correct "$@" ;;
   english) cmd_english "$@" ;;
   selftest) cmd_selftest ;;
-  *) die "usage: guard-agents.sh <agents [FILE]|pr-base BASE|rules [FILE] [HEADING]|judgment [FILE] [HEADING]|archtest [FILE] [HEADING]|identity [SUMFILE]|allow ALLOWFILE HEADREF|normalize-comment|latest-labeler|comment-counts|pr-body [FILE]|commit-msg FILE|pr-commits BASE HEAD|push-watch BEFORE AFTER|verify-gate HEAD LABELS [FILE]|correct [DIR]|english [ALLOWLIST]|selftest>" ;;
+  *) die "usage: guard-agents.sh <agents [FILE]|pr-base BASE|rules [FILE] [HEADING]|judgment [FILE] [HEADING]|archtest [FILE] [HEADING]|identity [SUMFILE]|allow ALLOWFILE HEADREF|normalize-comment|latest-labeler|comment-counts|comment-trust|pr-body [FILE]|commit-msg FILE|pr-commits BASE HEAD|push-watch BEFORE AFTER|verify-gate HEAD LABELS [FILE]|correct [DIR]|english [ALLOWLIST]|selftest>" ;;
 esac
