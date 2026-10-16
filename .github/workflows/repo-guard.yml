@@ -80,17 +80,20 @@ jobs:
           text=$(mktemp)
           comments=$(mktemp)
           gh api --paginate "repos/${REPO}/issues/${NUMBER}/comments" \
-            --jq '.[] | {login: .user.login, body: .body} | @json' >"$comments"
+            --jq '.[] | {login: .user.login, body: .body, created_at, updated_at, edits, userContentEdits, user_content_edits} | @json' >"$comments"
           : >"$text"
           while IFS= read -r row; do
             [[ -n $row ]] || continue
+            if ! printf '%s\n' "$row" | scripts/guard-agents.sh comment-counts >/dev/null; then
+              continue
+            fi
             login=$(jq -r '.login' <<<"$row")
             body=$(jq -r '.body // ""' <<<"$row")
             norm=$(printf '%s' "$body" | scripts/guard-agents.sh normalize-comment)
             printf '@@comment-by: %s\n%s\n' "$login" "$norm" >>"$text"
           done <"$comments"
           GUARD_VERIFY_LABELER=$(gh api --paginate "repos/${REPO}/issues/${NUMBER}/events" \
-            --jq '.[] | select(.event == "labeled" and .label.name == "verify-approved") | [.created_at, .actor.login] | @tsv' \
+            --jq '.[] | select(.event == "labeled" and .label.name == "verify-approved") | [.created_at, (.id | tostring), .actor.login] | @tsv' \
             | scripts/guard-agents.sh latest-labeler)
           # The head pusher: the actor of the activity that set the head ref to HEAD_SHA (repository activity
           # API; push, force push, branch creation...), not the commit's committer field, which anyone can set.

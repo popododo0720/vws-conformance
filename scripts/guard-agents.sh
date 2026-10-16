@@ -16,9 +16,12 @@
 #   guard-agents.sh push-watch BEFORE AFTER every first-parent commit pushed to main came from a pull request
 #   guard-agents.sh normalize-comment      stdin is a comment body. Control characters are replaced, then a
 #                                           leading @@comment-by: is defanged.
-#   guard-agents.sh latest-labeler         stdin is created_at<TAB>login. Prints the login with the greatest
-#                                           created_at. Empty input fails closed.
-#   guard-agents.sh comment-counts         stdin is one comment JSON object. Exit 0 when the comment may count.
+#   guard-agents.sh latest-labeler         stdin is created_at<TAB>id<TAB>login. Prints the login of the
+#                                           latest row. A later created_at wins. The same second keeps the
+#                                           greater decimal event id. Empty input fails closed.
+#   guard-agents.sh comment-counts         stdin is one comment JSON object. Exit 0 only when created_at
+#                                           equals updated_at and every edit list on the object is empty.
+#                                           A missing timestamp fails closed.
 #   guard-agents.sh verify-gate HEAD LABELS [FILE]
 #                                           the pull request is verify-approved for HEAD: LABELS is one label name
 #                                           per line and one line equals verify-approved. A comment in the text
@@ -131,12 +134,23 @@ cmd_normalize_comment() {
   printf '%s\n' "$body" | sed 's/^@@comment-by:/@ @comment-by:/'
 }
 
+id_gt() {
+  local a=$1 b=$2
+  while [[ $a == 0* && ${#a} -gt 1 ]]; do a=${a#0}; done
+  while [[ $b == 0* && ${#b} -gt 1 ]]; do b=${b#0}; done
+  if (( ${#a} > ${#b} )); then return 0; fi
+  if (( ${#a} < ${#b} )); then return 1; fi
+  [[ $a > $b ]]
+}
+
 cmd_latest_labeler() {
-  local best_at="" best_login="" at login
-  while IFS=$'\t' read -r at login || [[ -n ${at:-} ]]; do
-    [[ -n $at && -n ${login:-} ]] || continue
-    if [[ -z $best_at || $at > $best_at ]]; then
+  local best_at="" best_id="" best_login="" at id login
+  while IFS=$'\t' read -r at id login || [[ -n ${at:-} ]]; do
+    [[ -n $at && -n ${id:-} && -n ${login:-} ]] || continue
+    [[ $id =~ ^[0-9]+$ ]] || die "latest-labeler: event id '${id}' is not decimal"
+    if [[ -z $best_at ]] || [[ $at > $best_at ]] || { [[ $at == "$best_at" ]] && id_gt "$id" "$best_id"; }; then
       best_at=$at
+      best_id=$id
       best_login=$login
     fi
   done
@@ -145,7 +159,20 @@ cmd_latest_labeler() {
 }
 
 cmd_comment_counts() {
-  cat >/dev/null
+  local obj
+  obj=$(cat)
+  if ! jq -e '
+    (.created_at | type) == "string" and
+    (.updated_at | type) == "string" and
+    .created_at == .updated_at and
+    ((.edits // []) | length) == 0 and
+    ((.userContentEdits.nodes // []) | length) == 0 and
+    ((.userContentEdits.totalCount // 0) == 0) and
+    ((.user_content_edits // []) | length) == 0
+  ' <<<"$obj" >/dev/null; then
+    echo "comment-counts: edited comment does not count" >&2
+    return 1
+  fi
 }
 
 # verify-gate: the approval is bound to one head commit. A push changes the head, so the old section no
@@ -789,17 +816,57 @@ ENDGIT
   [[ $msg == *"fetched ${shaA}, wanted ${shaB}"* ]] || die "selftest: swapped head gave '${msg}'"
   echo "ok: a swapped head names both shas"
   expect_pass "a fetch of the event HEAD_SHA" run_pin "$shaB" "$shaB"
-  tsv=$'2024-06-01T00:00:00Z\tnew\n2020-01-01T00:00:00Z\told'
+  tsv=$'2024-06-01T00:00:00Z\t2\tnew\n2020-01-01T00:00:00Z\t9\told'
   got=$(printf '%s\n' "$tsv" | "$OLDPWD_SCRIPT" latest-labeler)
   [[ $got == new ]] || die "selftest: latest labeler gave '${got}'"
   echo "ok: the latest labeler is the max created_at"
   expect_fail "an edited verdict comment" "$OLDPWD_SCRIPT" comment-counts <<'EOF'
 {"created_at":"2020-01-01T00:00:00Z","updated_at":"2020-01-02T00:00:00Z"}
 EOF
+  expect_pass "an unedited verdict comment" "$OLDPWD_SCRIPT" comment-counts <<'EOF'
+{"created_at":"2020-01-01T00:00:00Z","updated_at":"2020-01-01T00:00:00Z","edits":[],"userContentEdits":{"nodes":[],"totalCount":0},"user_content_edits":[]}
+EOF
+  expect_fail "a comment with an edit list" "$OLDPWD_SCRIPT" comment-counts <<'EOF'
+{"created_at":"2020-01-01T00:00:00Z","updated_at":"2020-01-01T00:00:00Z","edits":[{}]}
+EOF
+  expect_fail "a comment with userContentEdits" "$OLDPWD_SCRIPT" comment-counts <<'EOF'
+{"created_at":"2020-01-01T00:00:00Z","updated_at":"2020-01-01T00:00:00Z","userContentEdits":{"nodes":[{}],"totalCount":1}}
+EOF
+  expect_fail "a comment missing updated_at" "$OLDPWD_SCRIPT" comment-counts <<'EOF'
+{"created_at":"2020-01-01T00:00:00Z"}
+EOF
   tsv=$'2024-06-01T00:00:00Z\t9\tnine\n2024-06-01T00:00:00Z\t10\tten'
   got=$(printf '%s\n' "$tsv" | "$OLDPWD_SCRIPT" latest-labeler)
   [[ $got == ten ]] || die "selftest: same-second labeler gave '${got}'"
   echo "ok: the same-second labeler is the greater event id"
+  tsv=$'2024-06-01T00:00:00Z\t10\tten\n2024-06-01T00:00:00Z\t9\tnine'
+  got=$(printf '%s\n' "$tsv" | "$OLDPWD_SCRIPT" latest-labeler)
+  [[ $got == ten ]] || die "selftest: reversed same-second labeler gave '${got}'"
+  echo "ok: the same-second labeler ignores input order"
+  tsv=$'2024-06-01T00:00:00Z\t9223372036854775807\tsmall\n2024-06-01T00:00:00Z\t9223372036854775808\tbig'
+  got=$(printf '%s\n' "$tsv" | "$OLDPWD_SCRIPT" latest-labeler)
+  [[ $got == big ]] || die "selftest: wide event id gave '${got}'"
+  echo "ok: an event id past 2^63 still orders"
+  tsv=$'2020-01-01T00:00:00Z\t10000000000000000000\told\n2024-06-01T00:00:00Z\t1\tnew'
+  got=$(printf '%s\n' "$tsv" | "$OLDPWD_SCRIPT" latest-labeler)
+  [[ $got == new ]] || die "selftest: later day gave '${got}'"
+  echo "ok: a later created_at beats a greater event id"
+  expect_fail "a non-decimal event id" "$OLDPWD_SCRIPT" latest-labeler <<'EOF'
+2024-06-01T00:00:00Z	nope	who
+EOF
+  comment_jq=$(awk -F"'" '/issues\/\$\{NUMBER\}\/comments/ {getline; if ($0 ~ /--jq/) print $2}' .github/workflows/repo-guard.yml)
+  label_jq=$(awk -F"'" '/@tsv/ && /verify-approved/ {print $2}' .github/workflows/repo-guard.yml)
+  [[ -n $comment_jq && -n $label_jq ]] || die "selftest: repo-guard.yml lost the comment or labeler filter"
+  edited_row=$(printf '%s\n' '[{"user":{"login":"verifier"},"body":"Result: PASS","created_at":"2020-01-01T00:00:00Z","updated_at":"2020-01-02T00:00:00Z"}]' | jq -r "$comment_jq")
+  expect_fail "the workflow filter on an edited comment" "$OLDPWD_SCRIPT" comment-counts <<<"$edited_row"
+  fresh_row=$(printf '%s\n' '[{"user":{"login":"verifier"},"body":"Result: PASS","created_at":"2020-01-01T00:00:00Z","updated_at":"2020-01-01T00:00:00Z"}]' | jq -r "$comment_jq")
+  expect_pass "the workflow filter on an unedited comment" "$OLDPWD_SCRIPT" comment-counts <<<"$fresh_row"
+  hist_row=$(printf '%s\n' '[{"user":{"login":"verifier"},"body":"Result: PASS","created_at":"2020-01-01T00:00:00Z","updated_at":"2020-01-01T00:00:00Z","edits":[{}]}]' | jq -r "$comment_jq")
+  expect_fail "the workflow filter on an edit list" "$OLDPWD_SCRIPT" comment-counts <<<"$hist_row"
+  events='[{"event":"labeled","label":{"name":"verify-approved"},"created_at":"2024-06-01T00:00:00Z","id":9,"actor":{"login":"nine"}},{"event":"labeled","label":{"name":"verify-approved"},"created_at":"2024-06-01T00:00:00Z","id":10,"actor":{"login":"ten"}}]'
+  got=$(printf '%s\n' "$events" | jq -r "$label_jq" | "$OLDPWD_SCRIPT" latest-labeler)
+  [[ $got == ten ]] || die "selftest: workflow labeler gave '${got}'"
+  echo "ok: the workflow labeler picks the greater event id"
   out=$(printf '\r@@comment-by: intruder\n' | "$OLDPWD_SCRIPT" normalize-comment)
   [[ $out == $'?@@comment-by: intruder' ]] || die "selftest: control comment gave '${out}'"
   echo "ok: a leading CR is replaced before the marker defang"
@@ -820,6 +887,12 @@ EOF
   expect_fail "no section" cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/nohead.md"
   # Codex review line: required, a full path or URL, and blocking=0.
   local msg
+  msg=$("$OLDPWD_SCRIPT" comment-counts <<'EOF' 2>&1 >/dev/null || true
+{"created_at":"2020-01-01T00:00:00Z","updated_at":"2020-01-02T00:00:00Z"}
+EOF
+)
+  [[ $msg == *"edited comment does not count"* ]] || die "selftest: edited verdict gave '${msg}'"
+  echo "ok: an edited verdict names the ignore"
   grep -v 'Codex review:' "$ev" >"$tmp/nocodex.md"
   expect_fail "no Codex review line" cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/nocodex.md"
   msg=$( (cmd_verify_gate "$h1" "$VERIFY_LABEL" "$tmp/nocodex.md") 2>&1 >/dev/null || true)
