@@ -59,7 +59,10 @@ func (rt *Runtime) Own(kind, id, name string, del func(context.Context) error) e
 }
 
 func (rt *Runtime) Track(kind, id, name string) error {
-	row := sweep.Resource{Kind: kind, ID: id, Name: name, LedgerRunID: rt.Cfg.RunID}
+	row := sweep.Resource{
+		Kind: kind, ID: id, Name: name, LedgerRunID: rt.Cfg.RunID,
+		Target: rt.Cfg.Target, Account: rt.Cfg.AccountID,
+	}
 	if err := os.MkdirAll(rt.Cfg.OutDir, 0o755); err != nil {
 		return fmt.Errorf("ledger dir: %w", err)
 	}
@@ -473,7 +476,7 @@ func (rt *Runtime) collectInventory(ctx context.Context, rows []sweep.Resource, 
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, collectEC2(view, rows, ghosts, rt.keepRun)...)
+		items = append(items, collectEC2(view, rows, ghosts, rt.keepRun, rt.ledgerScope())...)
 	}
 	return items, nil
 }
@@ -615,12 +618,24 @@ func eachPage(fetch func(token *string) (*string, error)) error {
 }
 
 func ec2Items(view ec2View, rows []sweep.Resource) []sweepItem {
-	return collectEC2(view, rows, true, validRun)
+	return collectEC2(view, rows, true, validRun, ledgerScope{})
 }
 
-func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool, keep func(string) bool) []sweepItem {
+type ledgerScope struct {
+	Target  string
+	Account string
+}
+
+func (rt *Runtime) ledgerScope() ledgerScope {
+	return ledgerScope{Target: rt.Cfg.Target, Account: rt.Cfg.AccountID}
+}
+
+func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool, keep func(string) bool,
+	scope ledgerScope,
+) []sweepItem {
 	var items []sweepItem
 	seen := map[string]int{}
+	blocked := map[string]bool{}
 	add := func(it sweepItem) {
 		key := it.kind + " " + it.id
 		if it.id == "" {
@@ -644,52 +659,69 @@ func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool, keep func(stri
 			continue
 		}
 		id := aws.ToString(in.InstanceId)
-		if ownedTag(in.Tags, keep) || ledgerHas(rows, "instance", id, keep) {
-			add(sweepItem{kind: "instance", id: id, owners: resourceOwners(in.Tags, rows, "instance", id)})
+		if ownerOutsideKeep(in.Tags, nil, keep) {
+			continue
+		}
+		if ownedTag(in.Tags, keep) || ledgerHas(rows, "instance", id, keep, scope) {
+			add(sweepItem{kind: "instance", id: id, owners: resourceOwners(in.Tags, rows, "instance", id, scope)})
 		}
 	}
 	for _, v := range view.volumes {
 		id := aws.ToString(v.VolumeId)
-		if ledgerHas(rows, "volume", id, keep) || ownedTag(v.Tags, keep) {
-			add(sweepItem{kind: "volume", id: id, owners: resourceOwners(v.Tags, rows, "volume", id)})
+		if ownerOutsideKeep(v.Tags, nil, keep) {
+			blocked["volume "+id] = true
+			continue
+		}
+		if ledgerHas(rows, "volume", id, keep, scope) || ownedTag(v.Tags, keep) {
+			add(sweepItem{kind: "volume", id: id, owners: resourceOwners(v.Tags, rows, "volume", id, scope)})
 		}
 	}
 	if ghosts {
 		for _, row := range rows {
-			if row.Kind == "volume" && keep(row.LedgerRunID) {
-				add(sweepItem{kind: "volume", id: row.ID, owners: ledgerOwners(rows, "volume", row.ID)})
+			if row.Kind == "volume" && keep(row.LedgerRunID) && rowInScope(row, scope) && !blocked["volume "+row.ID] {
+				add(sweepItem{kind: "volume", id: row.ID, owners: ledgerOwners(rows, "volume", row.ID, scope)})
 			}
 		}
 	}
 	for _, s := range view.snapshots {
 		id := aws.ToString(s.SnapshotId)
 		desc := aws.ToString(s.Description)
-		if ownedName(desc, keep) || ledgerHas(rows, "snapshot", id, keep) {
-			add(sweepItem{kind: "snapshot", id: id, owners: resourceOwners(s.Tags, rows, "snapshot", id, desc)})
+		if ownerOutsideKeep(s.Tags, []string{desc}, keep) {
+			continue
+		}
+		if ownedName(desc, keep) || ledgerHas(rows, "snapshot", id, keep, scope) {
+			add(sweepItem{
+				kind: "snapshot", id: id,
+				owners: resourceOwners(s.Tags, rows, "snapshot", id, scope, desc),
+			})
 		}
 	}
 	for _, a := range view.addresses {
 		id := aws.ToString(a.AllocationId)
-		if ledgerHas(rows, "address", id, keep) || ownedTag(a.Tags, keep) {
+		if ownerOutsideKeep(a.Tags, nil, keep) {
+			blocked["address "+id] = true
+			continue
+		}
+		if ledgerHas(rows, "address", id, keep, scope) || ownedTag(a.Tags, keep) {
 			add(sweepItem{
 				kind:   "address",
 				id:     id,
 				assoc:  aws.ToString(a.AssociationId),
-				owners: resourceOwners(a.Tags, rows, "address", id),
+				owners: resourceOwners(a.Tags, rows, "address", id, scope),
 			})
 		}
 	}
 	if ghosts {
 		for _, row := range rows {
-			if row.Kind == "address" && keep(row.LedgerRunID) {
-				add(sweepItem{kind: "address", id: row.ID, owners: ledgerOwners(rows, "address", row.ID)})
+			if row.Kind == "address" && keep(row.LedgerRunID) && rowInScope(row, scope) && !blocked["address "+row.ID] {
+				add(sweepItem{kind: "address", id: row.ID, owners: ledgerOwners(rows, "address", row.ID, scope)})
 			}
 		}
 	}
 	for _, k := range view.keys {
 		name := aws.ToString(k.KeyName)
 		if ownedName(name, keep) {
-			add(sweepItem{kind: "key-pair", id: name, owners: resourceOwners(k.Tags, nil, "", "", name)})
+			add(sweepItem{kind: "key-pair", id: name, owners: resourceOwners(k.Tags, nil, "", "", ledgerScope{}, name)})
 		}
 	}
 	for _, g := range view.groups {
@@ -698,7 +730,7 @@ func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool, keep func(stri
 			add(sweepItem{
 				kind:   "security-group",
 				id:     aws.ToString(g.GroupId),
-				owners: resourceOwners(g.Tags, nil, "", "", name),
+				owners: resourceOwners(g.Tags, nil, "", "", ledgerScope{}, name),
 			})
 		}
 	}
@@ -732,18 +764,20 @@ func collectEC2(view ec2View, rows []sweep.Resource, ghosts bool, keep func(stri
 	return items
 }
 
-func ledgerOwners(rows []sweep.Resource, kind, id string) []string {
+func ledgerOwners(rows []sweep.Resource, kind, id string, scope ledgerScope) []string {
 	var owners []string
 	for _, row := range rows {
-		if row.Kind == kind && row.ID == id {
+		if row.Kind == kind && row.ID == id && rowInScope(row, scope) {
 			owners = appendOwner(owners, row.LedgerRunID)
 		}
 	}
 	return owners
 }
 
-func resourceOwners(tags []ec2types.Tag, rows []sweep.Resource, kind, id string, names ...string) []string {
-	owners := mergeOwners(tagOwners(tags), ledgerOwners(rows, kind, id))
+func resourceOwners(tags []ec2types.Tag, rows []sweep.Resource, kind, id string, scope ledgerScope,
+	names ...string,
+) []string {
+	owners := mergeOwners(tagOwners(tags), ledgerOwners(rows, kind, id, scope))
 	for _, name := range names {
 		owners = mergeOwners(owners, runOwners(name))
 	}
@@ -889,9 +923,13 @@ func deleteEC2(ctx context.Context, rt *Runtime, items []sweepItem) error {
 	return nil
 }
 
-func ledgerHas(rows []sweep.Resource, kind, id string, keep func(string) bool) bool {
+func rowInScope(row sweep.Resource, scope ledgerScope) bool {
+	return row.Target == scope.Target && row.Account == scope.Account
+}
+
+func ledgerHas(rows []sweep.Resource, kind, id string, keep func(string) bool, scope ledgerScope) bool {
 	for _, r := range rows {
-		if r.Kind == kind && r.ID == id && keep(r.LedgerRunID) {
+		if r.Kind == kind && r.ID == id && keep(r.LedgerRunID) && rowInScope(r, scope) {
 			return true
 		}
 	}

@@ -808,6 +808,7 @@ func runtimeOn(t *testing.T, endpoint, volume string) *Runtime {
 	row := sweep.Resource{
 		Kind: "volume", ID: volume, Name: "conf-vol",
 		LedgerRunID: "conf-20261015T120000Z-abc123",
+		Target:      "local-fake",
 	}
 	b, err := json.Marshal(row)
 	if err != nil {

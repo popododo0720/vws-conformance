@@ -174,6 +174,19 @@ func ownedName(name string, keep func(string) bool) bool {
 	return ok && keep(id)
 }
 
+func ownerOutsideKeep(tags []ec2types.Tag, names []string, keep func(string) bool) bool {
+	owners := tagOwners(tags)
+	for _, name := range names {
+		owners = mergeOwners(owners, runOwners(name))
+	}
+	for _, id := range owners {
+		if !keep(id) {
+			return true
+		}
+	}
+	return false
+}
+
 func ownedTag(tags []ec2types.Tag, keep func(string) bool) bool {
 	for _, tag := range tags {
 		key := aws.ToString(tag.Key)
