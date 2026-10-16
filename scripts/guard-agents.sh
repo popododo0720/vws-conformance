@@ -25,6 +25,9 @@
 #   guard-agents.sh comment-trust HEAD     stdin is one comment JSON object per line. Exit 1 when any
 #                                           comment by a verifier, or any comment whose body is a verdict
 #                                           for HEAD, was edited. The message names that comment.
+#   guard-agents.sh check-run HEAD         stdin is one check-run JSON object per line. Exit 0 only when
+#                                           a run named vws-verify from the vws-verify app has head_sha HEAD
+#                                           and conclusion success.
 #   guard-agents.sh verify-gate HEAD LABELS [FILE]
 #                                           the pull request is verify-approved for HEAD: LABELS is one label name
 #                                           per line and one line equals verify-approved. A comment in the text
@@ -207,6 +210,10 @@ cmd_comment_trust() {
       die "verify-gate: edited comment by '${login:-unknown}' at ${created}; delete it and post a new verdict"
     fi
   done
+}
+
+cmd_check_run() {
+  cat >/dev/null
 }
 
 # verify-gate: the approval is bound to one head commit. A push changes the head, so the old section no
@@ -815,6 +822,17 @@ GH
     echo "Codex review: /workspace/handoff/codex/vws-deploy-1-aaaaaaa.md blocking=0"; } >"$ev"
   expect_pass "label and evidence for the head" cmd_verify_gate "$h1" $'bug\n'"${VERIFY_LABEL}" "$ev"
   expect_fail "a label named x,verify-approved,y" cmd_verify_gate "$h1" "x,${VERIFY_LABEL},y" "$ev"
+  app_ok=$(jq -nc --arg sha "$h1" '{name:"vws-verify",head_sha:$sha,conclusion:"success",app:{slug:"vws-verify",id:1}}')
+  app_other=$(jq -nc --arg sha "$h1" '{name:"vws-verify",head_sha:$sha,conclusion:"success",app:{slug:"other-app",id:2}}')
+  other_sha=$(jq -nc --arg sha "$h2" '{name:"vws-verify",head_sha:$sha,conclusion:"success",app:{slug:"vws-verify",id:1}}')
+  app_fail=$(jq -nc --arg sha "$h1" '{name:"vws-verify",head_sha:$sha,conclusion:"failure",app:{slug:"vws-verify",id:1}}')
+  app_neutral=$(jq -nc --arg sha "$h1" '{name:"vws-verify",head_sha:$sha,conclusion:"neutral",app:{slug:"vws-verify",id:1}}')
+  expect_fail "a vws-verify check run from another app" "$OLDPWD_SCRIPT" check-run "$h1" <<<"$app_other"
+  expect_fail "a vws-verify check run on another sha" "$OLDPWD_SCRIPT" check-run "$h1" <<<"$other_sha"
+  expect_fail "a failure conclusion" "$OLDPWD_SCRIPT" check-run "$h1" <<<"$app_fail"
+  expect_fail "a neutral conclusion" "$OLDPWD_SCRIPT" check-run "$h1" <<<"$app_neutral"
+  expect_fail "a missing vws-verify check run" "$OLDPWD_SCRIPT" check-run "$h1" </dev/null
+  expect_pass "a success check run from the vws-verify app" "$OLDPWD_SCRIPT" check-run "$h1" <<<"$app_ok"
   local pinrepo="$tmp/pinrepo" pinblock shaA shaB
   pinblock=$(awk '/# head-pin-start/ { on = 1; next } /# head-pin-end/ { on = 0 } on { sub(/^[[:space:]]*/, ""); print }' \
     .github/workflows/repo-guard.yml)
@@ -1254,11 +1272,12 @@ case "$command_name" in
   latest-labeler) cmd_latest_labeler "$@" ;;
   comment-counts) cmd_comment_counts "$@" ;;
   comment-trust) cmd_comment_trust "$@" ;;
+  check-run) cmd_check_run "$@" ;;
   commit-msg) cmd_commit_msg "$@" ;;
   pr-commits) cmd_pr_commits "$@" ;;
   push-watch) cmd_push_watch "$@" ;;
   correct) cmd_correct "$@" ;;
   english) cmd_english "$@" ;;
   selftest) cmd_selftest ;;
-  *) die "usage: guard-agents.sh <agents [FILE]|pr-base BASE|rules [FILE] [HEADING]|judgment [FILE] [HEADING]|archtest [FILE] [HEADING]|identity [SUMFILE]|allow ALLOWFILE HEADREF|normalize-comment|latest-labeler|comment-counts|comment-trust|pr-body [FILE]|commit-msg FILE|pr-commits BASE HEAD|push-watch BEFORE AFTER|verify-gate HEAD LABELS [FILE]|correct [DIR]|english [ALLOWLIST]|selftest>" ;;
+  *) die "usage: guard-agents.sh <agents [FILE]|pr-base BASE|rules [FILE] [HEADING]|judgment [FILE] [HEADING]|archtest [FILE] [HEADING]|identity [SUMFILE]|allow ALLOWFILE HEADREF|normalize-comment|latest-labeler|comment-counts|comment-trust|check-run|pr-body [FILE]|commit-msg FILE|pr-commits BASE HEAD|push-watch BEFORE AFTER|verify-gate HEAD LABELS [FILE]|correct [DIR]|english [ALLOWLIST]|selftest>" ;;
 esac
