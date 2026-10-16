@@ -120,7 +120,7 @@ func runAddr(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 func alloc(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (cases.Outcome, error) {
 	var id string
 	o, err := rt.Call(ctx, func(ctx context.Context) error {
-		out, err := allocateAddress(ctx, api, addressInput(rt))
+		out, err := api.AllocateAddress(ctx, addressInput(rt))
 		if err == nil {
 			id = aws.ToString(out.AllocationId)
 		}
@@ -134,7 +134,13 @@ func alloc(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (cases.
 }
 
 func allocID(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (string, error) {
-	out, err := allocateAddress(ctx, api, addressInput(rt))
+	in := addressInput(rt)
+	out, err := api.AllocateAddress(ctx, in)
+	if harness.UnsupportedParameter(err) {
+		bare := *in
+		bare.TagSpecifications = nil
+		out, err = api.AllocateAddress(ctx, &bare)
+	}
 	if err != nil {
 		return "", fmt.Errorf("allocate: %w", err)
 	}
@@ -143,18 +149,6 @@ func allocID(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (stri
 		return "", err
 	}
 	return id, nil
-}
-
-func allocateAddress(ctx context.Context, api *awsec2.Client, in *awsec2.AllocateAddressInput) (
-	*awsec2.AllocateAddressOutput, error,
-) {
-	out, err := api.AllocateAddress(ctx, in)
-	if err == nil || len(in.TagSpecifications) == 0 || !harness.UnsupportedParameter(err) {
-		return out, err
-	}
-	bare := *in
-	bare.TagSpecifications = nil
-	return api.AllocateAddress(ctx, &bare)
 }
 
 func addressInput(rt *harness.Runtime) *awsec2.AllocateAddressInput {
