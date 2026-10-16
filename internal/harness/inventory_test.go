@@ -68,6 +68,35 @@ func TestBareConfPrefixIsNotOwned(t *testing.T) {
 	}
 }
 
+func TestForeignRunTagVetoesEveryKind(t *testing.T) {
+	const (
+		current = "conf-20261015T120000Z-abc123"
+		active  = "conf-20261015T130000Z-def456"
+	)
+	name := "conf-20261015t120000z-abc123"
+	keep := func(id string) bool { return id == current }
+	tags := []ec2types.Tag{
+		{Key: aws.String("Name"), Value: aws.String(name)},
+		{Key: aws.String("vws:conformance-run"), Value: aws.String(active)},
+	}
+	view := ec2View{
+		subnets:  []ec2types.Subnet{{SubnetId: aws.String("subnet-1"), Tags: tags}},
+		vpcs:     []ec2types.Vpc{{VpcId: aws.String("vpc-1"), Tags: tags}},
+		gateways: []ec2types.InternetGateway{{InternetGatewayId: aws.String("igw-1"), Tags: tags}},
+		keys:     []ec2types.KeyPairInfo{{KeyName: aws.String(name), Tags: tags}},
+		groups: []ec2types.SecurityGroup{{
+			GroupId: aws.String("sg-1"), GroupName: aws.String(name), Tags: tags,
+		}},
+	}
+	var selected []string
+	for _, item := range collectEC2(view, nil, true, keep, ledgerScope{}) {
+		selected = append(selected, item.kind+" "+item.id)
+	}
+	if len(selected) != 0 {
+		t.Fatalf("selected %v", selected)
+	}
+}
+
 func TestTerminatedInstanceIsNotALeftover(t *testing.T) {
 	run := "conf-20261015T120000Z-abc123"
 	tag := []ec2types.Tag{{Key: aws.String("vws:conformance-run"), Value: aws.String(run)}}
