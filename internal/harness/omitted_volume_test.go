@@ -32,7 +32,8 @@ func TestOmittedLedgerVolumeKeepsTheDeleteError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	err := rt.Sweep(ctx)
-	if err == nil || !strings.Contains(err.Error(), "IncorrectState") || !strings.Contains(err.Error(), "vol-omitted") {
+	if deletes.Load() != 0 || err == nil || !strings.Contains(err.Error(), "preserve") ||
+		!strings.Contains(err.Error(), "vol-omitted") {
 		t.Fatalf("deletes %d err %v", deletes.Load(), err)
 	}
 }

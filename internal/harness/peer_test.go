@@ -32,6 +32,11 @@ type mutationRow struct {
 	gateways   string
 	bucket     string
 	active     string
+	direct     string
+	directErr  bool
+	directAddr string
+	ledger     string
+	ledgerKind string
 	forbid     []string
 	require    []string
 	dependency []string
@@ -148,11 +153,51 @@ func mutationRows() []mutationRow {
 			require:   []string{"TerminateInstances"},
 		},
 		{
-			name:      "root volume does not block instance termination",
+			name: "root volume without provenance preserves the instance", wantErr: true,
 			instances: instItem("i-peer", mutationRun, "running"),
 			volumes:   volItemTerm("vol-root", "", "i-peer", "attached", "true"),
+			forbid:    []string{"TerminateInstances", "DeleteVolume", "DetachVolume"},
+		},
+		{
+			name:      "recorded launch volume allows termination",
+			instances: instItem("i-peer", mutationRun, "running"),
+			volumes:   volItemTerm("vol-root", "", "i-peer", "attached", "true"),
+			ledger:    "vol-root",
 			require:   []string{"TerminateInstances"},
-			forbid:    []string{"DeleteVolume", "DetachVolume"},
+		},
+		{
+			name: "volume attachment without an instance preserves it", wantErr: true,
+			volumes: volOpen("vol-peer", mutationRun),
+			forbid:  []string{"DetachVolume", "DeleteVolume"},
+		},
+		{
+			name: "gateway attachment without a vpc preserves it", wantErr: true,
+			gateways: igwOpen("igw-peer", mutationRun),
+			forbid:   []string{"DetachInternetGateway", "DeleteInternetGateway"},
+		},
+		{
+			name:    "malformed explicit owner preserves the volume",
+			volumes: volBadOwner("vol-peer", mutationRun),
+			forbid:  []string{"DetachVolume", "DeleteVolume"},
+		},
+		{
+			name: "ledger volume is preserved when a direct describe shows a foreign instance", wantErr: true,
+			instances: instItem("i-peer", foreignRun, "running"),
+			direct:    volItem("vol-peer", mutationRun, "i-peer", "attached"),
+			ledger:    "vol-peer",
+			forbid:    []string{"DetachVolume", "DeleteVolume"},
+		},
+		{
+			name: "ledger volume is preserved when a direct describe fails", wantErr: true,
+			directErr: true, ledger: "vol-peer",
+			forbid: []string{"DetachVolume", "DeleteVolume"},
+		},
+		{
+			name: "ledger address is preserved when a direct describe shows a foreign instance", wantErr: true,
+			instances:  instItem("i-peer", foreignRun, "running"),
+			directAddr: addrItem("eipalloc-peer", mutationRun, "eipassoc-peer", "i-peer"),
+			ledger:     "eipalloc-peer", ledgerKind: "address",
+			forbid: []string{"DisassociateAddress", "ReleaseAddress"},
 		},
 		{
 			name: "untagged data volume blocks instance termination", wantErr: true,
@@ -223,9 +268,24 @@ func runMutationRow(t *testing.T, row mutationRow) {
 			serveBucketMutation(w, r, row.bucket, &mu, seen, &cleared)
 			return
 		}
-		action := ec2Action(r)
+		vals := ec2Form(r)
+		action := vals.Get("Action")
 		if action == "" {
 			serveBucketMutation(w, r, row.bucket, &mu, seen, &cleared)
+			return
+		}
+		if action == "DescribeVolumes" && vals.Get("VolumeId.1") != "" {
+			if row.directErr {
+				writeEC2(w, http.StatusInternalServerError, ec2Err("InternalError", "unread"))
+				return
+			}
+			if row.direct != "" {
+				writeEC2(w, http.StatusOK, ec2OK("DescribeVolumesResponse", "<volumeSet>"+row.direct+"</volumeSet>"))
+				return
+			}
+		}
+		if action == "DescribeAddresses" && vals.Get("AllocationId.1") != "" && row.directAddr != "" {
+			writeEC2(w, http.StatusOK, ec2OK("DescribeAddressesResponse", "<addressesSet>"+row.directAddr+"</addressesSet>"))
 			return
 		}
 		mu.Lock()
@@ -250,7 +310,19 @@ func runMutationRow(t *testing.T, row mutationRow) {
 		writeEC2(w, status, body)
 	}))
 	defer srv.Close()
-	rt := runtimeAt(t, srv.URL, t.TempDir(), mutationRun)
+	dir := t.TempDir()
+	if row.ledger != "" {
+		kind := row.ledgerKind
+		if kind == "" {
+			kind = "volume"
+		}
+		line := `{"Kind":"` + kind + `","ID":"` + row.ledger + `","LedgerRunID":"` + mutationRun +
+			`","Target":"local-fake","Account":"` + testAccount + `"}` + "\n"
+		if err := os.WriteFile(filepath.Join(dir, "ledger.jsonl"), []byte(line), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rt := runtimeAt(t, srv.URL, dir, mutationRun)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	err := rt.Sweep(ctx)
@@ -374,6 +446,23 @@ func isTerminal(action string) bool {
 	default:
 		return false
 	}
+}
+
+func volOpen(id, owner string) string {
+	att := "<attachmentSet><item><volumeId>" + id + "</volumeId><status>attached</status></item></attachmentSet>"
+	return "<item><volumeId>" + id + "</volumeId><size>1</size><availabilityZone>vws-1a</availabilityZone>" +
+		"<status>in-use</status><volumeType>gp2</volumeType>" + att + tagXML(owner) + "</item>"
+}
+
+func volBadOwner(id, owner string) string {
+	item := volItem(id, owner, "", "")
+	return strings.Replace(item, "</tagSet>",
+		"<item><key>vws:conformance-run</key><value>not-a-run</value></item></tagSet>", 1)
+}
+
+func igwOpen(id, owner string) string {
+	att := "<attachmentSet><item><state>available</state></item></attachmentSet>"
+	return "<item><internetGatewayId>" + id + "</internetGatewayId>" + att + tagXML(owner) + "</item>"
 }
 
 func volItemTerm(id, owner, inst, state, del string) string {

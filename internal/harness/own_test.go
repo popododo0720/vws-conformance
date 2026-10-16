@@ -12,6 +12,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 )
 
 func TestAllowMutationVerifiesSelfAndPeers(t *testing.T) {
@@ -45,6 +48,18 @@ func TestAllowMutationVerifiesSelfAndPeers(t *testing.T) {
 	}
 	if AllowMutation(false, []string{"self"}, nil, nil) {
 		t.Fatal("nil keep mutated")
+	}
+}
+
+func TestMalformedOwnerVetoesMutation(t *testing.T) {
+	const valid = "conf-20261015T120000Z-abc123"
+	tags := []ec2types.Tag{
+		{Key: aws.String("vws:conformance-run"), Value: aws.String(valid)},
+		{Key: aws.String("vws:conformance-run"), Value: aws.String("not-a-run")},
+	}
+	keep := func(id string) bool { return id == valid }
+	if AllowMutation(false, tagOwners(tags), nil, keep) {
+		t.Fatal("malformed owner was discarded")
 	}
 }
 

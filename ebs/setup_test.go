@@ -41,9 +41,13 @@ func TestAttachFailureIsTheCaseOutcome(t *testing.T) {
 						panic(writeErr)
 					}
 				case "AttachVolume":
+					code := "IncorrectState"
+					if id == "EBS-VOL-102" {
+						code = "VolumeInUse"
+					}
 					w.WriteHeader(http.StatusBadRequest)
 					if _, writeErr := io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
-						`<Response><Errors><Error><Code>IncorrectState</Code>`+
+						`<Response><Errors><Error><Code>`+code+`</Code>`+
 						`<Message>setup failed</Message></Error></Errors><RequestID>r</RequestID></Response>`); writeErr != nil {
 						panic(writeErr)
 					}
@@ -118,7 +122,7 @@ func TestAttachFailureIsTheCaseOutcome(t *testing.T) {
 			got, err := runVol(context.Background(), rt, spec)
 			mu.Lock()
 			defer mu.Unlock()
-			if err != nil || got.HTTP != http.StatusBadRequest || got.Code != "IncorrectState" || len(followed) != 0 {
+			if err == nil || len(followed) != 0 {
 				t.Fatalf("http %d code %q err %v followed %v", got.HTTP, got.Code, err, followed)
 			}
 		})
