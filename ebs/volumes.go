@@ -113,8 +113,14 @@ func runVol(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outco
 		})
 		o.Fields["id"] = id
 		o.Fields["size"] = size
-		trackVol(rt, api, id)
-		return o, wrapErr("runVol", err)
+		trackErr := trackVol(rt, api, id)
+		if err != nil {
+			return o, wrapErr("runVol", err)
+		}
+		if trackErr != nil {
+			return o, trackErr
+		}
+		return o, nil
 	case "EBS-VOL-002":
 		id, err := makeVol(ctx, rt, api, "vol2")
 		if err != nil {
@@ -279,7 +285,9 @@ func makeVol(ctx context.Context, rt *harness.Runtime, api *awsec2.Client, token
 		return "", fmt.Errorf("create volume: %w", err)
 	}
 	id := aws.ToString(out.VolumeId)
-	trackVol(rt, api, id)
+	if err := trackVol(rt, api, id); err != nil {
+		return "", err
+	}
 	if err := waitAvailable(ctx, api, id); err != nil {
 		return "", err
 	}
@@ -314,15 +322,16 @@ func waitAvailable(ctx context.Context, api *awsec2.Client, id string) error {
 	}
 }
 
-func trackVol(rt *harness.Runtime, api *awsec2.Client, id string) {
+func trackVol(rt *harness.Runtime, api *awsec2.Client, id string) error {
 	if id == "" {
-		return
+		return nil
 	}
 	rt.Cleanup(func(ctx context.Context) error {
 		_, err := api.DeleteVolume(ctx, &awsec2.DeleteVolumeInput{VolumeId: aws.String(id)})
 		return harness.IgnoreCleanup(err)
 	})
 	if err := rt.Track("volume", id, rt.Name("vol")); err != nil {
-		return
+		return wrapErr("trackVol", err)
 	}
+	return nil
 }
