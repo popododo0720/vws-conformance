@@ -22,25 +22,8 @@ func ClaimRun(id string) error {
 	if err := ValidateRunID(id); err != nil {
 		return err
 	}
-	dir := activityDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("active run: %w", err)
-	}
-	path := filepath.Join(dir, id)
-	for range 3 {
-		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-		if err == nil {
-			_, werr := f.Write([]byte(strconv.Itoa(os.Getpid()) + "\n"))
-			cerr := f.Close()
-			if werr != nil || cerr != nil {
-				_ = os.Remove(path)
-				return fmt.Errorf("active run: %w", errors.Join(werr, cerr))
-			}
-			return nil
-		}
-		if !os.IsExist(err) {
-			return fmt.Errorf("active run: %w", err)
-		}
+	return withActivityLock(func() error {
+		path := filepath.Join(activityDir(), id)
 		pid, held := readActivityPID(path)
 		if held && pid == os.Getpid() {
 			return nil
@@ -48,35 +31,56 @@ func ClaimRun(id string) error {
 		if held && processLive(pid) {
 			return fmt.Errorf("active run %s is held by pid %d", id, pid)
 		}
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("active run: %w", err)
-		}
-	}
-	return fmt.Errorf("active run %s: claim raced", id)
+		return publishActivity(id, strconv.Itoa(os.Getpid()))
+	})
 }
 
 func ReleaseRun(id string) error {
 	if err := ValidateRunID(id); err != nil {
 		return err
 	}
-	path := filepath.Join(activityDir(), id)
-	pid, held := readActivityPID(path)
-	if held && pid != os.Getpid() && processLive(pid) {
-		return fmt.Errorf("active run %s is held by pid %d", id, pid)
-	}
-	return writeActivity(id, activityFinished)
+	return withActivityLock(func() error {
+		path := filepath.Join(activityDir(), id)
+		pid, held := readActivityPID(path)
+		if held && pid != os.Getpid() && processLive(pid) {
+			return fmt.Errorf("active run %s is held by pid %d", id, pid)
+		}
+		return publishActivity(id, activityFinished)
+	})
 }
 
-func writeActivity(id, body string) error {
-	if err := ValidateRunID(id); err != nil {
-		return err
-	}
+func withActivityLock(fn func() error) error {
 	dir := activityDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("active run: %w", err)
 	}
-	err := os.WriteFile(filepath.Join(dir, id), []byte(body+"\n"), 0o644)
+	f, err := os.OpenFile(filepath.Join(dir, ".lock"), os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
+		return fmt.Errorf("active run: %w", err)
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("active run: %w", err)
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return fn()
+}
+
+func publishActivity(id, body string) error {
+	dir := activityDir()
+	f, err := os.CreateTemp(dir, ".marker-*")
+	if err != nil {
+		return fmt.Errorf("active run: %w", err)
+	}
+	tmp := f.Name()
+	_, werr := f.Write([]byte(body + "\n"))
+	cerr := f.Close()
+	if werr != nil || cerr != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("active run: %w", errors.Join(werr, cerr))
+	}
+	if err := os.Rename(tmp, filepath.Join(dir, id)); err != nil {
+		_ = os.Remove(tmp)
 		return fmt.Errorf("active run: %w", err)
 	}
 	return nil
