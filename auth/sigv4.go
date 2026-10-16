@@ -47,6 +47,27 @@ func SigV4() bind.Group {
 	}}
 }
 
+func ownBucket(ctx context.Context, rt *harness.Runtime, name string) error {
+	_, err := rt.Clients.S3.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(name)})
+	if err != nil && !strings.Contains(err.Error(), "BucketAlready") {
+		return fmt.Errorf("bucket: %w", err)
+	}
+	rt.Cleanup(func(ctx context.Context) error {
+		_, objErr := rt.Clients.S3.DeleteObject(ctx, &s3.DeleteObjectInput{
+			Bucket: aws.String(name), Key: aws.String("k"),
+		})
+		if objErr != nil && !strings.Contains(objErr.Error(), "NoSuch") && !strings.Contains(objErr.Error(), "NotFound") {
+			return fmt.Errorf("delete object %s: %w", name, objErr)
+		}
+		_, delErr := rt.Clients.S3.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(name)})
+		if delErr != nil && !strings.Contains(delErr.Error(), "NoSuch") && !strings.Contains(delErr.Error(), "NotFound") {
+			return fmt.Errorf("delete bucket %s: %w", name, delErr)
+		}
+		return nil
+	})
+	return nil
+}
+
 func skewedSigningTime(now time.Time) time.Time {
 	return now.Add(-16 * time.Minute)
 }
@@ -81,9 +102,8 @@ func run(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcome,
 			return cases.Outcome{}, fmt.Errorf("s3 client is unset")
 		}
 		name := rt.Name("auth")
-		if _, err := rt.Clients.S3.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(name)}); err != nil &&
-			!strings.Contains(err.Error(), "BucketAlready") {
-			return cases.Outcome{}, fmt.Errorf("bucket: %w", err)
+		if err := ownBucket(ctx, rt, name); err != nil {
+			return cases.Outcome{}, err
 		}
 		if _, err := rt.Clients.S3.PutObject(ctx, &s3.PutObjectInput{
 			Bucket: aws.String(name), Key: aws.String("k"),
@@ -112,9 +132,8 @@ func run(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcome,
 			return cases.Outcome{}, fmt.Errorf("s3 client is unset")
 		}
 		name := rt.Name("stream")
-		if _, err := rt.Clients.S3.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(name)}); err != nil &&
-			!strings.Contains(err.Error(), "BucketAlready") {
-			return cases.Outcome{}, fmt.Errorf("bucket: %w", err)
+		if err := ownBucket(ctx, rt, name); err != nil {
+			return cases.Outcome{}, err
 		}
 		{
 			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
