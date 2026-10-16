@@ -108,6 +108,23 @@ func TestConfiguredPrivateCIDR(t *testing.T) {
 	}
 }
 
+func TestIMDSAddressesAreRefused(t *testing.T) {
+	rows := []struct {
+		raw  string
+		host string
+		cidr string
+	}{
+		{raw: "http://169.254.169.254/", host: "169.254.169.254", cidr: "169.254.0.0/16"},
+		{raw: "http://[fd00:ec2::254]/", host: "fd00:ec2::254", cidr: "fc00::/7"},
+	}
+	for _, row := range rows {
+		err := CheckEndpointCIDR(row.raw, []string{row.host}, []string{row.cidr})
+		if err == nil || !strings.Contains(err.Error(), "refused") {
+			t.Fatalf("%s: %v", row.raw, err)
+		}
+	}
+}
+
 func TestAllowLoopback(t *testing.T) {
 	if err := CheckEndpoint("http://127.0.0.1:8082", []string{"127.0.0.1"}); err != nil {
 		t.Fatal(err)
