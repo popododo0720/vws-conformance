@@ -344,10 +344,16 @@ func runOne(ctx context.Context, rt *harness.Runtime, g bind.Group, c cases.Case
 	if got.Raw != "" {
 		ref := filepath.Join(rt.Cfg.OutDir, rt.Cfg.RunID, "raw", c.ID+".txt")
 		if mkdirErr := os.MkdirAll(filepath.Dir(ref), 0o755); mkdirErr != nil {
-			res.Reason = mkdirErr.Error()
-		} else if writeErr := os.WriteFile(ref, []byte(got.Raw), 0o644); writeErr == nil {
-			res.RawRef = ref
+			res.Status = "error"
+			res.Reason = fmt.Errorf("raw artifact: %w", mkdirErr).Error()
+			return res
 		}
+		if writeErr := os.WriteFile(ref, []byte(got.Raw), 0o644); writeErr != nil {
+			res.Status = "error"
+			res.Reason = fmt.Errorf("raw artifact: %w", writeErr).Error()
+			return res
+		}
+		res.RawRef = ref
 	}
 	return res
 }
