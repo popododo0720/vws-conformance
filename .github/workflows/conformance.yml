@@ -1,0 +1,90 @@
+name: conformance
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  local-fake:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.9"
+      - name: guard
+        run: sh scripts/guard.sh
+      - name: unit tests
+        run: go test -race -count=1 -p 1 ./internal/... ./cmd/...
+      - name: fake backend
+        run: |
+          pin=e6b01b537ff7e55f236064ec04c849a30e5d406d
+          git init /tmp/src/vws-console-api
+          git -C /tmp/src/vws-console-api remote add origin https://github.com/popododo0720/vws-console-api.git
+          git -C /tmp/src/vws-console-api fetch --depth 1 origin "$pin"
+          git -C /tmp/src/vws-console-api checkout --detach FETCH_HEAD
+          got=$(git -C /tmp/src/vws-console-api rev-parse HEAD)
+          if [ "$got" != "$pin" ]; then
+            echo "console-api checkout is $got, want $pin"
+            exit 1
+          fi
+          (cd /tmp/src/vws-console-api && go build -o /tmp/vws-console-api ./cmd/vws-console-api)
+          /tmp/vws-console-api -backend fake -iam fake >/tmp/console-api.log 2>&1 &
+          echo $! > /tmp/console-api.pid
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -sf http://127.0.0.1:8083/healthz; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/console-api.log
+          exit 1
+      - name: select groups
+        id: sel
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mode=FULL" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --name-only "origin/${{ github.base_ref }}...HEAD" > /tmp/changed.txt
+          xargs -r -a /tmp/changed.txt go run ./cmd/conf-select > /tmp/groups.txt
+          if grep -qx FULL /tmp/groups.txt; then
+            echo "mode=FULL" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=groups" >> "$GITHUB_OUTPUT"
+          fi
+      - name: selected groups
+        env:
+          VWS_CONF_ACCESS_KEY_ID: AKIDEXAMPLE
+          VWS_CONF_SECRET_ACCESS_KEY: secret
+          VWS_CONF_ACCOUNT_ID: "123456789012"
+          VWS_CONF_EC2_ENDPOINT: http://127.0.0.1:8081
+          VWS_CONF_S3_ENDPOINT: http://127.0.0.1:8082
+          VWS_CONF_IAM_ENDPOINT: http://127.0.0.1:8084
+          VWS_CONF_ALLOWED_HOSTS: 127.0.0.1
+          VWS_CONF_ALLOWED_ACCOUNTS: "123456789012"
+          VWS_CONF_TARGET: local-fake
+          VWS_CONF_CONSOLE_API_VERSION: local
+        run: |
+          set -eu
+          if [ "${{ steps.sel.outputs.mode }}" = "FULL" ]; then
+            go test -p 1 -count=1 -timeout 300s ./s3 ./ec2 ./vpc ./ebs ./iam ./sts ./auth -args -full
+            exit 0
+          fi
+          if [ ! -s /tmp/groups.txt ]; then
+            echo "no service groups changed"
+            exit 0
+          fi
+          while read -r svc group; do
+            [ -n "$svc" ] || continue
+            go test -p 1 -count=1 -timeout 180s "./$svc" -args -service "$svc" -group "$group"
+          done < /tmp/groups.txt
+      - name: upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-reports
+          path: out/
+          if-no-files-found: ignore
