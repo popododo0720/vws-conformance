@@ -19,23 +19,23 @@ import (
 
 func SigV4() bind.Group {
 	skip := cases.SkipIAM
-	a := func(id, op string, exp cases.Expect, skipReason string) cases.Case {
+	a := func(id, op string, exp cases.Expect, docURL, skipReason string) cases.Case {
 		return cases.Case{
 			ID: id, Service: "auth", Group: "sigv4", Op: op, Kind: cases.KindAuth, Suite: cases.SuiteRaw,
-			DocURL: cases.DocSigV4, Expect: exp, Skip: skipReason, Impl: "yes",
+			DocURL: docURL, Expect: exp, Skip: skipReason, Impl: "yes",
 		}
 	}
 	return bind.Group{Service: "auth", Name: "sigv4", Run: run, Cases: []cases.Case{
-		a("AUTH-001", "ListBuckets", cases.Expect{HTTP: 200}, ""),
-		a("AUTH-002", "ListBuckets", cases.Expect{HTTP: 403, Code: "SignatureDoesNotMatch"}, ""),
-		a("AUTH-003", "ListBuckets", cases.Expect{HTTP: 403, Code: "RequestTimeTooSkewed"}, ""),
-		a("AUTH-004", "ListBuckets", cases.Expect{HTTP: 400, Code: "AuthorizationHeaderMalformed"}, ""),
-		a("AUTH-005", "ListBuckets", cases.Expect{HTTP: 403, Code: "SignatureDoesNotMatch"}, ""),
-		a("AUTH-006", "ListBuckets", cases.Expect{HTTP: 403, Code: "InvalidAccessKeyId"}, ""),
-		a("AUTH-007", "ListBuckets", cases.Expect{HTTP: 403, Code: "AccessDenied"}, ""),
-		a("AUTH-008", "ListBuckets", cases.Expect{HTTP: 403, Code: "InvalidAccessKeyId"}, skip),
-		a("AUTH-011", "GetCallerIdentity", cases.Expect{HTTP: 200}, skip),
-		a("AUTH-013", "GetCallerIdentity", cases.Expect{HTTP: 403, Code: "ExpiredToken"}, skip),
+		a("AUTH-001", "ListBuckets", cases.Expect{HTTP: 200}, cases.DocSigV4, ""),
+		a("AUTH-002", "ListBuckets", cases.Expect{HTTP: 403, Code: "SignatureDoesNotMatch"}, cases.DocSigV4, ""),
+		a("AUTH-003", "ListBuckets", cases.Expect{HTTP: 403, Code: "RequestTimeTooSkewed"}, cases.DocSigV4, ""),
+		a("AUTH-004", "ListBuckets", cases.Expect{HTTP: 400, Code: "AuthorizationHeaderMalformed"}, cases.DocSigV4, ""),
+		a("AUTH-005", "ListBuckets", cases.Expect{HTTP: 400, Code: "AuthorizationHeaderMalformed"}, cases.DocS3Errors, ""),
+		a("AUTH-006", "ListBuckets", cases.Expect{HTTP: 403, Code: "InvalidAccessKeyId"}, cases.DocSigV4, ""),
+		a("AUTH-007", "ListBuckets", cases.Expect{HTTP: 403, Code: "AccessDenied"}, cases.DocSigV4, ""),
+		a("AUTH-008", "ListBuckets", cases.Expect{HTTP: 403, Code: "InvalidAccessKeyId"}, cases.DocSigV4, skip),
+		a("AUTH-011", "GetCallerIdentity", cases.Expect{HTTP: 200}, cases.DocSigV4, skip),
+		a("AUTH-013", "GetCallerIdentity", cases.Expect{HTTP: 403, Code: "ExpiredToken"}, cases.DocSigV4, skip),
 	}}
 }
 
