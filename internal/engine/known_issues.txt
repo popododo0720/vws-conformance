@@ -1,0 +1,41 @@
+# Known parity failures: one "CASE-ID ISSUE-URL" per line. A failing case listed here is reported
+# as known and does not fail the run; any other failing case does. Remove a line once its case passes.
+# Every ID must name a case in engine.Groups(), and every URL a GitHub issue.
+
+# Error messages: popododo0720/vws-console-api#243
+S3-LB-101 https://github.com/popododo0720/vws-console-api/issues/243
+S3-LO-101 https://github.com/popododo0720/vws-console-api/issues/243
+S3-LO-102 https://github.com/popododo0720/vws-console-api/issues/243
+EC2-DI-101 https://github.com/popododo0720/vws-console-api/issues/243
+EC2-DIA-101 https://github.com/popododo0720/vws-console-api/issues/243
+EC2-DIMG-101 https://github.com/popododo0720/vws-console-api/issues/243
+EC2-KP-103 https://github.com/popododo0720/vws-console-api/issues/243
+EC2-EIP-103 https://github.com/popododo0720/vws-console-api/issues/243
+EBS-VOL-104 https://github.com/popododo0720/vws-console-api/issues/243
+EBS-SNAP-102 https://github.com/popododo0720/vws-console-api/issues/243
+VPC-VPC-104 https://github.com/popododo0720/vws-console-api/issues/243
+VPC-SUB-103 https://github.com/popododo0720/vws-console-api/issues/243
+VPC-SG-104 https://github.com/popododo0720/vws-console-api/issues/243
+
+# Unsupported read-only actions: popododo0720/vws-console-api#244
+EC2-GAP-003 https://github.com/popododo0720/vws-console-api/issues/244
+EC2-GAP-004 https://github.com/popododo0720/vws-console-api/issues/244
+EC2-GAP-008 https://github.com/popododo0720/vws-console-api/issues/244
+EBS-GAP-002 https://github.com/popododo0720/vws-console-api/issues/244
+VPC-GAP-004 https://github.com/popododo0720/vws-console-api/issues/244
+VPC-GAP-005 https://github.com/popododo0720/vws-console-api/issues/244
+VPC-GAP-007 https://github.com/popododo0720/vws-console-api/issues/244
+
+# SigV4 auth errors: popododo0720/vws-console-api#245
+AUTH-002 https://github.com/popododo0720/vws-console-api/issues/245
+AUTH-003 https://github.com/popododo0720/vws-console-api/issues/245
+AUTH-004 https://github.com/popododo0720/vws-console-api/issues/245
+AUTH-005 https://github.com/popododo0720/vws-console-api/issues/245
+AUTH-006 https://github.com/popododo0720/vws-console-api/issues/245
+AUTH-007 https://github.com/popododo0720/vws-console-api/issues/245
+
+# Malformed instance ID code: popododo0720/vws-console-api#246
+EC2-DI-102 https://github.com/popododo0720/vws-console-api/issues/246
+
+# STS ARN partition: popododo0720/vws-console-api#247
+STS-GCI-001 https://github.com/popododo0720/vws-console-api/issues/247

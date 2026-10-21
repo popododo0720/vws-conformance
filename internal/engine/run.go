@@ -232,6 +232,10 @@ func runGroups(ctx context.Context, cfg harness.Config, onlyService, onlyGroup s
 	if len(selected) == 0 {
 		return nil, fmt.Errorf("no groups selected")
 	}
+	known, err := parseKnownIssues(knownIssuesFile, Groups())
+	if err != nil {
+		return nil, err
+	}
 	needsLive := false
 	for _, g := range selected {
 		for _, c := range g.Cases {
@@ -242,7 +246,6 @@ func runGroups(ctx context.Context, cfg harness.Config, onlyService, onlyGroup s
 	}
 	var rt *harness.Runtime
 	if needsLive {
-		var err error
 		rt, err = runtime(ctx, cfg)
 		if err != nil {
 			return nil, err
@@ -264,6 +267,9 @@ func runGroups(ctx context.Context, cfg harness.Config, onlyService, onlyGroup s
 				sem <- struct{}{}
 				defer func() { <-sem }()
 				res := runOne(ctx, rt, g, c)
+				if res.Status == "fail" {
+					res.Issue = known[res.ID]
+				}
 				mu.Lock()
 				rep.Add(res)
 				mu.Unlock()
