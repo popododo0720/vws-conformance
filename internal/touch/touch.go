@@ -44,10 +44,12 @@ func Select(files []string) Selection {
 	seen := map[Group]bool{}
 	var sel Selection
 	for _, f := range files {
+		matched := false
 		for _, rule := range Rules {
 			if !match(f, rule.Prefixes) {
 				continue
 			}
+			matched = true
 			if rule.Big {
 				sel.Full = true
 				continue
@@ -57,6 +59,11 @@ func Select(files []string) Selection {
 				seen[g] = true
 				sel.Groups = append(sel.Groups, g)
 			}
+		}
+		// A shared service file (client.go, wrap.go, ...) matches no group rule
+		// but changes every group of that service, so run the full suite.
+		if !matched && sharedServiceFile(f) {
+			sel.Full = true
 		}
 	}
 	if sel.Full {
@@ -68,6 +75,18 @@ func Select(files []string) Selection {
 func match(file string, prefixes []string) bool {
 	for _, p := range prefixes {
 		if len(file) >= len(p) && file[:len(p)] == p {
+			return true
+		}
+	}
+	return false
+}
+
+func sharedServiceFile(file string) bool {
+	for _, rule := range Rules {
+		if rule.Big || rule.Service == "" {
+			continue
+		}
+		if match(file, []string{rule.Service + "/"}) {
 			return true
 		}
 	}
