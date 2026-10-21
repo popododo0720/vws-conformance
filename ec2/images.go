@@ -40,20 +40,16 @@ func runImages(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Ou
 	}
 	switch c.ID {
 	case "EC2-DIMG-001":
+		var id string
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
-			_, err := api.DescribeImages(ctx, &awsec2.DescribeImagesInput{})
+			out, err := api.DescribeImages(ctx, &awsec2.DescribeImagesInput{})
+			if err == nil && len(out.Images) > 0 {
+				id = aws.ToString(out.Images[0].ImageId)
+			}
 			return wrapErr("runImages", err)
 		})
-		if err != nil {
-			return o, wrapErr("runImages", err)
-		}
-		out, err := api.DescribeImages(ctx, &awsec2.DescribeImagesInput{ImageIds: []string{"ami-0123456789abcdef0"}})
-		if err != nil || len(out.Images) == 0 {
-			o.Fields["id"] = ""
-			return o, wrapErr("runImages", err)
-		}
-		o.Fields["id"] = aws.ToString(out.Images[0].ImageId)
-		return o, nil
+		o.Fields["id"] = id
+		return o, wrapErr("runImages", err)
 	case "EC2-DIMG-101":
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
 			_, err := api.DescribeImages(ctx, &awsec2.DescribeImagesInput{ImageIds: []string{"ami-0123456789abcdef1"}})
