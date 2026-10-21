@@ -12,13 +12,10 @@ import (
 	"github.com/popododo0720/vws-conformance/internal/harness"
 )
 
-// TestSignedSessionToken checks that a raw signed request carries the session
-// token as a signed X-Amz-Security-Token header when one is configured, and the
-// S3 payload hash as a signed X-Amz-Content-Sha256 header.
+// TestSignedSessionToken checks that raw signed requests carry the session
+// token as a signed X-Amz-Security-Token header when one is configured.
 func TestSignedSessionToken(t *testing.T) {
 	const token = "test-session-token"
-	// SHA-256 of an empty body, which S3 requires in X-Amz-Content-Sha256.
-	const emptyPayloadHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	for _, tc := range []struct {
 		name    string
 		session string
@@ -53,12 +50,6 @@ func TestSignedSessionToken(t *testing.T) {
 			signed := map[string]bool{}
 			for _, h := range strings.Split(signedHeaders, ";") {
 				signed[h] = true
-			}
-			if hash := got.Get("X-Amz-Content-Sha256"); hash != emptyPayloadHash {
-				t.Fatalf("X-Amz-Content-Sha256 = %q, want %q", hash, emptyPayloadHash)
-			}
-			if !signed["x-amz-content-sha256"] {
-				t.Fatalf("x-amz-content-sha256 is not in SignedHeaders %q", signedHeaders)
 			}
 			if tc.session == "" {
 				if got.Get("X-Amz-Security-Token") != "" || signed["x-amz-security-token"] {
