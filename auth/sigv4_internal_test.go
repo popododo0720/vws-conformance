@@ -77,7 +77,9 @@ func TestSignedSessionToken(t *testing.T) {
 }
 
 // TestAuth005Expectation pins the contract for a wrong-service credential
-// scope: S3 treats it as a malformed Authorization header.
+// scope: S3 treats it as a malformed Authorization header. It also runs the
+// case once, so the fault stays a wrong service scope and cannot drift into
+// AUTH-001.
 func TestAuth005Expectation(t *testing.T) {
 	var got cases.Case
 	found := false
@@ -98,6 +100,23 @@ func TestAuth005Expectation(t *testing.T) {
 	}
 	if got.DocURL != cases.DocS3Errors {
 		t.Fatalf("DocURL = %q, want %q", got.DocURL, cases.DocS3Errors)
+	}
+
+	var authz string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authz = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+	rt := harness.NewRuntime(harness.Config{
+		AccessKey: "AKIDEXAMPLE", Secret: "test-secret",
+		Region: "vws-1", S3Endpoint: srv.URL,
+	}, &harness.Clients{Raw: srv.Client()})
+	if _, err := run(context.Background(), rt, got); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !strings.Contains(authz, "/ec2/aws4_request") {
+		t.Fatalf("credential scope = %q, want the ec2 service", authz)
 	}
 }
 
