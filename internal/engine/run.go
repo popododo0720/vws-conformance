@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
@@ -52,8 +53,13 @@ func TestGroup(t Tester, service, group string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dir := filepath.Join(cfg.OutDir, cfg.RunID)
 	if rep.Summary.Error != 0 {
-		t.Fatalf("harness errors %d in %s", rep.Summary.Error, filepath.Join(cfg.OutDir, cfg.RunID))
+		t.Fatalf("harness errors %d in %s", rep.Summary.Error, dir)
+	}
+	untracked := parityGate(rep, func(msg string) { t.Logf("%s", msg) })
+	if len(untracked) != 0 {
+		t.Fatalf("untracked parity failures %d in %s: %s", len(untracked), dir, resultIDs(untracked))
 	}
 }
 
@@ -61,6 +67,30 @@ type Tester interface {
 	Fatal(args ...any)
 	Skip(args ...any)
 	Fatalf(format string, args ...any)
+	Logf(format string, args ...any)
+}
+
+func parityGate(rep *report.Report, log func(string)) []report.Result {
+	var untracked []report.Result
+	for _, res := range rep.Results {
+		if res.Status != "fail" {
+			continue
+		}
+		if res.Issue == "" {
+			untracked = append(untracked, res)
+			continue
+		}
+		log(fmt.Sprintf("known parity failure %s tracked by %s", res.ID, res.Issue))
+	}
+	return untracked
+}
+
+func resultIDs(results []report.Result) string {
+	ids := make([]string, len(results))
+	for i, res := range results {
+		ids[i] = res.ID
+	}
+	return strings.Join(ids, ", ")
 }
 
 func Main() int {
@@ -80,6 +110,11 @@ func Main() int {
 	}
 	if rep.Summary.Error != 0 {
 		fmt.Fprintf(os.Stderr, "harness errors %d\n", rep.Summary.Error)
+		return 1
+	}
+	untracked := parityGate(rep, func(msg string) { fmt.Fprintln(os.Stderr, msg) })
+	if len(untracked) != 0 {
+		fmt.Fprintf(os.Stderr, "untracked parity failures %d: %s\n", len(untracked), resultIDs(untracked))
 		return 1
 	}
 	fmt.Printf("pass %d fail %d skip %d error %d\n", rep.Summary.Pass, rep.Summary.Fail, rep.Summary.Skip,
