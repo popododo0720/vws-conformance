@@ -12,13 +12,17 @@ import (
 	"github.com/popododo0720/vws-conformance/internal/harness"
 )
 
+// callerARN matches the ARN forms the GetCallerIdentity API reference lists:
+// root, IAM user, assumed role and federated user.
+const callerARN = `^arn:aws:(iam::[0-9]{12}:(root|user/.+)|sts::[0-9]{12}:(assumed-role|federated-user)/.+)$`
+
 func Caller() bind.Group {
 	return bind.Group{Service: "sts", Name: "caller", Run: run, Cases: []cases.Case{
 		{
 			ID: "STS-GCI-001", Service: "sts", Group: "caller", Op: "GetCallerIdentity", Kind: cases.KindHappy,
 			Suite: cases.SuiteSDK, DocURL: cases.DocSTS("GetCallerIdentity"), Expect: cases.Expect{
 				HTTP:     200,
-				Patterns: map[string]string{"arn": `^arn:aws:(iam::[0-9]{12}:(root|user/.+)|sts::[0-9]{12}:(assumed-role|federated-user)/.+)$`},
+				Patterns: map[string]string{"arn": callerARN},
 			}, Impl: "yes",
 		},
 		{
