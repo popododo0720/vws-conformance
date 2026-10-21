@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/popododo0720/vws-conformance/internal/cases"
 	"github.com/popododo0720/vws-conformance/internal/harness"
 )
 
@@ -72,5 +73,30 @@ func TestSignedSessionToken(t *testing.T) {
 				t.Fatalf("x-amz-security-token is not in SignedHeaders %q", signedHeaders)
 			}
 		})
+	}
+}
+
+// TestAuth005Expectation pins the contract for a wrong-service credential
+// scope: S3 treats it as a malformed Authorization header.
+func TestAuth005Expectation(t *testing.T) {
+	var got cases.Case
+	found := false
+	for _, c := range SigV4().Cases {
+		if c.ID == "AUTH-005" {
+			got, found = c, true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("AUTH-005 is missing from the cases table")
+	}
+	if got.Expect.HTTP != http.StatusBadRequest {
+		t.Fatalf("HTTP = %d, want %d", got.Expect.HTTP, http.StatusBadRequest)
+	}
+	if got.Expect.Code != "AuthorizationHeaderMalformed" {
+		t.Fatalf("Code = %q, want %q", got.Expect.Code, "AuthorizationHeaderMalformed")
+	}
+	if got.DocURL != cases.DocS3Errors {
+		t.Fatalf("DocURL = %q, want %q", got.DocURL, cases.DocS3Errors)
 	}
 }
