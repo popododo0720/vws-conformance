@@ -86,8 +86,10 @@ func signed(ctx context.Context, rt *harness.Runtime, service, region, key, secr
 	if err != nil {
 		return cases.Outcome{}, wrapErr("signed", err)
 	}
+	// A session token is sent as the signed X-Amz-Security-Token header, as the SigV4 guide requires.
 	signer := v4.NewSigner()
-	err = signer.SignHTTP(ctx, aws.Credentials{AccessKeyID: key, SecretAccessKey: secret}, req, harness.PayloadHash(nil),
+	err = signer.SignHTTP(ctx, aws.Credentials{AccessKeyID: key, SecretAccessKey: secret, SessionToken: rt.Cfg.Session},
+		req, harness.PayloadHash(nil),
 		service, region, when)
 	if err != nil {
 		return cases.Outcome{}, fmt.Errorf("sign: %w", err)
