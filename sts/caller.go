@@ -18,7 +18,7 @@ func Caller() bind.Group {
 			ID: "STS-GCI-001", Service: "sts", Group: "caller", Op: "GetCallerIdentity", Kind: cases.KindHappy,
 			Suite: cases.SuiteSDK, DocURL: cases.DocSTS("GetCallerIdentity"), Expect: cases.Expect{
 				HTTP:     200,
-				Patterns: map[string]string{"arn": `^arn:aws:iam::[0-9]{12}:root$`},
+				Patterns: map[string]string{"arn": `^arn:aws:(iam::[0-9]{12}:(root|user/.+)|sts::[0-9]{12}:(assumed-role|federated-user)/.+)$`},
 			}, Impl: "yes",
 		},
 		{
