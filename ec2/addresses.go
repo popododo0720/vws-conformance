@@ -1,0 +1,286 @@
+package ec2
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsec2 "github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
+
+	"github.com/popododo0720/vws-conformance/internal/bind"
+	"github.com/popododo0720/vws-conformance/internal/cases"
+	"github.com/popododo0720/vws-conformance/internal/expect"
+	"github.com/popododo0720/vws-conformance/internal/harness"
+)
+
+func Addresses() bind.Group {
+	return bind.Group{
+		Service: "ec2", Name: "addresses", Run: runAddr,
+		Cases: []cases.Case{
+			{
+				ID: "EC2-EIP-001", Service: "ec2", Group: "addresses", Op: "AllocateAddress", Kind: cases.KindHappy,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2("AllocateAddress"), Expect: cases.Expect{
+					HTTP:     200,
+					Patterns: map[string]string{"id": expect.AllocID},
+				}, Impl: "yes",
+			},
+			{
+				ID: "EC2-EIP-002", Service: "ec2", Group: "addresses", Op: "AssociateAddress", Kind: cases.KindHappy,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2("AssociateAddress"), Expect: cases.Expect{
+					HTTP:     200,
+					Patterns: map[string]string{"id": expect.AssocID},
+				}, Impl: "yes", Slow: true,
+			},
+			{
+				ID: "EC2-EIP-003", Service: "ec2", Group: "addresses", Op: "DescribeAddresses", Kind: cases.KindHappy,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2("DescribeAddresses"), Expect: cases.Expect{HTTP: 200}, Impl: "yes",
+			},
+			{
+				ID: "EC2-EIP-004", Service: "ec2", Group: "addresses", Op: "DisassociateAddress", Kind: cases.KindHappy,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2("DisassociateAddress"), Expect: cases.Expect{HTTP: 200}, Impl: "yes",
+				Slow: true,
+			},
+			{
+				ID: "EC2-EIP-005", Service: "ec2", Group: "addresses", Op: "ReleaseAddress", Kind: cases.KindHappy,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2("ReleaseAddress"), Expect: cases.Expect{HTTP: 200}, Impl: "yes",
+			},
+			{
+				ID: "EC2-EIP-101", Service: "ec2", Group: "addresses", Op: "ReleaseAddress", Kind: cases.KindError,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{
+					HTTP: 400,
+					Code: "InvalidAllocationID.NotFound",
+				}, Impl: "yes",
+			},
+			{
+				ID: "EC2-EIP-102", Service: "ec2", Group: "addresses", Op: "DisassociateAddress", Kind: cases.KindError,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{
+					HTTP: 400,
+					Code: "InvalidAssociationID.NotFound",
+				}, Skip: cases.SkipUnsafeFixedID, Impl: "yes",
+			},
+			{
+				ID: "EC2-EIP-103", Service: "ec2", Group: "addresses", Op: "DescribeAddresses", Kind: cases.KindError,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{
+					HTTP: 400,
+					Code: "InvalidAllocationID.NotFound",
+				}, Impl: "yes",
+			},
+			{
+				ID: "EC2-EIP-104", Service: "ec2", Group: "addresses", Op: "AssociateAddress", Kind: cases.KindError,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{
+					HTTP: 400,
+					Code: "InvalidAllocationID.NotFound",
+				}, Impl: "yes",
+			},
+			{
+				ID: "EC2-EIP-105", Service: "ec2", Group: "addresses", Op: "AllocateAddress", Kind: cases.KindError,
+				Suite: cases.SuiteSDK, DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidParameterValue"},
+				Impl: "yes",
+			},
+		},
+	}
+}
+
+func runAddr(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcome, error) {
+	api, err := client(rt)
+	if err != nil {
+		return cases.Outcome{}, err
+	}
+	switch c.ID {
+	case "EC2-EIP-001":
+		return alloc(ctx, rt, api)
+	case "EC2-EIP-003":
+		id, err := allocID(ctx, rt, api)
+		if err != nil {
+			return cases.Outcome{}, err
+		}
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.DescribeAddresses(ctx, &awsec2.DescribeAddressesInput{AllocationIds: []string{id}})
+				return wrapErr("runAddr", err)
+			})
+			return callOut, wrapErr("runAddr", callErr)
+		}
+	case "EC2-EIP-005":
+		id, err := allocID(ctx, rt, api)
+		if err != nil {
+			return cases.Outcome{}, err
+		}
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				err := rt.EC2ReleaseAddress(ctx, id)
+				return wrapErr("runAddr", err)
+			})
+			return callOut, wrapErr("runAddr", callErr)
+		}
+	case "EC2-EIP-101":
+		id, err := goneAlloc(ctx, rt, api)
+		if err != nil {
+			return cases.Outcome{}, err
+		}
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				err := rt.EC2ReleaseAddress(ctx, id)
+				return wrapErr("runAddr", err)
+			})
+			return callOut, wrapErr("runAddr", callErr)
+		}
+	case "EC2-EIP-102":
+		return cases.Outcome{}, errors.New(cases.SkipUnsafeFixedID)
+	case "EC2-EIP-103":
+		id, err := goneAlloc(ctx, rt, api)
+		if err != nil {
+			return cases.Outcome{}, err
+		}
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := api.DescribeAddresses(ctx, &awsec2.DescribeAddressesInput{AllocationIds: []string{id}})
+				return wrapErr("runAddr", err)
+			})
+			return callOut, wrapErr("runAddr", callErr)
+		}
+	case "EC2-EIP-104":
+		id, err := goneAlloc(ctx, rt, api)
+		if err != nil {
+			return cases.Outcome{}, err
+		}
+		_, subnet, err := rt.EnsureNet(ctx)
+		if err != nil {
+			return cases.Outcome{}, wrapErr("runAddr", err)
+		}
+		inst, err := launch(ctx, rt, api, subnet, rt.Token("eip104"))
+		if err != nil {
+			return cases.Outcome{}, err
+		}
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				_, err := rt.EC2AssociateAddress(ctx, id, inst)
+				return wrapErr("runAddr", err)
+			})
+			return callOut, wrapErr("runAddr", callErr)
+		}
+	case "EC2-EIP-105":
+		var id string
+		callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+			out, err := rt.EC2AllocateAddress(ctx, &awsec2.AllocateAddressInput{Domain: types.DomainType("nope")})
+			if err == nil && out != nil {
+				id = aws.ToString(out.AllocationId)
+			}
+			return wrapErr("runAddr", err)
+		})
+		if id != "" {
+			if err := rememberAddress(rt, api, id); err != nil {
+				return callOut, wrapErr("runAddr", err)
+			}
+		}
+		if harness.SetupReady(callOut, callErr) && id == "" {
+			return callOut, fmt.Errorf("allocate: success did not identify an address")
+		}
+		return callOut, wrapErr("runAddr", callErr)
+	case "EC2-EIP-002", "EC2-EIP-004":
+		_, subnet, err := rt.EnsureNet(ctx)
+		if err != nil {
+			return cases.Outcome{}, wrapErr("runAddr", err)
+		}
+		inst, err := launch(ctx, rt, api, subnet, rt.Token("eip"))
+		if err != nil {
+			return cases.Outcome{}, err
+		}
+		id, err := allocID(ctx, rt, api)
+		if err != nil {
+			return cases.Outcome{}, err
+		}
+		var assoc string
+		o, err := rt.Call(ctx, func(ctx context.Context) error {
+			out, err := rt.EC2AssociateAddress(ctx, id, inst)
+			if err == nil {
+				assoc = aws.ToString(out.AssociationId)
+			}
+			return wrapErr("runAddr", err)
+		})
+		o.Fields["id"] = assoc
+		if c.ID == "EC2-EIP-002" || !harness.SetupReady(o, err) {
+			return o, wrapErr("runAddr", err)
+		}
+		if assoc == "" {
+			return o, fmt.Errorf("associate returned no association id")
+		}
+		{
+			callOut, callErr := rt.Call(ctx, func(ctx context.Context) error {
+				err := rt.EC2DisassociateAddress(ctx, id, assoc)
+				return wrapErr("runAddr", err)
+			})
+			return callOut, wrapErr("runAddr", callErr)
+		}
+	default:
+		return cases.Outcome{}, fmt.Errorf("no runner for %s", c.ID)
+	}
+}
+
+func alloc(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (cases.Outcome, error) {
+	var id string
+	o, err := rt.Call(ctx, func(ctx context.Context) error {
+		out, err := rt.EC2AllocateAddress(ctx, addressInput(rt))
+		if err == nil {
+			id = aws.ToString(out.AllocationId)
+		}
+		return wrapErr("alloc", err)
+	})
+	o.Fields["id"] = id
+	if id != "" {
+		if err := rememberAddress(rt, api, id); err != nil {
+			return o, wrapErr("alloc", err)
+		}
+	}
+	return o, wrapErr("alloc", err)
+}
+
+func goneAlloc(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (string, error) {
+	id, err := allocID(ctx, rt, api)
+	if err != nil {
+		return "", err
+	}
+	if err := rt.EC2ReleaseAddress(ctx, id); err != nil {
+		return "", fmt.Errorf("release %s: %w", id, err)
+	}
+	return id, nil
+}
+
+func allocID(ctx context.Context, rt *harness.Runtime, api *awsec2.Client) (string, error) {
+	rt.HoldEC2(api)
+	in := addressInput(rt)
+	out, err := rt.EC2AllocateAddress(ctx, in)
+	if harness.UnsupportedParameter(err) {
+		bare := *in
+		bare.TagSpecifications = nil
+		out, err = rt.EC2AllocateAddress(ctx, &bare)
+	}
+	if err != nil {
+		return "", fmt.Errorf("allocate: %w", err)
+	}
+	id := aws.ToString(out.AllocationId)
+	if err := rememberAddress(rt, api, id); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func addressInput(rt *harness.Runtime) *awsec2.AllocateAddressInput {
+	return &awsec2.AllocateAddressInput{
+		Domain:            types.DomainTypeVpc,
+		TagSpecifications: rt.TagSpec(types.ResourceTypeElasticIp),
+	}
+}
+
+func rememberAddress(rt *harness.Runtime, api *awsec2.Client, id string) error {
+	if id == "" {
+		return fmt.Errorf("allocate: empty id")
+	}
+	rt.HoldEC2(api)
+	rt.Cleanup(func(ctx context.Context) error {
+		return rt.ReleaseOwned(ctx, id)
+	})
+	return wrapErr("rememberAddress", rt.Track("address", id, rt.Name("eip")))
+}
