@@ -28,3 +28,12 @@ func TestDocsDoNotSelectSuite(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 }
+
+func TestSharedServiceFileIsFull(t *testing.T) {
+	for _, f := range []string{"ec2/client.go", "vpc/wrap.go", "ebs/client.go", "s3/wrap.go"} {
+		got := Select([]string{f})
+		if !got.Full {
+			t.Fatalf("%s: want full, got %+v", f, got)
+		}
+	}
+}
