@@ -70,7 +70,7 @@ func run(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcome,
 			return cases.Outcome{}, fmt.Errorf("unsigned: %w", err)
 		}
 		defer closeChecked(resp.Body)
-		return readErr(resp)
+		return readErr(resp, rt.Cfg.AccessKey, rt.Cfg.Secret, rt.Cfg.Session)
 	default:
 		return cases.Outcome{}, fmt.Errorf("auth case %s is not runnable", c.ID)
 	}
@@ -115,10 +115,12 @@ func signed(ctx context.Context, rt *harness.Runtime, service, region, key, secr
 		return cases.Outcome{}, fmt.Errorf("signed call: %w", err)
 	}
 	defer closeChecked(resp.Body)
-	return readErr(resp)
+	return readErr(resp, key, secret, rt.Cfg.Session)
 }
 
-func readErr(resp *http.Response) (cases.Outcome, error) {
+// readErr parses an XML error body. The body and message are redacted before
+// they reach Raw, which the engine writes to the CI raw artifact.
+func readErr(resp *http.Response, secrets ...string) (cases.Outcome, error) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return cases.Outcome{}, wrapErr("readErr", err)
@@ -144,8 +146,8 @@ func readErr(resp *http.Response) (cases.Outcome, error) {
 		}
 	}
 	return cases.Outcome{
-		HTTP: resp.StatusCode, Code: code, Message: msg, Fields: map[string]string{},
-		Raw: harness.Redact(text),
+		HTTP: resp.StatusCode, Code: code, Message: harness.Redact(msg, secrets...), Fields: map[string]string{},
+		Raw: harness.Redact(text, secrets...),
 	}, nil
 }
 

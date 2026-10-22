@@ -13,6 +13,10 @@ var (
 	reCred      = regexp.MustCompile(`(?i)(X-Amz-Credential=)([^/\s]+)`)
 	reSecretKey = regexp.MustCompile(`(SecretAccessKey|SessionToken|KeyMaterial|Password)(["=:]\s*)([^"&\s<]+)`)
 	reXMLSecret = regexp.MustCompile(`(?i)(<(?:SecretAccessKey|SessionToken|KeyMaterial|Password)>)([^<]*)(</)`)
+	// S3 SignatureDoesNotMatch bodies echo the access key ID, the signature and
+	// the canonical request, whose hex form can carry a signed session token.
+	reXMLKeyID = regexp.MustCompile(`(?i)(<AWSAccessKeyId>)([^<]*)(</)`)
+	reXMLSign  = regexp.MustCompile(`(?i)(<(?:SignatureProvided|CanonicalRequestBytes)>)([^<]*)(</)`)
 )
 
 func Redact(text string, secrets ...string) string {
@@ -24,15 +28,15 @@ func Redact(text string, secrets ...string) string {
 		if len(parts) < 3 {
 			return "X-Amz-Credential=REDACTED"
 		}
-		id := parts[2]
-		keep := id
-		if len(keep) > 4 {
-			keep = keep[:4]
-		}
-		return parts[1] + keep + "REDACTED"
+		return parts[1] + keyPrefix(parts[2]) + "REDACTED"
 	})
 	text = reSecretKey.ReplaceAllString(text, "${1}${2}REDACTED")
 	text = reXMLSecret.ReplaceAllString(text, "${1}REDACTED${3}")
+	text = reXMLKeyID.ReplaceAllStringFunc(text, func(m string) string {
+		parts := reXMLKeyID.FindStringSubmatch(m)
+		return parts[1] + keyPrefix(parts[2]) + "REDACTED" + parts[3]
+	})
+	text = reXMLSign.ReplaceAllString(text, "${1}REDACTED${3}")
 	for _, s := range secrets {
 		if s == "" || len(s) < 6 {
 			continue
@@ -40,6 +44,14 @@ func Redact(text string, secrets ...string) string {
 		text = strings.ReplaceAll(text, s, "REDACTED")
 	}
 	return text
+}
+
+// keyPrefix keeps the 4-character access key type prefix (AKIA, ASIA) for debugging.
+func keyPrefix(id string) string {
+	if len(id) > 4 {
+		return id[:4]
+	}
+	return id
 }
 
 func RedactHeader(h http.Header) http.Header {
