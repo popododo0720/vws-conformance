@@ -100,3 +100,41 @@ func TestAuth005Expectation(t *testing.T) {
 		t.Fatalf("DocURL = %q, want %q", got.DocURL, cases.DocS3Errors)
 	}
 }
+
+// TestSignatureMismatchRawHidesCredentials checks that a SignatureDoesNotMatch
+// body echoing the access key ID and session token never reaches Raw, which the
+// engine writes verbatim to the raw/<case>.txt CI artifact.
+func TestSignatureMismatchRawHidesCredentials(t *testing.T) {
+	const (
+		key    = "AKIDEXAMPLECONFTEST01"
+		secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+		token  = "test-session-token-123456"
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		if _, err := w.Write([]byte("<Error><Code>SignatureDoesNotMatch</Code>" +
+			"<Message>signature mismatch for " + key + "</Message>" +
+			"<AWSAccessKeyId>" + key + "</AWSAccessKeyId>" +
+			"<CanonicalRequest>GET\n/\n\nx-amz-security-token:" + r.Header.Get("X-Amz-Security-Token") +
+			"\n</CanonicalRequest>" +
+			"<SignatureProvided>" + r.Header.Get("Authorization") + "</SignatureProvided></Error>")); err != nil {
+			t.Errorf("write: %v", err)
+		}
+	}))
+	defer srv.Close()
+	rt := harness.NewRuntime(harness.Config{
+		AccessKey: key, Secret: secret, Session: token, Region: "vws-1", S3Endpoint: srv.URL,
+	}, &harness.Clients{Raw: srv.Client()})
+	out, err := signed(context.Background(), rt, "s3", rt.Cfg.Region, key, secret, time.Now(), true)
+	if err != nil {
+		t.Fatalf("signed: %v", err)
+	}
+	if out.Code != "SignatureDoesNotMatch" {
+		t.Fatalf("code = %q, want SignatureDoesNotMatch", out.Code)
+	}
+	for _, s := range []string{key, secret, token} {
+		if strings.Contains(out.Raw, s) || strings.Contains(out.Message, s) {
+			t.Fatalf("leaked %q: raw=%s message=%s", s, out.Raw, out.Message)
+		}
+	}
+}
