@@ -16,6 +16,8 @@ jobs:
           go-version: "1.26.9"
       - name: guard
         run: sh scripts/guard.sh
+      - name: guard fails on an empty /correct loop section
+        run: scripts/guard_test.sh
       - name: unit tests
         run: go test -race -count=1 -p 1 ./internal/... ./cmd/...
       - name: fake backend

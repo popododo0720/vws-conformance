@@ -59,4 +59,10 @@ if [ "$bad" -ne 0 ]; then
   fail "non-English text"
 fi
 
+# R21 (popododo0720/vws-deploy#448): AGENTS.md has a non-empty '## /correct loop' section, the incident
+# form applies the incident label with every required field, and .github/labels.yml defines the label.
+# scripts/guard_test.sh shows this fails on an empty section.
+bash scripts/guard-agents.sh correct . ||
+  fail "R21: the /correct loop, incident form or incident label is missing (AGENTS.md '## /correct loop', .github/ISSUE_TEMPLATE/incident.yml, .github/labels.yml)"
+
 echo "guard ok"
