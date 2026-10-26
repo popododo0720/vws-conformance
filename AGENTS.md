@@ -67,3 +67,16 @@ Bots are insider risks too. The rules below have no exceptions. The design is po
 7. **Incident disclosure**: rule violations and incidents are never hidden; record them in an issue as `Cause / Impact / Action / Prevention`. The label is `incident`.
 
 This repo is public. `main` branch protection requires the CI checks; `.github/workflows/repo-guard.yml` checks that the PR's base is main, that the body has `Part of #N` and no closing keyword, and that this section has items 1-7. `.github/workflows/direct-push-watch.yml` reports after the fact any commit that reached main without a PR. The check code is `scripts/guard-agents.sh`, the same file as in vws-deploy, so it is copied, not edited.
+
+### Script push, PR and merge
+
+A deterministic script (the factory orchestrator in vws-deploy `docs/factory-orchestrator.md`, the handoff submit) may push a branch, open a pull request and merge one. A script merge happens only when all of these hold:
+
+- every CI check on the head commit is green;
+- `verify-gate` passes;
+- the `vws-verify` App check run passes;
+- the pull request has no conflicts;
+- the merge is a squash, made with `--match-head-commit` set to the verified head;
+- the pull request is not labeled `blocked`.
+
+`ORCHESTRATE_MERGE=apply` is approved only under these conditions. The lead (dr eggbot) is woken only for a decision or a failure (issue scope, real conflicts, a failed check), not for a routine push, pull request or merge. Guardrails 1, 4 and 2 still hold: the author bot is never the verifier, nothing pushes to main, and every pull request body has `Part of #N` with no closing keyword.
