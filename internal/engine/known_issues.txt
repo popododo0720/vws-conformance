@@ -26,14 +26,6 @@ VPC-GAP-004 https://github.com/popododo0720/vws-console-api/issues/244
 VPC-GAP-005 https://github.com/popododo0720/vws-console-api/issues/244
 VPC-GAP-007 https://github.com/popododo0720/vws-console-api/issues/244
 
-# SigV4 auth errors: popododo0720/vws-console-api#245
-AUTH-002 https://github.com/popododo0720/vws-console-api/issues/245
-AUTH-003 https://github.com/popododo0720/vws-console-api/issues/245
-AUTH-004 https://github.com/popododo0720/vws-console-api/issues/245
-AUTH-005 https://github.com/popododo0720/vws-console-api/issues/245
-AUTH-006 https://github.com/popododo0720/vws-console-api/issues/245
-AUTH-007 https://github.com/popododo0720/vws-console-api/issues/245
-
 # Malformed instance ID code: popododo0720/vws-console-api#246
 EC2-DI-102 https://github.com/popododo0720/vws-console-api/issues/246
 
