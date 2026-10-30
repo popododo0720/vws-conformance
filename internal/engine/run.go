@@ -33,7 +33,7 @@ var (
 
 func Groups() []bind.Group {
 	return []bind.Group{
-		s3.Buckets(), s3.Listings(),
+		s3.Buckets(), s3.BucketLifecycle(), s3.Listings(),
 		ec2.Instances(), ec2.Images(), ec2.KeyPairs(), ec2.Addresses(), ec2.Gaps(),
 		vpc.Vpcs(), vpc.Subnets(), vpc.SecurityGroups(), vpc.Gaps(),
 		ebs.Volumes(), ebs.Snapshots(), ebs.Gaps(),

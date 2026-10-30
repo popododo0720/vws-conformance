@@ -81,12 +81,47 @@ func mutatingSelections(t *testing.T, overlay map[string][]byte) []string {
 				if !mutatingClient(use.Recv()) || readAPI(use.Obj().Name()) {
 					return true
 				}
+				if selfCleaningBucketCall(rel, use.Obj().Name()) {
+					return true
+				}
 				hits = append(hits, fmt.Sprintf("%s: %s", rel, use.Obj().Name()))
 				return true
 			})
 		}
 	}
 	return hits
+}
+
+func TestCensusAllowsOnlyBucketLifecycleMutations(t *testing.T) {
+	root := moduleRoot(t)
+	target := filepath.Join(root, "s3", "bucket_lifecycle.go")
+	body, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	overlay := string(body) + `
+func holdPut(api *s3.Client) {
+	_ = api.PutObject
+}
+`
+	hits := mutatingSelections(t, map[string][]byte{target: []byte(overlay)})
+	for _, hit := range hits {
+		if strings.Contains(hit, "bucket_lifecycle.go") && strings.Contains(hit, "PutObject") {
+			return
+		}
+	}
+	t.Fatalf("a bucket lifecycle mutation other than create or delete was not caught:\n%s", strings.Join(hits, "\n"))
+}
+
+// selfCleaningBucketCall is the one mutation the census permits outside the
+// cleanup gate (popododo0720/vws-conformance#5). The S3 bucket lifecycle cases
+// use run-scoped names and register cleanup in the per-case cleaner, so a
+// failed case still deletes only its own bucket.
+func selfCleaningBucketCall(rel, method string) bool {
+	if rel != "s3/bucket_lifecycle.go" {
+		return false
+	}
+	return method == "CreateBucket" || method == "DeleteBucket"
 }
 
 func mutatingClient(recv interface{ String() string }) bool {

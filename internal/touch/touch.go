@@ -14,6 +14,7 @@ type Rule struct {
 
 var Rules = []Rule{
 	{Service: "s3", Group: "buckets", Prefixes: []string{"s3/buckets"}},
+	{Service: "s3", Group: "bucketlifecycle", Prefixes: []string{"s3/bucket_lifecycle"}},
 	{Service: "s3", Group: "listings", Prefixes: []string{"s3/listings"}},
 	{Service: "ec2", Group: "instances", Prefixes: []string{"ec2/instances"}},
 	{Service: "ec2", Group: "images", Prefixes: []string{"ec2/images"}},

@@ -12,6 +12,16 @@ func TestSelectGroup(t *testing.T) {
 	}
 }
 
+func TestSelectBucketLifecycle(t *testing.T) {
+	got := Select([]string{"s3/bucket_lifecycle.go"})
+	if got.Full {
+		t.Fatal("full")
+	}
+	if len(got.Groups) != 1 || got.Groups[0].Service != "s3" || got.Groups[0].Name != "bucketlifecycle" {
+		t.Fatalf("%+v", got.Groups)
+	}
+}
+
 func TestHarnessChangeIsFull(t *testing.T) {
 	got := Select([]string{"internal/harness/allow.go"})
 	if !got.Full {
