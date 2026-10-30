@@ -37,6 +37,11 @@ func BucketLifecycle() bind.Group {
 			{
 				ID: "S3-BKT-106", Service: "s3", Group: "bucketlifecycle", Op: "HeadBucket",
 				Kind: cases.KindIdempotency, Suite: cases.SuiteSDK, DocURL: cases.DocS3("HeadBucket"),
+				Expect: cases.Expect{HTTP: 200, Head: true}, Impl: "yes",
+			},
+			{
+				ID: "S3-BKT-107", Service: "s3", Group: "bucketlifecycle", Op: "HeadBucket",
+				Kind: cases.KindIdempotency, Suite: cases.SuiteSDK, DocURL: cases.DocS3("HeadBucket"),
 				Expect: cases.Expect{HTTP: 404, Head: true}, Impl: "yes",
 			},
 		},
@@ -52,7 +57,20 @@ func runBucketLifecycle(ctx context.Context, rt *harness.Runtime, c cases.Case) 
 	case "S3-BKT-104":
 		return runBucketOwnedConflict(ctx, rt, api)
 	case "S3-BKT-106":
-		return runBucketRecreate(ctx, rt, api)
+		return runBucketRecreate(ctx, rt, api, "bkt-106", []bucketStep{
+			{"create", 200, true},
+			{"delete", 204, false},
+			{"create", 200, true},
+		})
+	case "S3-BKT-107":
+		return runBucketRecreate(ctx, rt, api, "bkt-107", []bucketStep{
+			{"create", 200, true},
+			{"delete", 204, false},
+			{"create", 200, true},
+			{"delete", 204, false},
+			{"create", 200, true},
+			{"delete", 204, false},
+		})
 	default:
 		return cases.Outcome{}, fmt.Errorf("no runner for %s", c.ID)
 	}
@@ -92,53 +110,38 @@ func runBucketOwnedConflict(ctx context.Context, rt *harness.Runtime, api *s3.Cl
 	return second, nil
 }
 
-func runBucketRecreate(ctx context.Context, rt *harness.Runtime, api *s3.Client) (cases.Outcome, error) {
-	name := rt.Name("bkt-106")
-	created := false
+type bucketStep struct {
+	op     string
+	want   int
+	create bool
+}
+
+func runBucketRecreate(ctx context.Context, rt *harness.Runtime, api *s3.Client, suffix string,
+	steps []bucketStep,
+) (cases.Outcome, error) {
+	name := rt.Name(suffix)
+	exists := false
 	rt.Cleanup(func(ctx context.Context) error {
-		if !created {
+		if !exists {
 			return nil
 		}
 		return removeBucket(ctx, api, name)
 	})
-	// exists records whether cleanup must delete the bucket after the step.
-	steps := []struct {
-		op     string
-		want   int
-		run    func(context.Context) (cases.Outcome, error)
-		exists bool
-	}{
-		{"create", 200, func(ctx context.Context) (cases.Outcome, error) {
-			return createBucket(ctx, rt, api, name)
-		}, true},
-		{"delete", 204, func(ctx context.Context) (cases.Outcome, error) {
-			return deleteBucket(ctx, rt, api, name)
-		}, false},
-		{"recreate", 200, func(ctx context.Context) (cases.Outcome, error) {
-			return createBucket(ctx, rt, api, name)
-		}, true},
-		{"head after recreate", 200, func(ctx context.Context) (cases.Outcome, error) {
-			return headBucket(ctx, rt, api, name)
-		}, true},
-		{"delete after recreate", 204, func(ctx context.Context) (cases.Outcome, error) {
-			return deleteBucket(ctx, rt, api, name)
-		}, false},
-		{"create after delete", 200, func(ctx context.Context) (cases.Outcome, error) {
-			return createBucket(ctx, rt, api, name)
-		}, true},
-		{"delete again", 204, func(ctx context.Context) (cases.Outcome, error) {
-			return deleteBucket(ctx, rt, api, name)
-		}, false},
-	}
 	for _, step := range steps {
-		o, err := step.run(ctx)
+		var o cases.Outcome
+		var err error
+		if step.create {
+			o, err = createBucket(ctx, rt, api, name)
+		} else {
+			o, err = deleteBucket(ctx, rt, api, name)
+		}
 		if err != nil {
 			return o, fmt.Errorf("%s: %w", step.op, err)
 		}
 		if o.HTTP != step.want {
 			return o, fmt.Errorf("%s: http %d want %d, code %q", step.op, o.HTTP, step.want, o.Code)
 		}
-		created = step.exists
+		exists = step.create
 	}
 	return headBucket(ctx, rt, api, name)
 }
