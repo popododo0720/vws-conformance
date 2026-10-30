@@ -336,15 +336,26 @@ func runOne(ctx context.Context, rt *harness.Runtime, g bind.Group, c cases.Case
 		res.DurationMS = int(time.Since(start).Milliseconds())
 		return res
 	}
+	caseRT := *rt
+	caseRT.Clean = &harness.Cleaner{}
 	defer func() {
 		if rec := recover(); rec != nil {
 			res.Status = "error"
 			res.Reason = fmt.Sprint(rec)
-			res.DurationMS = int(time.Since(start).Milliseconds())
 		}
+		cleanCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), harness.OpTimeout)
+		defer cancel()
+		if err := caseRT.Clean.Run(cleanCtx); err != nil {
+			res.Status = "error"
+			if res.Reason == "" {
+				res.Reason = err.Error()
+			} else {
+				res.Reason = res.Reason + "; " + err.Error()
+			}
+		}
+		res.DurationMS = int(time.Since(start).Milliseconds())
 	}()
-	got, err := g.Run(ctx, rt, c)
-	res.DurationMS = int(time.Since(start).Milliseconds())
+	got, err := g.Run(ctx, &caseRT, c)
 	res.Actual = map[string]any{"http": got.HTTP, "code": got.Code, "message": got.Message}
 	if err != nil {
 		res.Status = "error"
