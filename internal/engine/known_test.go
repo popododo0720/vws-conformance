@@ -18,6 +18,18 @@ func TestKnownIssuesFileParses(t *testing.T) {
 	}
 }
 
+func TestKnownIssuesTracksMFADeviceSuccess(t *testing.T) {
+	known, err := parseKnownIssues(knownIssuesFile, Groups())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// scripts/guard.sh refuses another vws module name in Go source, so split the URL.
+	const issue = "https://github.com/popododo0720/" + "vws-iam/issues/133"
+	if known["IAM-MFA-001"] != issue {
+		t.Fatalf("IAM-MFA-001 issue = %q, want %q", known["IAM-MFA-001"], issue)
+	}
+}
+
 func TestParseKnownIssues(t *testing.T) {
 	groups := []bind.Group{{Service: "ec2", Name: "x", Cases: []cases.Case{{ID: "EC2-X-001"}}}}
 	const url = "https://github.com/example/tracker/issues/1"

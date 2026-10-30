@@ -6,6 +6,7 @@ package expect
 // EC2: https://docs.aws.amazon.com/AWSEC2/latest/APIReference/errors-overview.html
 // S3: https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
 // IAM: https://docs.aws.amazon.com/IAM/latest/APIReference/CommonErrors.html
+// IAM access denied: https://docs.aws.amazon.com/IAM/latest/UserGuide/troubleshoot_access-denied.html
 var documentedMessage = map[string]string{
 	"InvalidVolume.NotFound":        `(?i)volume '.+' does not exist`,
 	"InvalidSnapshot.NotFound":      `(?i)snapshot '.+' does not exist`,
@@ -39,7 +40,7 @@ var documentedMessage = map[string]string{
 	"BadDigest":                     `(?i)content-md5 you specified did not match`,
 	"InvalidRange":                  `(?i)requested range (is not satisfiable|cannot be satisfied)`,
 	"PreconditionFailed":            `(?i)at least one of the preconditions you specified did not hold`,
-	"AccessDenied":                  `(?i)^access denied\.?$`,
+	"AccessDenied":                  `(?i)(access denied\.?|not authorized to perform)`,
 	"SignatureDoesNotMatch":         `(?i)request signature we calculated does not match the signature you provided`,
 	"RequestTimeTooSkewed":          `(?i)difference between the request time and the current time is too large`,
 	"AuthorizationHeaderMalformed":  `(?i)authorization header is malformed`,
@@ -47,7 +48,7 @@ var documentedMessage = map[string]string{
 	"ExpiredToken":                  `(?i)provided token has expired`,
 	"UnauthorizedOperation":         `(?i)you are not authorized to perform this operation`,
 	"EntityAlreadyExists":           `(?i)already exists`,
-	"NoSuchEntity":                  `(?i)cannot be found`,
+	"NoSuchEntity":                  `(?i)(cannot be found|does not exist)`,
 	"DeleteConflict":                `(?i)cannot be deleted`,
 	"ValidationError":               `(?i)validation error`,
 	"LimitExceeded":                 `(?i)cannot exceed quota`,
