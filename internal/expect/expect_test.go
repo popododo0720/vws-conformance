@@ -32,6 +32,53 @@ func TestJudgeRejectsUndocumentedMessage(t *testing.T) {
 	}
 }
 
+func TestJudgeIAMAccessAndNotFoundMessages(t *testing.T) {
+	const (
+		accessDenied = "User: arn:aws:iam::123456789012:user/test is not authorized to perform: " +
+			"iam:GetMFADevice on resource: arn:aws:iam::123456789012:user/other"
+	)
+	for name, tc := range map[string]struct {
+		exp cases.Expect
+		got cases.Outcome
+	}{
+		"NoSuchEntity": {
+			exp: cases.Expect{HTTP: 404, Code: "NoSuchEntity"},
+			got: cases.Outcome{
+				HTTP: 404, Code: "NoSuchEntity", Message: "The specified MFA device does not exist.",
+			},
+		},
+		"AccessDenied": {
+			exp: cases.Expect{HTTP: 403, Code: "AccessDenied"},
+			got: cases.Outcome{HTTP: 403, Code: "AccessDenied", Message: accessDenied},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if status, reason := Judge(tc.exp, tc.got); status != "pass" || reason != "" {
+				t.Fatalf("status %s reason %q", status, reason)
+			}
+		})
+	}
+	for name, tc := range map[string]struct {
+		exp cases.Expect
+		got cases.Outcome
+	}{
+		"NoSuchEntity": {
+			exp: cases.Expect{HTTP: 404, Code: "NoSuchEntity"},
+			got: cases.Outcome{HTTP: 404, Code: "NoSuchEntity", Message: "The specified MFA device is gone."},
+		},
+		"AccessDenied": {
+			exp: cases.Expect{HTTP: 403, Code: "AccessDenied"},
+			got: cases.Outcome{HTTP: 403, Code: "AccessDenied", Message: "request rejected"},
+		},
+	} {
+		t.Run(name+" wrong phrase", func(t *testing.T) {
+			if status, _ := Judge(tc.exp, tc.got); status != "fail" {
+				t.Fatalf("status %s, want fail", status)
+			}
+		})
+	}
+}
+
 func TestJudgePass(t *testing.T) {
 	exp := cases.Expect{HTTP: 200, Patterns: map[string]string{"id": `^i-[0-9a-f]{8,17}$`}}
 	got := cases.Outcome{HTTP: 200, Fields: map[string]string{"id": "i-0123456789abcdef0"}}
