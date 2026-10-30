@@ -37,7 +37,7 @@ func Groups() []bind.Group {
 		ec2.Instances(), ec2.Images(), ec2.KeyPairs(), ec2.Addresses(), ec2.Gaps(),
 		vpc.Vpcs(), vpc.Subnets(), vpc.SecurityGroups(), vpc.Gaps(),
 		ebs.Volumes(), ebs.Snapshots(), ebs.Gaps(),
-		iam.Users(), sts.Caller(), auth.SigV4(),
+		iam.MFA(), iam.Users(), sts.Caller(), auth.SigV4(),
 	}
 }
 

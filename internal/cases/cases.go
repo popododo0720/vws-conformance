@@ -14,7 +14,9 @@ const (
 	SuiteCLI = "cli"
 	SuiteRaw = "raw-http"
 
-	SkipIAM           = "skipped until vws-deploy#310 lands and console-api is wired to vws-iam"
+	SkipIAM     = "skipped until vws-deploy#310 lands and console-api is wired to vws-iam"
+	SkipMFAAuth = "skipped until a caller without iam:GetMFADevice is available; " +
+		"the suite runs one credential (popododo0720/vws-deploy#310)"
 	SkipUnsafeFixedID = "skipped until an owned gone id exists; " +
 		"a fixed id can change a foreign resource (popododo0720/vws-conformance#1)"
 )
