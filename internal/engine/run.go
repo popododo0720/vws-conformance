@@ -33,7 +33,7 @@ var (
 
 func Groups() []bind.Group {
 	return []bind.Group{
-		s3.Buckets(), s3.Listings(),
+		s3.Buckets(), s3.BucketLifecycle(), s3.Listings(),
 		ec2.Instances(), ec2.Images(), ec2.KeyPairs(), ec2.Addresses(), ec2.Gaps(),
 		vpc.Vpcs(), vpc.Subnets(), vpc.SecurityGroups(), vpc.Gaps(),
 		ebs.Volumes(), ebs.Snapshots(), ebs.Gaps(),
@@ -336,15 +336,28 @@ func runOne(ctx context.Context, rt *harness.Runtime, g bind.Group, c cases.Case
 		res.DurationMS = int(time.Since(start).Milliseconds())
 		return res
 	}
+	// Each case gets its own cleaner so parallel cases cannot delete each
+	// other's resources.
+	caseRT := *rt
+	caseRT.Clean = &harness.Cleaner{}
 	defer func() {
 		if rec := recover(); rec != nil {
 			res.Status = "error"
 			res.Reason = fmt.Sprint(rec)
-			res.DurationMS = int(time.Since(start).Milliseconds())
 		}
+		cleanCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), harness.OpTimeout)
+		defer cancel()
+		if err := caseRT.Clean.Run(cleanCtx); err != nil {
+			res.Status = "error"
+			if res.Reason == "" {
+				res.Reason = err.Error()
+			} else {
+				res.Reason = res.Reason + "; " + err.Error()
+			}
+		}
+		res.DurationMS = int(time.Since(start).Milliseconds())
 	}()
-	got, err := g.Run(ctx, rt, c)
-	res.DurationMS = int(time.Since(start).Milliseconds())
+	got, err := g.Run(ctx, &caseRT, c)
 	res.Actual = map[string]any{"http": got.HTTP, "code": got.Code, "message": got.Message}
 	if err != nil {
 		res.Status = "error"

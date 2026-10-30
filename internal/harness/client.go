@@ -178,12 +178,15 @@ func Load(ctx context.Context, cfg Config) (*Clients, error) {
 type Runtime struct {
 	Cfg     Config
 	Clients *Clients
+	Clean   *Cleaner
 	secret  string
 }
 
 func NewRuntime(cfg Config, cl *Clients) *Runtime {
-	return &Runtime{Cfg: cfg, Clients: cl, secret: cfg.Secret}
+	return &Runtime{Cfg: cfg, Clients: cl, Clean: &Cleaner{}, secret: cfg.Secret}
 }
+
+func (rt *Runtime) Cleanup(fn func(context.Context) error) { rt.Clean.Add(fn) }
 
 func (rt *Runtime) RunID() string { return rt.Cfg.RunID }
 
