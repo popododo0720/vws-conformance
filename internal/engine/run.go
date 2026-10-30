@@ -336,6 +336,8 @@ func runOne(ctx context.Context, rt *harness.Runtime, g bind.Group, c cases.Case
 		res.DurationMS = int(time.Since(start).Milliseconds())
 		return res
 	}
+	// Each case gets its own cleaner so parallel cases cannot delete each
+	// other's resources.
 	caseRT := *rt
 	caseRT.Clean = &harness.Cleaner{}
 	defer func() {
