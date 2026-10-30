@@ -22,7 +22,7 @@ jobs:
         run: go test -race -count=1 -p 1 ./internal/... ./cmd/...
       - name: fake backend
         run: |
-          pin=e6b01b537ff7e55f236064ec04c849a30e5d406d
+          pin=926e4e33719082e53fc12980a145a9179b0f6e0a
           git init /tmp/src/vws-console-api
           git -C /tmp/src/vws-console-api remote add origin https://github.com/popododo0720/vws-console-api.git
           git -C /tmp/src/vws-console-api fetch --depth 1 origin "$pin"
