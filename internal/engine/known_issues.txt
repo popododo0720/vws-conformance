@@ -20,8 +20,5 @@ VPC-SG-104 https://github.com/popododo0720/vws-console-api/issues/243
 # Malformed instance ID code: popododo0720/vws-console-api#246
 EC2-DI-102 https://github.com/popododo0720/vws-console-api/issues/246
 
-# STS ARN partition: popododo0720/vws-console-api#247
-STS-GCI-001 https://github.com/popododo0720/vws-console-api/issues/247
-
 # FIDO GetMFADevice success: popododo0720/vws-iam#133
 IAM-MFA-001 https://github.com/popododo0720/vws-iam/issues/133
