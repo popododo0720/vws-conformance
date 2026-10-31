@@ -17,15 +17,6 @@ VPC-VPC-104 https://github.com/popododo0720/vws-console-api/issues/243
 VPC-SUB-103 https://github.com/popododo0720/vws-console-api/issues/243
 VPC-SG-104 https://github.com/popododo0720/vws-console-api/issues/243
 
-# Unsupported read-only actions: popododo0720/vws-console-api#244
-EC2-GAP-003 https://github.com/popododo0720/vws-console-api/issues/244
-EC2-GAP-004 https://github.com/popododo0720/vws-console-api/issues/244
-EC2-GAP-008 https://github.com/popododo0720/vws-console-api/issues/244
-EBS-GAP-002 https://github.com/popododo0720/vws-console-api/issues/244
-VPC-GAP-004 https://github.com/popododo0720/vws-console-api/issues/244
-VPC-GAP-005 https://github.com/popododo0720/vws-console-api/issues/244
-VPC-GAP-007 https://github.com/popododo0720/vws-console-api/issues/244
-
 # Malformed instance ID code: popododo0720/vws-console-api#246
 EC2-DI-102 https://github.com/popododo0720/vws-console-api/issues/246
 
