@@ -48,6 +48,9 @@ type Outcome struct {
 	Message string
 	Fields  map[string]string
 	Raw     string
+	// Body is the raw response body, kept for response-shape checks. It is
+	// never written to reports; Raw is the redacted copy for that.
+	Body []byte
 }
 
 func DocEC2(op string) string {

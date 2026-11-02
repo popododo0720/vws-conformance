@@ -8,6 +8,7 @@ import (
 
 	"github.com/popododo0720/vws-conformance/internal/bind"
 	"github.com/popododo0720/vws-conformance/internal/cases"
+	"github.com/popododo0720/vws-conformance/internal/expect"
 	"github.com/popododo0720/vws-conformance/internal/harness"
 )
 
@@ -16,10 +17,13 @@ func Gaps() bind.Group {
 		{
 			ID: "EBS-GAP-002", Service: "ebs", Group: "gaps", Op: "DescribeVolumesModifications", Kind: cases.KindGap,
 			Suite: cases.SuiteSDK, DocURL: cases.DocEC2("DescribeVolumesModifications"),
-			Expect: cases.Expect{HTTP: 200}, Impl: "gap",
+			Expect: shapeExpect, Impl: "gap",
 		},
 	}}
 }
+
+// shapeExpect is the AWS response-shape expectation for the read-only gap cases.
+var shapeExpect = cases.Expect{HTTP: 200, Patterns: map[string]string{"shape": expect.ShapeOKPattern}}
 
 func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcome, error) {
 	api, err := client(rt)
@@ -32,6 +36,10 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 			_, err := api.DescribeVolumesModifications(ctx, &awsec2.DescribeVolumesModificationsInput{})
 			return wrapErr("runGaps", err)
 		})
+		o.Fields["shape"] = expect.ShapeField(
+			o, "DescribeVolumesModifications", "volumeModificationSet",
+			"volumeId", "modificationState",
+		)
 		return o, wrapErr("runGaps", err)
 	default:
 		return cases.Outcome{}, fmt.Errorf("no runner for %s", c.ID)

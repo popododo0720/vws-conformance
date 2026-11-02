@@ -60,6 +60,12 @@ func (c *Capture) snapshot(secret string) string {
 	return Redact(b.String(), secret)
 }
 
+func (c *Capture) body() []byte {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return bytes.Clone(c.Body)
+}
+
 func withCapture(ctx context.Context, c *Capture) context.Context {
 	return context.WithValue(ctx, captureKey{}, c)
 }
@@ -197,7 +203,7 @@ func (rt *Runtime) Call(ctx context.Context, fn func(context.Context) error) (ca
 	ctx, cancel := context.WithTimeout(ctx, OpTimeout)
 	defer cancel()
 	err := fn(ctx)
-	o := cases.Outcome{Fields: map[string]string{}, HTTP: cap.Status, Raw: cap.snapshot(rt.secret)}
+	o := cases.Outcome{Fields: map[string]string{}, HTTP: cap.Status, Raw: cap.snapshot(rt.secret), Body: cap.body()}
 	if err == nil {
 		if o.HTTP == 0 {
 			return o, fmt.Errorf("response status was not captured")
