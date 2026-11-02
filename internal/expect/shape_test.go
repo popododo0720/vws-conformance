@@ -7,6 +7,16 @@ import (
 	"github.com/popododo0720/vws-conformance/internal/cases"
 )
 
+const running = `<instanceState><code>16</code><name>running</name></instanceState>`
+
+func statusBody(inner string) string {
+	return `<DescribeInstanceStatusResponse>` + inner + `</DescribeInstanceStatusResponse>`
+}
+
+func statusItems(items string) string {
+	return statusBody(`<instanceStatusSet>` + items + `</instanceStatusSet>`)
+}
+
 func TestEC2List(t *testing.T) {
 	const op, list = "DescribeInstanceStatus", "instanceStatusSet"
 	req := []string{"instanceId", "instanceState/name"}
@@ -17,12 +27,14 @@ func TestEC2List(t *testing.T) {
 		{"blank body", "  \n", "response body is empty"},
 		{"not xml", "{}", "not XML"},
 		{"wrong root", `<DescribeTagsResponse><instanceStatusSet/></DescribeTagsResponse>`, "root element"},
-		{"missing list", `<DescribeInstanceStatusResponse><requestId>r</requestId></DescribeInstanceStatusResponse>`, `list element "instanceStatusSet" is missing`},
-		{"item missing field", `<DescribeInstanceStatusResponse><instanceStatusSet><item><instanceState><name>running</name></instanceState></item></instanceStatusSet></DescribeInstanceStatusResponse>`, "item 0 has no instanceId"},
-		{"item empty nested field", `<DescribeInstanceStatusResponse><instanceStatusSet><item><instanceId>i-1</instanceId><instanceState><name> </name></instanceState></item></instanceStatusSet></DescribeInstanceStatusResponse>`, "item 0 has no instanceState/name"},
-		{"non-item child", `<DescribeInstanceStatusResponse><instanceStatusSet><member/></instanceStatusSet></DescribeInstanceStatusResponse>`, `want "item"`},
-		{"empty list", `<DescribeInstanceStatusResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/"><requestId>r</requestId><instanceStatusSet/></DescribeInstanceStatusResponse>`, ""},
-		{"full item", `<DescribeInstanceStatusResponse><instanceStatusSet><item><instanceId>i-1</instanceId><instanceState><code>16</code><name>running</name></instanceState></item></instanceStatusSet></DescribeInstanceStatusResponse>`, ""},
+		{"missing list", statusBody(`<requestId>r</requestId>`), `list element "instanceStatusSet" is missing`},
+		{"item missing field", statusItems(`<item>` + running + `</item>`), "item 0 has no instanceId"},
+		{"item empty nested field", statusItems(`<item><instanceId>i-1</instanceId>` +
+			`<instanceState><name> </name></instanceState></item>`), "item 0 has no instanceState/name"},
+		{"non-item child", statusItems(`<member/>`), `want "item"`},
+		{"empty list", `<DescribeInstanceStatusResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">` +
+			`<requestId>r</requestId><instanceStatusSet/></DescribeInstanceStatusResponse>`, ""},
+		{"full item", statusItems(`<item><instanceId>i-1</instanceId>` + running + `</item>`), ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -48,7 +60,8 @@ func TestShapeFieldFailsJudgeOnEmptyBody(t *testing.T) {
 	if status, reason := Judge(exp, got); status != "fail" || !strings.Contains(reason, "empty") {
 		t.Fatalf("Judge = %s %q, want fail on empty body", status, reason)
 	}
-	got.Body = []byte(`<DescribeRegionsResponse><regionInfo><item><regionName>r1</regionName></item></regionInfo></DescribeRegionsResponse>`)
+	got.Body = []byte(`<DescribeRegionsResponse><regionInfo><item><regionName>r1</regionName></item>` +
+		`</regionInfo></DescribeRegionsResponse>`)
 	got.Fields["shape"] = ShapeField(got, "DescribeRegions", "regionInfo", "regionName")
 	if status, reason := Judge(exp, got); status != "pass" {
 		t.Fatalf("Judge = %s %q, want pass", status, reason)

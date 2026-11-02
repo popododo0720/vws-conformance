@@ -26,9 +26,12 @@ func Gaps() bind.Group {
 func ec2Gap(id, op string) cases.Case {
 	return cases.Case{
 		ID: id, Service: "ec2", Group: "gaps", Op: op, Kind: cases.KindGap, Suite: cases.SuiteSDK,
-		DocURL: cases.DocEC2(op), Expect: cases.Expect{HTTP: 200, Patterns: map[string]string{"shape": expect.ShapeOKPattern}}, Impl: "gap",
+		DocURL: cases.DocEC2(op), Expect: shapeExpect, Impl: "gap",
 	}
 }
+
+// shapeExpect is the AWS response-shape expectation for the read-only gap cases.
+var shapeExpect = cases.Expect{HTTP: 200, Patterns: map[string]string{"shape": expect.ShapeOKPattern}}
 
 func runEC2Gaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcome, error) {
 	api, err := client(rt)
@@ -41,21 +44,30 @@ func runEC2Gaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.O
 			_, err := api.DescribeInstanceStatus(ctx, &awsec2.DescribeInstanceStatusInput{})
 			return wrapErr("runEC2Gaps", err)
 		})
-		o.Fields["shape"] = expect.ShapeField(o, "DescribeInstanceStatus", "instanceStatusSet", "instanceId", "instanceState/name")
+		o.Fields["shape"] = expect.ShapeField(
+			o, "DescribeInstanceStatus", "instanceStatusSet",
+			"instanceId", "instanceState/name",
+		)
 		return o, wrapErr("runEC2Gaps", err)
 	case "EC2-GAP-004":
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
 			_, err := api.DescribeInstanceTypes(ctx, &awsec2.DescribeInstanceTypesInput{})
 			return wrapErr("runEC2Gaps", err)
 		})
-		o.Fields["shape"] = expect.ShapeField(o, "DescribeInstanceTypes", "instanceTypeSet", "instanceType")
+		o.Fields["shape"] = expect.ShapeField(
+			o, "DescribeInstanceTypes", "instanceTypeSet",
+			"instanceType",
+		)
 		return o, wrapErr("runEC2Gaps", err)
 	case "EC2-GAP-008":
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
 			_, err := api.DescribeTags(ctx, &awsec2.DescribeTagsInput{})
 			return wrapErr("runEC2Gaps", err)
 		})
-		o.Fields["shape"] = expect.ShapeField(o, "DescribeTags", "tagSet", "resourceId", "resourceType", "key")
+		o.Fields["shape"] = expect.ShapeField(
+			o, "DescribeTags", "tagSet",
+			"resourceId", "resourceType", "key",
+		)
 		return o, wrapErr("runEC2Gaps", err)
 	default:
 		return cases.Outcome{}, fmt.Errorf("no runner for %s", c.ID)
