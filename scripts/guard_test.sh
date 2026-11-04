@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for scripts/guard.sh correct (popododo0720/vws-deploy#448): it passes on this repo's files and
+# Tests for scripts/guard.sh correct (popododo0720/vws-deploy#448) and its dual-event check (#35): it passes on this repo's files and
 # fails when the AGENTS.md /correct loop section, the incident form or the incident label is missing or
 # empty. Each case runs on a throwaway copy in a temp dir; the work tree is never changed.
 # Run: scripts/guard_test.sh
@@ -70,6 +70,51 @@ expect fail "no incident form" "$d"
 d=$(case_dir no-label)
 [[ -f $d/.github/labels.yml ]] && sed -i '/^- name: incident$/d' "$d/.github/labels.yml"
 expect fail "labels.yml without the incident label" "$d"
+
+# vws-conformance#35: a workflow file on both pull_request and pull_request_target fails the guard,
+# in either trigger form, and the guard's message names the file.
+expect_dual() {
+  local want=$1 label=$2 dir=$3 rc=0 ok=0
+  (cd "$dir" && bash scripts/guard.sh) >"$tmp/out" 2>&1 || rc=$?
+  if [[ $want == pass ]]; then
+    [[ $rc -eq 0 ]] && ok=1
+  elif [[ $rc -ne 0 ]] && grep -q '^guard: dual-event: .github/workflows/w.yml ' "$tmp/out"; then
+    ok=1
+  fi
+  if [[ $ok -eq 1 ]]; then
+    echo "ok: ${label} (${want})"
+  else
+    echo "FAIL: ${label}: want ${want}, exit ${rc}"
+    sed 's/^/    /' "$tmp/out"
+    fails=$((fails + 1))
+  fi
+}
+
+dual_case() {
+  local d
+  d=$(case_dir "$1")
+  mkdir -p "$d/.github/workflows"
+  printf '%s\n' "$2" >"$d/.github/workflows/w.yml"
+  printf '%s\n' "$d"
+}
+
+d=$(dual_case dual-map $'on:\n  pull_request:\n  pull_request_target:\njobs: {}')
+expect_dual fail "a workflow on both events (map form)" "$d"
+
+d=$(dual_case dual-list 'on: [pull_request, pull_request_target]')
+expect_dual fail "a workflow on both events (list form)" "$d"
+
+d=$(dual_case target-only $'# a pull_request run lives elsewhere\non:\n  pull_request_target:\njobs:\n  x:\n    if: github.event.pull_request.number > 0')
+expect_dual pass "pull_request_target only, pull_request named in a comment and a context" "$d"
+
+d=$(dual_case target-step $'on:\n  pull_request_target:\njobs:\n  x:\n    steps:\n      - run: echo \'pull_request\'')
+expect_dual pass "pull_request_target only, a step that prints pull_request" "$d"
+
+d=$(dual_case dual-quoted $'"on":\n  pull_request:\n  pull_request_target:')
+expect_dual fail "a workflow on both events (quoted on key)" "$d"
+
+d=$(dual_case pr-review $'on:\n  pull_request:\n  pull_request_review:')
+expect_dual pass "pull_request with pull_request_review" "$d"
 
 if [[ $fails -ne 0 ]]; then
   echo "guard_test: ${fails} case(s) failed" >&2
