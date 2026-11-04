@@ -38,7 +38,7 @@ A rule whose enforcer cell is `Judgment` has no check; the author and reviewer u
 | Expected results cite official AWS docs only | Judgment |
 | Every VWS-vs-AWS gap is a tracked issue | Judgment |
 | Do not push to main directly. Work on a branch | `.github/workflows/direct-push-watch.yml` (detected after the fact) |
-| A pull request targets main, says `Part of #N` and closes no issue | `.github/workflows/repo-guard.yml` `pr-hygiene` |
+| A pull request targets main, says `Part of #N` and closes no issue | `.github/workflows/repo-guard-pr.yml` `pr-hygiene` |
 | Merge only after vws-verify PASS for the exact head | `.github/workflows/repo-guard.yml` `verify-gate` |
 | Commits are atomic | Judgment |
 
@@ -66,7 +66,7 @@ Bots are insider risks too. The rules below have no exceptions. The design is po
 6. **Isolation and emergency stop**: a bot is stopped immediately at the user's request or by the orchestrator stopping that bot's session and revoking its token (`gh auth`, PAT revoke). Risky work happens only in a sandbox (the box, a throwaway cluster). No access to production clusters.
 7. **Incident disclosure**: rule violations and incidents are never hidden; record them in an issue as `Cause / Impact / Action / Prevention`. The label is `incident`.
 
-This repo is public. `main` branch protection requires the CI checks; `.github/workflows/repo-guard.yml` checks that the PR's base is main, that the body has `Part of #N` and no closing keyword, and that this section has items 1-7. `.github/workflows/direct-push-watch.yml` reports after the fact any commit that reached main without a PR. The check code is `scripts/guard-agents.sh`, the same file as in vws-deploy, so it is copied, not edited.
+This repo is public. `main` branch protection requires the CI checks; `.github/workflows/repo-guard-pr.yml` checks that the PR's base is main, that the body has `Part of #N` and no closing keyword, and that this section has items 1-7, and `.github/workflows/repo-guard.yml` runs `verify-gate` from the default branch. No workflow file runs on both `pull_request` and `pull_request_target` (`scripts/guard.sh`). `.github/workflows/direct-push-watch.yml` reports after the fact any commit that reached main without a PR. The check code is `scripts/guard-agents.sh`, the same file as in vws-deploy, so it is copied, not edited.
 
 ### Script push, PR and merge
 
