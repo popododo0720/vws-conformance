@@ -185,10 +185,12 @@ type Runtime struct {
 	Cfg     Config
 	Clients *Clients
 	secret  string
+	scopes  *scopeRegistry
+	scope   *caseScope
 }
 
 func NewRuntime(cfg Config, cl *Clients) *Runtime {
-	return &Runtime{Cfg: cfg, Clients: cl, secret: cfg.Secret}
+	return &Runtime{Cfg: cfg, Clients: cl, secret: cfg.Secret, scopes: &scopeRegistry{live: map[*Runtime]struct{}{}}}
 }
 
 func (rt *Runtime) RunID() string { return rt.Cfg.RunID }

@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -9,9 +10,12 @@ import (
 	"syscall"
 )
 
+// Cleaner is a LIFO stack of cleanup callbacks. Run executes every callback once, even after
+// one fails or panics, and an overlapping Run waits for the first to finish.
 type Cleaner struct {
-	mu  sync.Mutex
-	fns []func(context.Context) error
+	mu    sync.Mutex
+	runMu sync.Mutex
+	fns   []func(context.Context) error
 }
 
 func (c *Cleaner) Add(fn func(context.Context) error) {
@@ -21,39 +25,29 @@ func (c *Cleaner) Add(fn func(context.Context) error) {
 }
 
 func (c *Cleaner) Run(ctx context.Context) error {
+	c.runMu.Lock()
+	defer c.runMu.Unlock()
 	c.mu.Lock()
-	fns := append([]func(context.Context) error{}, c.fns...)
+	fns := c.fns
 	c.fns = nil
 	c.mu.Unlock()
 	var errs []error
 	for i := len(fns) - 1; i >= 0; i-- {
-		if err := fns[i](ctx); err != nil {
-			errs = append(errs, err)
-		}
+		errs = append(errs, runRecovered(ctx, fns[i]))
 	}
-	if len(errs) == 0 {
-		return nil
+	if err := errors.Join(errs...); err != nil {
+		return fmt.Errorf("cleanup: %w", err)
 	}
-	return fmt.Errorf("cleanup: %v", errs)
-}
-
-func RunProtected(fn func(), cleanup func()) (panicked any) {
-	defer func() {
-		panicked = recover()
-		cleanup()
-	}()
-	fn()
 	return nil
 }
 
-func OnSignal(sig <-chan os.Signal, cleanup func()) <-chan struct{} {
-	done := make(chan struct{})
-	go func() {
-		<-sig
-		cleanup()
-		close(done)
+func runRecovered(ctx context.Context, fn func(context.Context) error) (err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = fmt.Errorf("cleanup panic: %v", rec)
+		}
 	}()
-	return done
+	return fn(ctx)
 }
 
 var process struct {

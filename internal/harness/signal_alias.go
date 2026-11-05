@@ -1,10 +1,5 @@
 package harness
 
-import (
-	"os"
-	"syscall"
-)
+import "os"
 
 type osSignal = os.Signal
-
-var osInterrupt os.Signal = syscall.SIGINT

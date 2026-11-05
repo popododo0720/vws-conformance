@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -207,10 +208,7 @@ func runtime(ctx context.Context, cfg harness.Config) (*harness.Runtime, error) 
 		}
 		//nolint:contextcheck // process cleanup runs after the run context is finished
 		harness.SetProcessCleanup(func() error {
-			if err := harness.ReleaseRun(rt.Cfg.RunID); err != nil {
-				return noteCleanup(err)
-			}
-			return nil
+			return noteCleanup(errors.Join(rt.Shutdown(context.Background()), harness.ReleaseRun(rt.Cfg.RunID)))
 		})
 		claimed = false
 		gate.rt = rt
@@ -336,15 +334,24 @@ func runOne(ctx context.Context, rt *harness.Runtime, g bind.Group, c cases.Case
 		res.DurationMS = int(time.Since(start).Milliseconds())
 		return res
 	}
+	crt, err := rt.BeginCase(c.ID)
+	if err != nil {
+		res.Reason = err.Error()
+		res.DurationMS = int(time.Since(start).Milliseconds())
+		return res
+	}
 	defer func() {
 		if rec := recover(); rec != nil {
 			res.Status = "error"
 			res.Reason = fmt.Sprint(rec)
-			res.DurationMS = int(time.Since(start).Milliseconds())
 		}
+		if cleanupErr := crt.EndCase(ctx); cleanupErr != nil {
+			res.Reason = fmt.Sprintf("cleanup: %v; case %s: %s", cleanupErr, res.Status, res.Reason)
+			res.Status = "error"
+		}
+		res.DurationMS = int(time.Since(start).Milliseconds())
 	}()
-	got, err := g.Run(ctx, rt, c)
-	res.DurationMS = int(time.Since(start).Milliseconds())
+	got, err := g.Run(ctx, crt, c)
 	res.Actual = map[string]any{"http": got.HTTP, "code": got.Code, "message": got.Message}
 	if err != nil {
 		res.Status = "error"

@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"errors"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -21,14 +22,47 @@ func TestCleanupRunsInReverse(t *testing.T) {
 	}
 }
 
-func TestCleanupRunsAfterPanic(t *testing.T) {
-	ran := false
-	panicked := RunProtected(func() { panic("boom") }, func() { ran = true })
-	if panicked == nil {
-		t.Fatal("expected panic")
+func TestCleanupRunsEveryCallbackPastFailureAndPanic(t *testing.T) {
+	var c Cleaner
+	ran := 0
+	c.Add(func(context.Context) error { ran++; return nil })
+	c.Add(func(context.Context) error { panic("boom") })
+	c.Add(func(context.Context) error { ran++; return errors.New("delete failed") })
+	err := c.Run(context.Background())
+	if ran != 2 || err == nil || !strings.Contains(err.Error(), "boom") ||
+		!strings.Contains(err.Error(), "delete failed") {
+		t.Fatalf("ran %d err %v", ran, err)
 	}
-	if !ran {
-		t.Fatal("cleanup did not run")
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("second run %v", err)
+	}
+}
+
+func TestCleanupOverlappingRunWaits(t *testing.T) {
+	var c Cleaner
+	started := make(chan struct{})
+	release := make(chan struct{})
+	c.Add(func(context.Context) error {
+		close(started)
+		<-release
+		return nil
+	})
+	first := make(chan error, 1)
+	go func() { first <- c.Run(context.Background()) }()
+	<-started
+	second := make(chan error, 1)
+	go func() { second <- c.Run(context.Background()) }()
+	select {
+	case err := <-second:
+		t.Fatalf("overlapping run returned %v while the first was still cleaning", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-second; err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -144,21 +178,4 @@ type waitRun chan struct{}
 func (w waitRun) Run() int {
 	close(w)
 	select {}
-}
-
-func TestSignalRunsCleanup(t *testing.T) {
-	sig := make(chan osSignal, 1)
-	ran := make(chan struct{})
-	done := OnSignal(sig, func() { close(ran) })
-	sig <- osInterrupt
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout")
-	}
-	select {
-	case <-ran:
-	default:
-		t.Fatal("cleanup did not run")
-	}
 }
