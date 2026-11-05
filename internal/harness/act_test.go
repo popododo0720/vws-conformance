@@ -390,3 +390,31 @@ func TestGatedDeleteIsSentOnce(t *testing.T) {
 		})
 	}
 }
+
+// A 5xx can come after the server made the volume, so it is an unknown outcome, never "nothing
+// created".
+func TestServerErrorOnCreateIsReported(t *testing.T) {
+	for _, tt := range []struct {
+		status int
+		code   string
+	}{{http.StatusInternalServerError, "InternalError"}, {http.StatusServiceUnavailable, "Unavailable"}} {
+		t.Run(tt.code, func(t *testing.T) {
+			fake, rt := newGateBehind(t, func(fake *ec2fake.Server, w http.ResponseWriter, r *http.Request) bool {
+				if r.Form.Get("Action") != "CreateVolume" {
+					return false
+				}
+				fake.Config.Handler.ServeHTTP(httptest.NewRecorder(), r)
+				writeAPIError(t, w, tt.status, tt.code)
+				return true
+			})
+			view := begin(t, rt, "EBS-VOL-001")
+			if _, err := view.EC2CreateVolume(context.Background(), volumeInput()); err == nil {
+				t.Fatal("create answered 5xx succeeded")
+			}
+			wantPreserve(t, view.EndCase(context.Background()), "create outcome unknown")
+			if _, ok := fake.Volume("vol-00000000000000001"); !ok || fake.Calls("CreateVolume") != 1 {
+				t.Fatalf("present %v creates %d", ok, fake.Calls("CreateVolume"))
+			}
+		})
+	}
+}

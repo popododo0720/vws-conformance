@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 
 	"github.com/popododo0720/vws-conformance/internal/cases"
 )
@@ -153,9 +154,8 @@ func create[Out any](ctx context.Context, rt *Runtime, k Kind, send func(context
 	s.ledger = append(s.ledger, rec)
 	s.cleanup.Add(func(ctx context.Context) error { return rt.remove(ctx, rec) })
 	out, err := withDeadline(context.WithoutCancel(ctx), send)
-	var ae smithy.APIError
 	switch {
-	case errors.As(err, &ae):
+	case refused(err):
 		rec.State = StateNone
 		return out, fmt.Errorf("create %s: %w", k, err)
 	case err != nil:
@@ -169,6 +169,17 @@ func create[Out any](ctx context.Context, rt *Runtime, k Kind, send func(context
 	}
 	rec.State = StateCreated
 	return out, nil
+}
+
+// refused reports a 4xx API error: the server rejected the request and created nothing. A 5xx
+// can come after the resource was made, so its outcome is unknown.
+func refused(err error) bool {
+	var ae smithy.APIError
+	var re *smithyhttp.ResponseError
+	if !errors.As(err, &ae) || !errors.As(err, &re) || re.Response == nil {
+		return false
+	}
+	return re.HTTPStatusCode() >= 400 && re.HTTPStatusCode() < 500
 }
 
 // mutate sends a call that touches an existing resource only when Decide says Proceed.
