@@ -16,6 +16,7 @@ type caseScope struct {
 	closed  bool
 	err     error
 	cleanup Cleaner
+	ledger  []*Record
 }
 
 type scopeRegistry struct {
@@ -89,6 +90,16 @@ func (rt *Runtime) Shutdown(ctx context.Context) error {
 	wg.Wait()
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("shutdown: %w", err)
+	}
+	return nil
+}
+
+// find returns this case's latest record of ref, or nil.
+func (s *caseScope) find(ref Ref) *Record {
+	for i := len(s.ledger) - 1; i >= 0; i-- {
+		if s.ledger[i].Ref == ref {
+			return s.ledger[i]
+		}
 	}
 	return nil
 }

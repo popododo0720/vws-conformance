@@ -5,39 +5,70 @@ import (
 	"go/ast"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"golang.org/x/tools/go/packages"
 )
 
-func TestProductionCodeHasNoMutatingSDKMethod(t *testing.T) {
-	hits := mutatingSelections(t, nil)
-	if len(hits) > 0 {
-		t.Fatalf("mutating SDK method in production code:\n%s", strings.Join(hits, "\n"))
+// actFile is the only module-relative path allowed to select a mutating SDK method.
+const actFile = "internal/harness/act.go"
+
+func TestMutatingSDKMethodsStayInAct(t *testing.T) {
+	if hits := outsideAct(mutatingSelections(t, nil)); len(hits) > 0 {
+		t.Fatalf("mutating SDK method outside %s:\n%s", actFile, strings.Join(hits, "\n"))
 	}
 }
 
-func TestCensusCatchesMethodValueAlias(t *testing.T) {
+func TestCensusReportsMutationOutsideAct(t *testing.T) {
 	root := moduleRoot(t)
-	target := filepath.Join(root, "s3", "buckets.go")
-	body, err := os.ReadFile(target)
+	buckets := filepath.Join(root, "s3", "buckets.go")
+	body, err := os.ReadFile(buckets)
 	if err != nil {
 		t.Fatal(err)
 	}
-	alias := string(body) + `
-func holdCreate(api *s3.Client) {
-	fn := api.CreateBucket
-	_ = fn
-}
-`
-	hits := mutatingSelections(t, map[string][]byte{target: []byte(alias)})
-	for _, hit := range hits {
-		if strings.Contains(hit, "buckets.go") && strings.Contains(hit, "CreateBucket") {
-			return
-		}
+	act := filepath.Join(root, filepath.FromSlash(actFile))
+	actBody, err := os.ReadFile(act)
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Fatalf("method value alias was not a mutating selection:\n%s", strings.Join(hits, "\n"))
+	tests := []struct {
+		name   string
+		file   string
+		body   string
+		report string
+	}{
+		{"service package", buckets, string(body) + `
+func dropBucket(ctx context.Context, api *s3.Client) {
+	_, _ = api.DeleteBucket(ctx, nil)
+}
+`, "s3/buckets.go: DeleteBucket"},
+		{"new file beside act.go", filepath.Join(root, "internal", "harness", "act_extra.go"), `package harness
+
+import "github.com/aws/aws-sdk-go-v2/service/ec2"
+
+func extraTerminate(api *ec2.Client) { _ = api.TerminateInstances }
+`, "internal/harness/act_extra.go: TerminateInstances"},
+		{"act.go itself", act, string(actBody) + `
+func actTerminate(api *ec2.Client) { _ = api.TerminateInstances }
+`, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			all := mutatingSelections(t, map[string][]byte{tt.file: []byte(tt.body)})
+			hits := outsideAct(all)
+			if tt.report == "" {
+				if !slices.Contains(all, actFile+": TerminateInstances") || len(hits) != 0 {
+					t.Fatalf("act.go hit was not seen, or something was reported:\n%s", strings.Join(hits, "\n"))
+				}
+				return
+			}
+			if !slices.Contains(hits, tt.report) {
+				t.Fatalf("%q was not reported:\n%s", tt.report, strings.Join(hits, "\n"))
+			}
+		})
+	}
 }
 
 func mutatingSelections(t *testing.T, overlay map[string][]byte) []string {
@@ -87,6 +118,16 @@ func mutatingSelections(t *testing.T, overlay map[string][]byte) []string {
 		}
 	}
 	return hits
+}
+
+func outsideAct(hits []string) []string {
+	var out []string
+	for _, hit := range hits {
+		if !strings.HasPrefix(hit, actFile+": ") {
+			out = append(out, hit)
+		}
+	}
+	return out
 }
 
 func mutatingClient(recv interface{ String() string }) bool {
