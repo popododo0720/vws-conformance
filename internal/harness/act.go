@@ -56,9 +56,7 @@ func (rt *Runtime) EC2CreateVolume(ctx context.Context, in *ec2.CreateVolumeInpu
 	tagged := *in
 	tagged.TagSpecifications = specs
 	return create(ctx, rt, KindVolume, func(ctx context.Context) (*ec2.CreateVolumeOutput, error) {
-		// One attempt: a retry after a lost response can answer with an API error for a volume the
-		// first attempt made, and create records an API error as "nothing created".
-		out, err := rt.Clients.EC2.CreateVolume(ctx, &tagged, func(o *ec2.Options) { o.RetryMaxAttempts = 1 })
+		out, err := rt.Clients.EC2.CreateVolume(ctx, &tagged, oneAttempt)
 		return out, wrapErr("CreateVolume", err)
 	}, func(out *ec2.CreateVolumeOutput) string {
 		if out == nil {
@@ -96,9 +94,14 @@ func deleteVolume(ctx context.Context, cl *Clients, id string) (*ec2.DeleteVolum
 	if cl == nil || cl.EC2 == nil {
 		return nil, errors.New("DeleteVolume: ec2 client is unset")
 	}
-	out, err := cl.EC2.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(id)})
+	out, err := cl.EC2.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(id)}, oneAttempt)
 	return out, wrapErr("DeleteVolume", err)
 }
+
+// oneAttempt turns off SDK retries on a gated send. A retry skips observe and Decide: it can
+// delete a resource whose owner changed after the observation, or answer an API error for a
+// volume the first attempt made. census_test.go requires it on every mutating call here.
+func oneAttempt(o *ec2.Options) { o.RetryMaxAttempts = 1 }
 
 func ec2RunTags(tags []types.Tag) []string {
 	var values []string

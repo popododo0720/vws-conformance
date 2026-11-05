@@ -12,12 +12,13 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-// actFile is the only module-relative path allowed to select a mutating SDK method.
+// actFile is the only module-relative path allowed to select a mutating SDK method, and only as
+// a direct call that passes oneAttempt.
 const actFile = "internal/harness/act.go"
 
 func TestMutatingSDKMethodsStayInAct(t *testing.T) {
-	if hits := outsideAct(mutatingSelections(t, nil)); len(hits) > 0 {
-		t.Fatalf("mutating SDK method outside %s:\n%s", actFile, strings.Join(hits, "\n"))
+	if bad := violations(mutatingSelections(t, nil)); len(bad) > 0 {
+		t.Fatalf("mutating SDK method outside %s, or sent with SDK retries:\n%s", actFile, strings.Join(bad, "\n"))
 	}
 }
 
@@ -50,28 +51,42 @@ import "github.com/aws/aws-sdk-go-v2/service/ec2"
 
 func extraTerminate(api *ec2.Client) { _ = api.TerminateInstances }
 `, "internal/harness/act_extra.go: TerminateInstances"},
-		{"act.go itself", act, string(actBody) + `
+		{"act.go call with SDK retries", act, string(actBody) + `
+func actTerminate(ctx context.Context, api *ec2.Client) { _, _ = api.TerminateInstances(ctx, nil) }
+`, actFile + ": TerminateInstances without oneAttempt"},
+		{"act.go method value", act, string(actBody) + `
 func actTerminate(api *ec2.Client) { _ = api.TerminateInstances }
+`, actFile + ": TerminateInstances without oneAttempt"},
+		{"act.go call with oneAttempt", act, string(actBody) + `
+func actTerminate(ctx context.Context, api *ec2.Client) { _, _ = api.TerminateInstances(ctx, nil, oneAttempt) }
 `, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			all := mutatingSelections(t, map[string][]byte{tt.file: []byte(tt.body)})
-			hits := outsideAct(all)
+			bad := violations(all)
 			if tt.report == "" {
-				if !slices.Contains(all, actFile+": TerminateInstances") || len(hits) != 0 {
-					t.Fatalf("act.go hit was not seen, or something was reported:\n%s", strings.Join(hits, "\n"))
+				if !slices.Contains(all, hit{actFile, "TerminateInstances", true}) || len(bad) != 0 {
+					t.Fatalf("act.go hit was not seen, or something was reported:\n%s", strings.Join(bad, "\n"))
 				}
 				return
 			}
-			if !slices.Contains(hits, tt.report) {
-				t.Fatalf("%q was not reported:\n%s", tt.report, strings.Join(hits, "\n"))
+			if !slices.Contains(bad, tt.report) {
+				t.Fatalf("%q was not reported:\n%s", tt.report, strings.Join(bad, "\n"))
 			}
 		})
 	}
 }
 
-func mutatingSelections(t *testing.T, overlay map[string][]byte) []string {
+// hit is one selection of a mutating SDK method. oneAttempt reports that the selection is
+// called directly with oneAttempt as its last argument.
+type hit struct {
+	file       string
+	method     string
+	oneAttempt bool
+}
+
+func mutatingSelections(t *testing.T, overlay map[string][]byte) []hit {
 	t.Helper()
 	root := moduleRoot(t)
 	cfg := &packages.Config{
@@ -85,7 +100,7 @@ func mutatingSelections(t *testing.T, overlay map[string][]byte) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var hits []string
+	var hits []hit
 	for _, pkg := range pkgs {
 		if len(pkg.Errors) > 0 {
 			t.Fatalf("%s: %v", pkg.PkgPath, pkg.Errors)
@@ -100,6 +115,19 @@ func mutatingSelections(t *testing.T, overlay map[string][]byte) []string {
 			if strings.HasSuffix(rel, "_test.go") {
 				continue
 			}
+			once := map[*ast.SelectorExpr]bool{}
+			ast.Inspect(file, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok || len(call.Args) == 0 {
+					return true
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				last, isIdent := call.Args[len(call.Args)-1].(*ast.Ident)
+				if ok && isIdent && last.Name == "oneAttempt" {
+					once[sel] = true
+				}
+				return true
+			})
 			ast.Inspect(file, func(n ast.Node) bool {
 				sel, ok := n.(*ast.SelectorExpr)
 				if !ok || pkg.TypesInfo == nil {
@@ -112,7 +140,7 @@ func mutatingSelections(t *testing.T, overlay map[string][]byte) []string {
 				if !mutatingClient(use.Recv()) || readAPI(use.Obj().Name()) {
 					return true
 				}
-				hits = append(hits, fmt.Sprintf("%s: %s", rel, use.Obj().Name()))
+				hits = append(hits, hit{rel, use.Obj().Name(), once[sel]})
 				return true
 			})
 		}
@@ -120,11 +148,14 @@ func mutatingSelections(t *testing.T, overlay map[string][]byte) []string {
 	return hits
 }
 
-func outsideAct(hits []string) []string {
+func violations(hits []hit) []string {
 	var out []string
-	for _, hit := range hits {
-		if !strings.HasPrefix(hit, actFile+": ") {
-			out = append(out, hit)
+	for _, h := range hits {
+		switch {
+		case h.file != actFile:
+			out = append(out, fmt.Sprintf("%s: %s", h.file, h.method))
+		case !h.oneAttempt:
+			out = append(out, fmt.Sprintf("%s: %s without oneAttempt", h.file, h.method))
 		}
 	}
 	return out

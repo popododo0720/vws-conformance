@@ -3,7 +3,11 @@ package harness
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,11 +22,33 @@ const foreignRun = "conf-20261104T000000Z-def456"
 
 func newGate(t *testing.T) (*ec2fake.Server, *Runtime) {
 	t.Helper()
+	return newGateBehind(t, nil)
+}
+
+// newGateBehind puts front before the fake. front answers a request itself and returns true,
+// or returns false to let the fake answer it.
+func newGateBehind(t *testing.T, front func(fake *ec2fake.Server, w http.ResponseWriter, r *http.Request) bool,
+) (*ec2fake.Server, *Runtime) {
+	t.Helper()
 	fake := ec2fake.New()
 	t.Cleanup(fake.Close)
+	endpoint := fake.URL
+	if front != nil {
+		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := r.ParseForm(); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if !front(fake, w, r) {
+				fake.Config.Handler.ServeHTTP(w, r)
+			}
+		}))
+		t.Cleanup(proxy.Close)
+		endpoint = proxy.URL
+	}
 	cfg := Config{
 		AccessKey: "AKIDEXAMPLE", Secret: "secret", Region: "vws-1", RunID: testRun,
-		EC2Endpoint: fake.URL, AllowedHosts: []string{"127.0.0.1"},
+		EC2Endpoint: endpoint, AllowedHosts: []string{"127.0.0.1"},
 		AllowedAccounts: []string{"123456789012"}, Target: "local-fake",
 	}
 	cl, err := Load(context.Background(), cfg)
@@ -30,6 +56,15 @@ func newGate(t *testing.T) (*ec2fake.Server, *Runtime) {
 		t.Fatal(err)
 	}
 	return fake, NewRuntime(cfg, cl)
+}
+
+func writeAPIError(t *testing.T, w http.ResponseWriter, status int, code string) {
+	w.Header().Set("Content-Type", "text/xml")
+	w.WriteHeader(status)
+	if _, err := fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?><Response><Errors><Error><Code>%s</Code>`+
+		`<Message>front</Message></Error></Errors><RequestID>req-front</RequestID></Response>`, code); err != nil {
+		t.Errorf("write %s: %v", code, err)
+	}
 }
 
 func volumeInput() *ec2.CreateVolumeInput {
@@ -314,5 +349,44 @@ func TestKindsCiteOfficialAbsenceDocs(t *testing.T) {
 			spec.fetch == nil || spec.remove == nil {
 			t.Fatalf("kind %s: %+v", k, spec)
 		}
+	}
+}
+
+// A delete answered 503 must not be resent by the SDK: the volume may have changed owner since
+// the observation, so only a fresh observe and Decide may send it again.
+func TestGatedDeleteIsSentOnce(t *testing.T) {
+	for _, path := range []string{"exercise", "cleanup"} {
+		t.Run(path, func(t *testing.T) {
+			var id string
+			var deletes atomic.Int32
+			fake, rt := newGateBehind(t, func(fake *ec2fake.Server, w http.ResponseWriter, r *http.Request) bool {
+				if r.Form.Get("Action") != "DeleteVolume" || deletes.Add(1) > 1 {
+					return false
+				}
+				fake.PutVolume(id, map[string]string{RunTagKey: foreignRun})
+				writeAPIError(t, w, http.StatusServiceUnavailable, "ServiceUnavailable")
+				return true
+			})
+			view := begin(t, rt, "EBS-VOL-002")
+			id = createVolume(t, view)
+			var err error
+			if path == "exercise" {
+				_, err = view.EC2DeleteVolume(context.Background(), id)
+			} else {
+				err = view.EndCase(context.Background())
+			}
+			if err == nil {
+				t.Fatal("the 503 delete succeeded")
+			}
+			if _, ok := fake.Volume(id); !ok {
+				t.Fatal("the SDK retried the delete and removed a volume another run now owns")
+			}
+			if path == "exercise" {
+				wantPreserve(t, view.EndCase(context.Background()), "foreign owner")
+			}
+			if _, ok := fake.Volume(id); !ok || deletes.Load() != 1 {
+				t.Fatalf("present %v, deletes sent %d", ok, deletes.Load())
+			}
+		})
 	}
 }
