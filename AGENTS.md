@@ -32,8 +32,8 @@ A rule whose enforcer cell is `Judgment` has no check; the author and reviewer u
 
 | Rule | Enforcer |
 | --- | --- |
-| Never send any request to real AWS | Judgment until the harness guard tests land (vws-conformance#1) |
-| Requests go only to allowlisted VWS endpoints through the guarded dialer | Judgment until the harness guard tests land (vws-conformance#1) |
+| Never send any request to real AWS | `internal/harness/egress_test.go` (Go code and Go tests reach the network only through the guard) and `scripts/guard.sh` (no `amazonaws.com` endpoint URL); Judgment for shell scripts and workflows |
+| Requests go only to allowlisted VWS endpoints through the guarded dialer | `internal/harness/egress_test.go` (no dialer, resolver, HTTP client or SDK client outside the guard) and the guard tests in `internal/harness/allow_test.go`, `dial_test.go`, `load_test.go` and `pin_test.go` |
 | No real AWS credentials or profiles | Judgment |
 | Expected results cite official AWS docs only | Judgment |
 | Every VWS-vs-AWS gap is a tracked issue | Judgment |
