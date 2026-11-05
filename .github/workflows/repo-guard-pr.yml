@@ -1,0 +1,66 @@
+# The pull_request half of repo-guard. verify-gate runs from the default branch in repo-guard.yml on
+# pull_request_target. One workflow file on both events records a skipped twin of every job, and a
+# skipped required pr-hygiene parked verify-approved PRs (vws-conformance#35). The workflow keeps the
+# name repo-guard so verify-queue, which waits on workflows by name, still wakes when this run ends.
+name: repo-guard
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  pr-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Base is the main branch
+        env:
+          GUARD_MAIN_BRANCH: ${{ github.event.repository.default_branch }}
+          BASE_REF: ${{ github.base_ref }}
+        run: scripts/guard-agents.sh pr-base "$BASE_REF"
+      - name: Body says Part of #N and closes no issue
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: scripts/guard-agents.sh pr-body
+      - name: No commit closes an issue
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: scripts/guard-agents.sh pr-commits "$BASE_SHA" "$HEAD_SHA"
+      - name: guard-agents.sh is the canonical vws-deploy copy
+        run: scripts/guard-agents.sh identity scripts/guard-agents.sh.sha256
+      - name: AGENTS.md has the guardrails
+        run: scripts/guard-agents.sh agents
+
+  verify-reset:
+    if: github.event.action == 'synchronize'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Remove verify-approved
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          LABELS_JSON: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+          if jq -e 'any((. // [])[]; . == "verify-approved")' <<<"${LABELS_JSON}" >/dev/null; then
+            if out=$(gh api -X DELETE "repos/${REPO}/issues/${NUMBER}/labels/verify-approved" 2>&1); then
+              echo "verify-approved removed: a new head needs a new verification"
+            elif [[ $out == *"HTTP 404"* ]]; then
+              echo "verify-approved was already removed"
+            else
+              echo "$out" >&2
+              exit 1
+            fi
+          fi

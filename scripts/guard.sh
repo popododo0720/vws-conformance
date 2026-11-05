@@ -15,6 +15,22 @@ if grep -R -n -E '^[[:space:]]*schedule:' .github/workflows; then
   fail "workflows must not use a schedule trigger"
 fi
 
+# vws-conformance#35: GitHub runs every job of a workflow on each of its events, so a file on both
+# pull_request and pull_request_target records a skipped twin of each job, and a skipped required check
+# parks the pull request. scripts/guard_test.sh shows this fails on such a file.
+for wf in .github/workflows/*.yml .github/workflows/*.yaml; do
+  [ -f "$wf" ] || continue
+  # Only the top-level on: block counts, so a step that mentions an event name is not a trigger.
+  events=$(sed 's/#.*//' "$wf" | awk '
+    /^["'"'"']?on["'"'"']?[[:space:]]*:/ { on = 1; sub(/^[^:]*:/, ""); print; next }
+    on && /^[^[:space:]]/ { on = 0 }
+    on { print }')
+  if printf '%s\n' "$events" | grep -q -E '(^|[^A-Za-z0-9_])pull_request([^A-Za-z0-9_]|$)' &&
+    printf '%s\n' "$events" | grep -q -E '(^|[^A-Za-z0-9_])pull_request_target([^A-Za-z0-9_]|$)'; then
+    fail "dual-event: ${wf} runs on both pull_request and pull_request_target; split it into one file per event"
+  fi
+done
+
 if grep -R -n -E 'https?://[^[:space:]]*amazonaws\.com' --include='*.go' --include='*.yml' --include='*.sh' . \
   | grep -v '_test\.go'; then
   fail "an endpoint URL uses amazonaws.com"

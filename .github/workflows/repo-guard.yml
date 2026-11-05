@@ -1,13 +1,12 @@
 # The repo is private on a free plan, so branch protection is unavailable. These checks replace it.
 # The push check lives in its own file so that a pull request run has no skipped check.
+# This file runs on pull_request_target only, from the default branch, so a pull request cannot edit the
+# verify-gate it is judged by. The pull_request jobs live in repo-guard-pr.yml: a file on both events
+# records each job's skipped twin as a check (vws-conformance#35).
 name: repo-guard
 
 on:
-  pull_request:
-    branches: [main]
-    types: [opened, edited, reopened, synchronize, labeled, unlabeled]
-  # pull_request_target runs this file from the default branch. The branches filter runs before
-  # checkout.
+  # The branches filter runs before checkout.
   pull_request_target:
     branches: [main]
     types: [opened, edited, reopened, synchronize, labeled, unlabeled]
@@ -17,32 +16,6 @@ permissions:
   pull-requests: read
 
 jobs:
-  pr-hygiene:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Base is the main branch
-        env:
-          GUARD_MAIN_BRANCH: ${{ github.event.repository.default_branch }}
-          BASE_REF: ${{ github.base_ref }}
-        run: scripts/guard-agents.sh pr-base "$BASE_REF"
-      - name: Body says Part of #N and closes no issue
-        env:
-          PR_BODY: ${{ github.event.pull_request.body }}
-        run: scripts/guard-agents.sh pr-body
-      - name: No commit closes an issue
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: scripts/guard-agents.sh pr-commits "$BASE_SHA" "$HEAD_SHA"
-      - name: guard-agents.sh is the canonical vws-deploy copy
-        run: scripts/guard-agents.sh identity scripts/guard-agents.sh.sha256
-      - name: AGENTS.md has the guardrails
-        run: scripts/guard-agents.sh agents
-
   # github.base_ref is the base branch name, so the only allowed if is that equality.
   # GitHub evaluates it before checkout.
   verify-gate:
@@ -123,29 +96,3 @@ jobs:
           scripts/guard-agents.sh allow scripts/guard-allowed.sha256 "$HEAD_SHA"
           scripts/guard-agents.sh identity "$sum"
           scripts/guard-agents.sh verify-gate "$HEAD_SHA" "$LABELS"
-
-  verify-reset:
-    if: github.event_name == 'pull_request' && github.event.action == 'synchronize'
-    runs-on: ubuntu-latest
-    permissions:
-      issues: write
-      pull-requests: write
-    steps:
-      - name: Remove verify-approved
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          NUMBER: ${{ github.event.pull_request.number }}
-          LABELS_JSON: ${{ toJSON(github.event.pull_request.labels.*.name) }}
-        run: |
-          set -euo pipefail
-          if jq -e 'any((. // [])[]; . == "verify-approved")' <<<"${LABELS_JSON}" >/dev/null; then
-            if out=$(gh api -X DELETE "repos/${REPO}/issues/${NUMBER}/labels/verify-approved" 2>&1); then
-              echo "verify-approved removed: a new head needs a new verification"
-            elif [[ $out == *"HTTP 404"* ]]; then
-              echo "verify-approved was already removed"
-            else
-              echo "$out" >&2
-              exit 1
-            fi
-          fi
