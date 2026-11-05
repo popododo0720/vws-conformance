@@ -33,7 +33,7 @@ func TestSignedSessionToken(t *testing.T) {
 			rt := harness.NewRuntime(harness.Config{
 				AccessKey: "AKIDEXAMPLE", Secret: "test-secret", Session: tc.session,
 				Region: "vws-1", S3Endpoint: srv.URL,
-			}, &harness.Clients{Raw: srv.Client()})
+			}, &harness.Clients{Raw: harness.NewHTTPClient([]string{"127.0.0.1"}, nil)})
 			out, err := signed(context.Background(), rt, "s3", rt.Cfg.Region, rt.Cfg.AccessKey, rt.Cfg.Secret,
 				time.Now(), false)
 			if err != nil {
@@ -102,7 +102,7 @@ func TestAuth005Expectation(t *testing.T) {
 	rt := harness.NewRuntime(harness.Config{
 		AccessKey: "AKIDEXAMPLE", Secret: "test-secret",
 		Region: "vws-1", S3Endpoint: srv.URL,
-	}, &harness.Clients{Raw: srv.Client()})
+	}, &harness.Clients{Raw: harness.NewHTTPClient([]string{"127.0.0.1"}, nil)})
 	if _, err := run(context.Background(), rt, got); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestSignatureMismatchRawHidesCredentials(t *testing.T) {
 	defer srv.Close()
 	rt := harness.NewRuntime(harness.Config{
 		AccessKey: key, Secret: secret, Session: token, Region: "vws-1", S3Endpoint: srv.URL,
-	}, &harness.Clients{Raw: srv.Client()})
+	}, &harness.Clients{Raw: harness.NewHTTPClient([]string{"127.0.0.1"}, nil)})
 	out, err := signed(context.Background(), rt, "s3", rt.Cfg.Region, key, secret, time.Now(), true)
 	if err != nil {
 		t.Fatalf("signed: %v", err)

@@ -85,7 +85,16 @@ func refuseResolved(ctx context.Context, host string, cidrs []string) ([]net.IP,
 	return ips, nil
 }
 
-func NewHTTPClient(allowed, cidrs []string) *http.Client {
+// GuardedClient sends only through DialAllowed. It hides its *http.Client so no caller outside this
+// file can read the Transport and strip the dialer.
+type GuardedClient struct{ c *http.Client }
+
+func (g *GuardedClient) Do(req *http.Request) (*http.Response, error) {
+	resp, err := g.c.Do(req)
+	return resp, wrapErr("Do", err)
+}
+
+func NewHTTPClient(allowed, cidrs []string) *GuardedClient {
 	baseTransport, ok := http.DefaultTransport.(*http.Transport)
 	if !ok {
 		baseTransport = &http.Transport{}
@@ -95,11 +104,11 @@ func NewHTTPClient(allowed, cidrs []string) *http.Client {
 	base.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		return DialAllowed(ctx, network, addr, allowed, cidrs)
 	}
-	return &http.Client{
+	return &GuardedClient{&http.Client{
 		Timeout: OpTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 		Transport: base,
-	}
+	}}
 }

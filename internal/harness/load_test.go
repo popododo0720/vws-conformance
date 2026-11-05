@@ -195,7 +195,7 @@ func TestLoadRefusesAWSProfile(t *testing.T) {
 	}
 }
 
-func loadRaw(t *testing.T, endpoint string) *http.Client {
+func loadRaw(t *testing.T, endpoint string) *GuardedClient {
 	t.Helper()
 	cl, err := Load(context.Background(), Config{
 		AccessKey:       "AKIDEXAMPLE",
