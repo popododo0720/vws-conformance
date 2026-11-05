@@ -222,7 +222,7 @@ func loadModule(t *testing.T, overlay map[string][]byte, tests bool) []*packages
 	t.Helper()
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
-			packages.NeedTypes | packages.NeedTypesInfo,
+			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedModule,
 		Dir:     moduleRoot(t),
 		Env:     os.Environ(),
 		Overlay: overlay,
@@ -321,7 +321,7 @@ func sourceFiles(t *testing.T, root string, overlay map[string][]byte) []string 
 			if path == root {
 				return nil
 			}
-			if strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") || name == "testdata" || name == "vendor" {
+			if skippedDir(name) {
 				return filepath.SkipDir
 			}
 			if _, err := os.Stat(filepath.Join(path, "go.mod")); err == nil {
@@ -338,11 +338,19 @@ func sourceFiles(t *testing.T, root string, overlay map[string][]byte) []string 
 		t.Fatal(err)
 	}
 	for path := range overlay {
-		if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") && !slices.Contains(files, path) {
+		dirs := strings.Split(relPath(t, root, filepath.Dir(path)), "/")
+		if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") && !slices.Contains(files, path) &&
+			!slices.ContainsFunc(dirs, skippedDir) {
 			files = append(files, path)
 		}
 	}
 	return files
+}
+
+// skippedDir reports a directory the go command leaves out of ./... and so out of the walk.
+func skippedDir(name string) bool {
+	return name != "." && (strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") ||
+		name == "testdata" || name == "vendor")
 }
 
 func relPath(t *testing.T, root, path string) string {
