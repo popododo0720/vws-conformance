@@ -126,7 +126,7 @@ type Clients struct {
 	S3  *s3.Client
 	IAM *iam.Client
 	STS *sts.Client
-	Raw *http.Client
+	Raw *GuardedClient
 }
 
 func Load(ctx context.Context, cfg Config) (*Clients, error) {

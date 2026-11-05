@@ -29,7 +29,7 @@ func TestSignedContentSHA256(t *testing.T) {
 			rt := harness.NewRuntime(harness.Config{
 				AccessKey: "AKIDEXAMPLE", Secret: "test-secret",
 				Region: "vws-1", S3Endpoint: srv.URL,
-			}, &harness.Clients{Raw: srv.Client()})
+			}, &harness.Clients{Raw: harness.NewHTTPClient([]string{"127.0.0.1"}, nil)})
 			out, err := signed(context.Background(), rt, service, rt.Cfg.Region, rt.Cfg.AccessKey, rt.Cfg.Secret,
 				time.Now(), false)
 			if err != nil {
