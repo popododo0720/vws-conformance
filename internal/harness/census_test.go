@@ -98,6 +98,12 @@ func actTerminate(ctx context.Context, api *ec2.Client) { _, _ = api.TerminateIn
 		{"act.go method value", act, string(actBody) + `
 func actTerminate(api *ec2.Client) { _ = api.TerminateInstances }
 `, actFile + ": TerminateInstances without oneAttempt"},
+		{"act.go call with a local oneAttempt", act, string(actBody) + `
+func actTerminate(ctx context.Context, api *ec2.Client) {
+	oneAttempt := func(o *ec2.Options) { o.RetryMaxAttempts = 3 }
+	_, _ = api.TerminateInstances(ctx, nil, oneAttempt)
+}
+`, actFile + ": TerminateInstances without oneAttempt"},
 		{"act.go call with oneAttempt", act, string(actBody) + `
 func actTerminate(ctx context.Context, api *ec2.Client) { _, _ = api.TerminateInstances(ctx, nil, oneAttempt) }
 `, ""},
@@ -193,7 +199,7 @@ func runCensus(t *testing.T, overlay map[string][]byte) census {
 				}
 				sel, ok := call.Fun.(*ast.SelectorExpr)
 				last, isIdent := call.Args[len(call.Args)-1].(*ast.Ident)
-				if ok && isIdent && last.Name == "oneAttempt" {
+				if ok && isIdent && isPackageOneAttempt(pkg, last) {
 					once[sel] = true
 				}
 				return true
@@ -356,4 +362,11 @@ func moduleRoot(t *testing.T) string {
 		}
 		dir = parent
 	}
+}
+
+// isPackageOneAttempt reports that id resolves to the package-level oneAttempt of the harness,
+// not a local value that happens to share its name.
+func isPackageOneAttempt(pkg *packages.Package, id *ast.Ident) bool {
+	obj, ok := pkg.TypesInfo.Uses[id].(*types.Func)
+	return ok && obj.Name() == "oneAttempt" && obj.Pkg() == pkg.Types && obj.Parent() == pkg.Types.Scope()
 }
