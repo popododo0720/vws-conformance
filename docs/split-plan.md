@@ -8,7 +8,7 @@ This file lists the cases removed from the read-only branch and the pull request
 2. A standalone cleanup ownership-gate pull request lands next. A test that creates a resource must delete that resource even when the test fails. No creating case is merged before that gate. Manual cleanup of leftovers is not a substitute for the gate.
 3. Creating cases come back one service at a time, in small pull requests on top of the gate. The order is EC2, then EBS, then VPC, then S3, then IAM and STS. The lead files the tracking issues from this list.
 
-`TestProductionCodeHasNoMutatingSDKMethod` fails the build when production code selects a mutating method on `*ec2.Client`, `*s3.Client`, `*iam.Client`, or `*sts.Client`. A method value counts. The gate pull request replaces that test with a rule that allows those calls only inside the gate.
+`TestMutatingSDKMethodsStayInAct` fails the build when production code outside `internal/harness/act.go` selects a mutating method on `*ec2.Client`, `*s3.Client`, `*iam.Client`, or `*sts.Client`. A method value counts. A creating case calls a gate method on its case runtime, such as `rt.EC2CreateVolume`. The gate tags the resource with the run id, registers its deletion before the request is sent, and deletes only what one exact-id observation proves this run owns.
 
 ## Cases that stay
 

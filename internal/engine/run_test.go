@@ -1,9 +1,13 @@
 package engine
 
 import (
+	"context"
 	"strings"
 	"testing"
 
+	"github.com/popododo0720/vws-conformance/internal/bind"
+	"github.com/popododo0720/vws-conformance/internal/cases"
+	"github.com/popododo0720/vws-conformance/internal/harness"
 	"github.com/popododo0720/vws-conformance/internal/report"
 )
 
@@ -76,5 +80,37 @@ func TestParityGate(t *testing.T) {
 				t.Fatalf("logs = %q, want the tracked case reported as known", logs)
 			}
 		})
+	}
+}
+
+func TestRunOneRefusesCasesAfterShutdown(t *testing.T) {
+	rt := harness.NewRuntime(harness.Config{RunID: "conf-20261015T120000Z-abc123", OutDir: t.TempDir()}, nil)
+	if err := rt.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ran := false
+	g := bind.Group{Run: func(context.Context, *harness.Runtime, cases.Case) (cases.Outcome, error) {
+		ran = true
+		return cases.Outcome{}, nil
+	}}
+	res := runOne(context.Background(), rt, g, cases.Case{ID: "EC2-LATE"})
+	if ran || res.Status != "error" || !strings.Contains(res.Reason, "shutting down") {
+		t.Fatalf("ran %v result %+v", ran, res)
+	}
+}
+
+func TestRunOneRunsTheCaseOnItsOwnScope(t *testing.T) {
+	rt := harness.NewRuntime(harness.Config{RunID: "conf-20261015T120000Z-abc123", OutDir: t.TempDir()}, nil)
+	var view *harness.Runtime
+	g := bind.Group{Run: func(_ context.Context, crt *harness.Runtime, _ cases.Case) (cases.Outcome, error) {
+		view = crt
+		panic("boom")
+	}}
+	res := runOne(context.Background(), rt, g, cases.Case{ID: "EC2-PANIC"})
+	if res.Status != "error" || res.Reason != "boom" {
+		t.Fatalf("%+v", res)
+	}
+	if view == nil || view == rt {
+		t.Fatal("the case ran on the shared runtime, not its own scope")
 	}
 }
