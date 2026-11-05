@@ -54,3 +54,14 @@ func TestParseKnownIssues(t *testing.T) {
 		})
 	}
 }
+
+func TestKnownIssuesTracksCrossAccountUntagPolicy(t *testing.T) {
+	known, err := parseKnownIssues(knownIssuesFile, Groups())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const issue = "https://github.com/popododo0720/" + "vws-console-api/issues/560"
+	if known["IAM-PTAG-106"] != issue {
+		t.Fatalf("IAM-PTAG-106 issue = %q, want %q", known["IAM-PTAG-106"], issue)
+	}
+}

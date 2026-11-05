@@ -17,6 +17,8 @@ const (
 	SkipIAM     = "skipped until vws-deploy#310 lands and console-api is wired to vws-iam"
 	SkipMFAAuth = "skipped until a caller without iam:GetMFADevice is available; " +
 		"the suite runs one credential (popododo0720/vws-deploy#310)"
+	SkipUntagPolicyAuth = "skipped until a caller without iam:UntagPolicy is available; " +
+		"the suite runs one credential (popododo0720/vws-deploy#310)"
 	SkipUnsafeFixedID = "skipped until an owned gone id exists; " +
 		"a fixed id can change a foreign resource (popododo0720/vws-conformance#1)"
 )
@@ -74,4 +76,9 @@ const (
 	DocEC2Errors = "https://docs.aws.amazon.com/AWSEC2/latest/APIReference/errors-overview.html"
 	DocIAMErrors = "https://docs.aws.amazon.com/IAM/latest/APIReference/CommonErrors.html"
 	DocSigV4     = "https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv.html"
+	// DocIAMCrossAccount: a cross-account request is allowed only when a
+	// resource-based policy in the other account allows it; IAM managed
+	// policies have none.
+	DocIAMCrossAccount = "https://docs.aws.amazon.com/IAM/latest/UserGuide/" +
+		"reference_policies_evaluation-logic-cross-account.html"
 )

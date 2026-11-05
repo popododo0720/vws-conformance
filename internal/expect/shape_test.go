@@ -75,3 +75,42 @@ func TestShapeFieldSkipsErrors(t *testing.T) {
 		t.Fatalf("ShapeField on error = %q, want empty", v)
 	}
 }
+
+func TestQueryNoResult(t *testing.T) {
+	const ok = `<UntagPolicyResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">` +
+		`<ResponseMetadata><RequestId>r-1</RequestId></ResponseMetadata></UntagPolicyResponse>`
+	tests := []struct {
+		name, body, wantErr string
+	}{
+		{"empty body", "", "response body is empty"},
+		{"not xml", "{}", "not XML"},
+		{"wrong root", `<TagPolicyResponse><ResponseMetadata><RequestId>r</RequestId></ResponseMetadata>` +
+			`</TagPolicyResponse>`, "root element"},
+		{"result element", `<UntagPolicyResponse><UntagPolicyResult/><ResponseMetadata><RequestId>r</RequestId>` +
+			`</ResponseMetadata></UntagPolicyResponse>`, `unexpected element "UntagPolicyResult"`},
+		{"no metadata", `<UntagPolicyResponse/>`, "no RequestId"},
+		{"blank request id", `<UntagPolicyResponse><ResponseMetadata><RequestId> </RequestId>` +
+			`</ResponseMetadata></UntagPolicyResponse>`, "no RequestId"},
+		{"documented shape", ok, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := QueryNoResult([]byte(tt.body), "UntagPolicy")
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("err = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("err = %v, want it to contain %q", err, tt.wantErr)
+			}
+		})
+	}
+	if got := QueryNoResultField(cases.Outcome{HTTP: 404, Code: "NoSuchEntity"}, "UntagPolicy"); got != "" {
+		t.Fatalf("error outcome shape = %q, want empty", got)
+	}
+	if got := QueryNoResultField(cases.Outcome{HTTP: 200, Body: []byte(ok)}, "UntagPolicy"); got != ShapeOK {
+		t.Fatalf("shape = %q, want %q", got, ShapeOK)
+	}
+}
