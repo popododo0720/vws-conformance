@@ -418,3 +418,40 @@ func TestServerErrorOnCreateIsReported(t *testing.T) {
 		})
 	}
 }
+
+// EC2 is eventually consistent, so DescribeVolumes can answer NotFound for a volume just created.
+// Cleanup must still delete it.
+func TestCleanupDeletesAVolumeDescribeCannotSeeYet(t *testing.T) {
+	var describes atomic.Int32
+	fake, rt := newGateBehind(t, func(_ *ec2fake.Server, w http.ResponseWriter, r *http.Request) bool {
+		if r.Form.Get("Action") != "DescribeVolumes" || describes.Add(1) > 1 {
+			return false
+		}
+		writeAPIError(t, w, http.StatusBadRequest, "InvalidVolume.NotFound")
+		return true
+	})
+	view := begin(t, rt, "EBS-VOL-001")
+	id := createVolume(t, view)
+	if err := view.EndCase(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := fake.Volume(id); ok || fake.Calls("DeleteVolume") != 1 {
+		t.Fatalf("present %v deletes %d", ok, fake.Calls("DeleteVolume"))
+	}
+}
+
+func TestCleanupOfAVolumeGoneBeforeCleanupIsDone(t *testing.T) {
+	fake, rt := newGate(t)
+	view := begin(t, rt, "EBS-VOL-001")
+	id := createVolume(t, view)
+	in := &ec2.DeleteVolumeInput{VolumeId: aws.String(id)}
+	if _, err := rt.Clients.EC2.DeleteVolume(context.Background(), in); err != nil {
+		t.Fatal(err)
+	}
+	if err := view.EndCase(context.Background()); err != nil {
+		t.Fatalf("a delete answered InvalidVolume.NotFound was not counted as done: %v", err)
+	}
+	if fake.Calls("DeleteVolume") != 2 {
+		t.Fatalf("deletes %d, want the out-of-band one and the cleanup one", fake.Calls("DeleteVolume"))
+	}
+}

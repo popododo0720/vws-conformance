@@ -106,7 +106,12 @@ func TestDecideTable(t *testing.T) {
 			VerdictPreserve, "no ownership proof",
 		},
 		{10, "cleanup of a deleted id", IntentCleanup, true, deleted, absent(), VerdictAlreadyGone, ""},
-		{10, "cleanup of a vanished id", IntentCleanup, false, created, absent(), VerdictAlreadyGone, ""},
+		{10, "cleanup of a deleted reusable name", IntentCleanup, false, deleted, absent(), VerdictAlreadyGone, ""},
+		{10, "cleanup of a created id not visible yet", IntentCleanup, true, created, absent(), VerdictProceed, ""},
+		{
+			10, "cleanup of a created reusable name not visible", IntentCleanup, false, created, absent(),
+			VerdictPreserve, "absent after create; cannot confirm",
+		},
 		{11, "negative delete of our deleted id", IntentExercise, true, deleted, absent(), VerdictProceed, ""},
 		{12, "absent id never ours", IntentExercise, true, never, absent(), VerdictPreserve, "never ours"},
 	}
@@ -177,10 +182,16 @@ func allowed(intent Intent, minted bool, state State, obs Observation) Verdict {
 	case obs.Status == StatusPresent && obs.Matches == 1 && obs.Owner == OwnerNone && ours && minted:
 		return VerdictProceed
 	case obs.Status == StatusAbsent && obs.Matches == 0 && obs.Owner == OwnerNone && ours:
-		if intent == IntentCleanup {
+		switch {
+		case intent == IntentExercise:
+			return VerdictProceed
+		case state == StateDeleted:
 			return VerdictAlreadyGone
+		case minted:
+			return VerdictProceed
+		default:
+			return VerdictPreserve
 		}
-		return VerdictProceed
 	default:
 		return VerdictPreserve
 	}

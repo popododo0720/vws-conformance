@@ -236,7 +236,8 @@ func (rt *Runtime) remove(ctx context.Context, rec *Record) error {
 		_, err := withDeadline(ctx, func(ctx context.Context) (struct{}, error) {
 			return struct{}{}, spec.remove(ctx, rt.Clients, rec.Ref.ID)
 		})
-		if err != nil {
+		var ae smithy.APIError
+		if err != nil && (!errors.As(err, &ae) || ae.ErrorCode() != spec.absence) {
 			return fmt.Errorf("cleanup %s %s: %w", rec.Ref.Kind, rec.Ref.ID, err)
 		}
 		rec.State = StateDeleted

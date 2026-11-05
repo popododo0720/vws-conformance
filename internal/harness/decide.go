@@ -114,8 +114,15 @@ func Decide(intent Intent, minted bool, rec Record, obs Observation) Decision {
 		return Decision{Verdict: VerdictProceed, Reason: "created by this case"}
 	case present:
 		return preserve("no ownership proof")
+	case ours && intent == IntentCleanup && rec.State == StateDeleted:
+		return Decision{Verdict: VerdictAlreadyGone, Reason: "deleted by this case"}
+	// EC2 is eventually consistent: a describe right after a create can answer NotFound
+	// (https://docs.aws.amazon.com/ec2/latest/devguide/eventual-consistency.html). Absence is
+	// proof only after this case's own delete succeeded.
+	case ours && intent == IntentCleanup && minted:
+		return Decision{Verdict: VerdictProceed, Reason: "absent after create; delete to confirm"}
 	case ours && intent == IntentCleanup:
-		return Decision{Verdict: VerdictAlreadyGone, Reason: "absent"}
+		return preserve("absent after create; cannot confirm")
 	case ours:
 		return Decision{Verdict: VerdictProceed, Reason: "absent id this case created"}
 	default:
