@@ -165,27 +165,10 @@ func (c census) violations() []string {
 func runCensus(t *testing.T, overlay map[string][]byte) census {
 	t.Helper()
 	root := moduleRoot(t)
-	cfg := &packages.Config{
-		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
-			packages.NeedTypes | packages.NeedTypesInfo,
-		Dir:     root,
-		Env:     os.Environ(),
-		Overlay: overlay,
-	}
-	pkgs, err := packages.Load(cfg, "./...")
-	if err != nil {
-		t.Fatal(err)
-	}
+	pkgs := loadModule(t, overlay, false)
 	mutating := mutatingNames(t, pkgs)
 	var c census
-	compiled := map[string]bool{}
 	for _, pkg := range pkgs {
-		if len(pkg.Errors) > 0 {
-			t.Fatalf("%s: %v", pkg.PkgPath, pkg.Errors)
-		}
-		for _, f := range pkg.GoFiles {
-			compiled[f] = true
-		}
 		for _, file := range pkg.Syntax {
 			rel := relPath(t, root, pkg.Fset.Position(file.Pos()).Filename)
 			if strings.HasSuffix(rel, "_test.go") {
@@ -229,12 +212,51 @@ func runCensus(t *testing.T, overlay map[string][]byte) census {
 			})
 		}
 	}
-	for _, f := range sourceFiles(t, root, overlay) {
-		if !compiled[f] {
-			c.uncompiled = append(c.uncompiled, relPath(t, root, f))
+	c.uncompiled = uncompiledFiles(t, root, pkgs, overlay)
+	return c
+}
+
+// loadModule type-checks every package of the module from source, with the overlay applied. With
+// tests set it also returns the test variants, so _test.go files are seen.
+func loadModule(t *testing.T, overlay map[string][]byte, tests bool) []*packages.Package {
+	t.Helper()
+	cfg := &packages.Config{
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
+			packages.NeedTypes | packages.NeedTypesInfo,
+		Dir:     moduleRoot(t),
+		Env:     os.Environ(),
+		Overlay: overlay,
+		Tests:   tests,
+	}
+	pkgs, err := packages.Load(cfg, "./...")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pkg := range pkgs {
+		if len(pkg.Errors) > 0 {
+			t.Fatalf("%s: %v", pkg.PkgPath, pkg.Errors)
 		}
 	}
-	return c
+	return pkgs
+}
+
+// uncompiledFiles lists the module-relative non-test files the default build does not compile.
+// A tagged-out file is never type-checked, so a walk over the loaded syntax would not see it.
+func uncompiledFiles(t *testing.T, root string, pkgs []*packages.Package, overlay map[string][]byte) []string {
+	t.Helper()
+	compiled := map[string]bool{}
+	for _, pkg := range pkgs {
+		for _, f := range pkg.GoFiles {
+			compiled[f] = true
+		}
+	}
+	var out []string
+	for _, f := range sourceFiles(t, root, overlay) {
+		if !compiled[f] {
+			out = append(out, relPath(t, root, f))
+		}
+	}
+	return out
 }
 
 // clientType reports whether t, pointer stripped, is the Client of a client package. It is read
