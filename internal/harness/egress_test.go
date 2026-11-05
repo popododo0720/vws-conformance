@@ -128,6 +128,17 @@ var egressSymbols = slices.Concat(
 // and enables go:linkname, and cgo calls C, all out of sight of the type checker the census reads.
 var deniedImports = []string{"unsafe", "C"}
 
+// admittedImports are the only third-party import paths, or path prefixes ending in "/", that a
+// production file may use. A dependency can open sockets or start processes behind names no table
+// lists, so a new one fails the census until it is reviewed and added here.
+var admittedImports = []string{
+	"github.com/aws/aws-sdk-go-v2/",
+	"github.com/aws/smithy-go",
+	"github.com/aws/smithy-go/",
+	"github.com/santhosh-tekuri/jsonschema/v6",
+	"golang.org/x/net/idna",
+}
+
 // testEgressSymbols are denied in _test.go files. A test reaches its loopback fake through the
 // httptest server's own client or a harness client, never a default or hand-built one.
 var testEgressSymbols = slices.Concat(
@@ -235,7 +246,8 @@ func runEgress(t *testing.T, overlay map[string][]byte) egressCensus {
 	seen := map[string]bool{}
 	for _, pkg := range pkgs {
 		for _, f := range pkg.OtherFiles {
-			if rel := relPath(t, root, f); !strings.HasPrefix(rel, "../") {
+			if rel := relPath(t, root, f); !seen[rel] && !strings.HasPrefix(rel, "../") {
+				seen[rel] = true
 				c.unread = append(c.unread, rel+": not Go source")
 			}
 		}
@@ -246,6 +258,9 @@ func runEgress(t *testing.T, overlay map[string][]byte) egressCensus {
 			}
 			seen[rel] = true
 			c.unread = append(c.unread, unloadedImports(file, rel, module, loaded)...)
+			if !strings.HasSuffix(rel, "_test.go") {
+				c.unread = append(c.unread, unadmittedImports(file, rel, module)...)
+			}
 			c.hits = append(c.hits, fileHits(pkg.TypesInfo, file, rel, strings.HasSuffix(rel, "_test.go"))...)
 		}
 	}
@@ -267,6 +282,28 @@ func unloadedImports(file *ast.File, rel, module string, loaded map[string]bool)
 		path, err := strconv.Unquote(imp.Path.Value)
 		if err == nil && (path == module || strings.HasPrefix(path, module+"/")) && !loaded[path] {
 			out = append(out, fmt.Sprintf("%s: imports %s, which ./... does not load", rel, path))
+		}
+	}
+	return out
+}
+
+// unadmittedImports reports third-party imports of a production file that admittedImports does not
+// list. A path whose first element has no dot is the standard library.
+func unadmittedImports(file *ast.File, rel, module string) []string {
+	var out []string
+	for _, imp := range file.Imports {
+		path, err := strconv.Unquote(imp.Path.Value)
+		if err != nil || path == module || strings.HasPrefix(path, module+"/") {
+			continue
+		}
+		first, _, _ := strings.Cut(path, "/")
+		if !strings.Contains(first, ".") {
+			continue
+		}
+		if !slices.ContainsFunc(admittedImports, func(a string) bool {
+			return path == a || strings.HasSuffix(a, "/") && strings.HasPrefix(path, a)
+		}) {
+			out = append(out, fmt.Sprintf("%s: imports %s, which is not an admitted dependency", rel, path))
 		}
 	}
 	return out
@@ -883,6 +920,14 @@ import _ "unsafe"
 func plantNanotime() int64
 `, []string{"s3/plant_linkname.go: import: unsafe"}},
 		{"assembly file", "s3/plant_asm.s", "", []string{"s3/plant_asm.s: not Go source"}},
+		{"unadmitted dependency that starts go list", "s3/plant_packages.go", `package s3
+
+import "golang.org/x/tools/go/packages"
+
+func plantPackages() { _, _ = packages.Load(&packages.Config{Mode: packages.NeedName}, "std") }
+`, []string{
+			"s3/plant_packages.go: imports golang.org/x/tools/go/packages, which is not an admitted dependency",
+		}},
 	}
 	// support files back a case. They report nothing themselves.
 	support := map[string]string{
@@ -891,6 +936,9 @@ func plantNanotime() int64
 import "net/http"
 
 func Get() { _, _ = http.Get("http://127.0.0.1:1") }
+`,
+		// An in-package test gives s3 a second package variant that lists the same .s file.
+		"s3/plant_inpkg_test.go": `package s3
 `,
 	}
 	overlay := map[string][]byte{}
