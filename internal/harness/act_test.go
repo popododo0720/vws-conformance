@@ -440,6 +440,33 @@ func TestCleanupDeletesAVolumeDescribeCannotSeeYet(t *testing.T) {
 	}
 }
 
+func TestCleanupReportsAVolumeDescribeAndDeleteCannotSee(t *testing.T) {
+	var describes, deletes atomic.Int32
+	fake, rt := newGateBehind(t, func(_ *ec2fake.Server, w http.ResponseWriter, r *http.Request) bool {
+		switch r.Form.Get("Action") {
+		case "DescribeVolumes":
+			if describes.Add(1) > 1 {
+				return false
+			}
+		case "DeleteVolume":
+			if deletes.Add(1) > 1 {
+				return false
+			}
+		default:
+			return false
+		}
+		writeAPIError(t, w, http.StatusBadRequest, "InvalidVolume.NotFound")
+		return true
+	})
+	view := begin(t, rt, "EBS-VOL-001")
+	id := createVolume(t, view)
+	err := view.EndCase(context.Background())
+	if _, ok := fake.Volume(id); ok && err == nil {
+		t.Fatal("cleanup returned nil while the volume still exists")
+	}
+	wantPreserve(t, err, "deletion not confirmed")
+}
+
 func TestCleanupOfAVolumeGoneBeforeCleanupIsDone(t *testing.T) {
 	fake, rt := newGate(t)
 	view := begin(t, rt, "EBS-VOL-001")

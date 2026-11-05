@@ -240,6 +240,16 @@ func (rt *Runtime) remove(ctx context.Context, rec *Record) error {
 		if err != nil && (!errors.As(err, &ae) || ae.ErrorCode() != spec.absence) {
 			return fmt.Errorf("cleanup %s %s: %w", rec.Ref.Kind, rec.Ref.ID, err)
 		}
+		if err != nil {
+			// The delete answered absent. Eventual consistency can say that of a volume that still
+			// exists, so a fresh observation must agree before the volume counts as gone.
+			if again := rt.observeRef(ctx, spec, rec.Ref); again.Status != StatusAbsent {
+				return &PreserveError{
+					Ref:    rec.Ref,
+					Reason: "delete answered absent but a fresh observation did not; deletion not confirmed",
+				}
+			}
+		}
 		rec.State = StateDeleted
 		return nil
 	default:
