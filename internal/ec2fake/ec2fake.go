@@ -26,6 +26,7 @@ type Server struct {
 type CreateResult struct {
 	Code string // answer with this error code and create nothing
 	Drop bool   // close the connection without an answer
+	Lose bool   // create the volume, then close the connection without an answer
 }
 
 func New() *Server {
@@ -90,17 +91,7 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		res = hook()
 	}
 	if res.Drop {
-		hj, ok := w.(http.Hijacker)
-		if !ok {
-			http.Error(w, "hijack unsupported", http.StatusInternalServerError)
-			return
-		}
-		conn, _, err := hj.Hijack()
-		if err != nil {
-			note(err)
-			return
-		}
-		note(conn.Close())
+		s.hangUp(w)
 		return
 	}
 	if res.Code != "" {
@@ -125,7 +116,25 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	id := fmt.Sprintf("vol-%017d", s.seq)
 	s.vols[id] = tags
 	s.mu.Unlock()
+	if res.Lose {
+		s.hangUp(w)
+		return
+	}
 	writeXML(w, "CreateVolume", "<volumeId>"+id+"</volumeId><size>1</size><status>creating</status>")
+}
+
+func (s *Server) hangUp(w http.ResponseWriter) {
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "hijack unsupported", http.StatusInternalServerError)
+		return
+	}
+	conn, _, err := hj.Hijack()
+	if err != nil {
+		note(err)
+		return
+	}
+	note(conn.Close())
 }
 
 func (s *Server) describe(w http.ResponseWriter, id string) {

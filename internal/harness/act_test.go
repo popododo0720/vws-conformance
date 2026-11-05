@@ -239,6 +239,26 @@ func TestLostCreateIsReported(t *testing.T) {
 	}
 }
 
+func TestCreateIsNotRetriedAfterALostResponse(t *testing.T) {
+	fake, rt := newGate(t)
+	attempt := 0
+	fake.SetCreateHook(func() ec2fake.CreateResult {
+		attempt++
+		if attempt == 1 {
+			return ec2fake.CreateResult{Lose: true}
+		}
+		return ec2fake.CreateResult{Code: "RequestLimitExceeded"}
+	})
+	view := begin(t, rt, "EBS-VOL-001")
+	if _, err := view.EC2CreateVolume(context.Background(), volumeInput()); err == nil {
+		t.Fatal("lost create succeeded")
+	}
+	if n := fake.Calls("CreateVolume"); n != 1 {
+		t.Fatalf("CreateVolume sent %d times, want 1", n)
+	}
+	wantPreserve(t, view.EndCase(context.Background()), "create outcome unknown")
+}
+
 func TestRefusedCreateNeedsNoCleanup(t *testing.T) {
 	fake, rt := newGate(t)
 	fake.SetCreateHook(func() ec2fake.CreateResult { return ec2fake.CreateResult{Code: "VolumeLimitExceeded"} })

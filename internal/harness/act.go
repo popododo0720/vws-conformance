@@ -56,7 +56,9 @@ func (rt *Runtime) EC2CreateVolume(ctx context.Context, in *ec2.CreateVolumeInpu
 	tagged := *in
 	tagged.TagSpecifications = specs
 	return create(ctx, rt, KindVolume, func(ctx context.Context) (*ec2.CreateVolumeOutput, error) {
-		out, err := rt.Clients.EC2.CreateVolume(ctx, &tagged)
+		// One attempt: a retry after a lost response can answer with an API error for a volume the
+		// first attempt made, and create records an API error as "nothing created".
+		out, err := rt.Clients.EC2.CreateVolume(ctx, &tagged, func(o *ec2.Options) { o.RetryMaxAttempts = 1 })
 		return out, wrapErr("CreateVolume", err)
 	}, func(out *ec2.CreateVolumeOutput) string {
 		if out == nil {
