@@ -1,0 +1,107 @@
+# api:Name<TAB>open issue that tracks the missing case. Delete the line when the operation gets a case;
+# TestCasesCoverInventory fails on a waiver whose operation has a case.
+
+# EC2 Query (ec2, vpc and ebs cases)
+ec2:AllocateAddress	https://github.com/popododo0720/vws-conformance/issues/95
+ec2:AssociateAddress	https://github.com/popododo0720/vws-conformance/issues/95
+ec2:AttachVolume	https://github.com/popododo0720/vws-conformance/issues/100
+ec2:AuthorizeSecurityGroupIngress	https://github.com/popododo0720/vws-conformance/issues/104
+ec2:CreateKeyPair	https://github.com/popododo0720/vws-conformance/issues/92
+ec2:CreateSecurityGroup	https://github.com/popododo0720/vws-conformance/issues/103
+ec2:CreateSnapshot	https://github.com/popododo0720/vws-conformance/issues/99
+ec2:CreateSubnet	https://github.com/popododo0720/vws-conformance/issues/102
+ec2:CreateTags	https://github.com/popododo0720/vws-conformance/issues/91
+ec2:CreateVolume	https://github.com/popododo0720/vws-conformance/issues/97
+ec2:CreateVpc	https://github.com/popododo0720/vws-conformance/issues/101
+ec2:DeleteKeyPair	https://github.com/popododo0720/vws-conformance/issues/92
+ec2:DeleteSecurityGroup	https://github.com/popododo0720/vws-conformance/issues/103
+ec2:DeleteSnapshot	https://github.com/popododo0720/vws-conformance/issues/99
+ec2:DeleteSubnet	https://github.com/popododo0720/vws-conformance/issues/102
+ec2:DeleteVolume	https://github.com/popododo0720/vws-conformance/issues/97
+ec2:DeleteVpc	https://github.com/popododo0720/vws-conformance/issues/101
+ec2:DetachVolume	https://github.com/popododo0720/vws-conformance/issues/100
+ec2:DisassociateAddress	https://github.com/popododo0720/vws-conformance/issues/95
+ec2:ImportKeyPair	https://github.com/popododo0720/vws-conformance/issues/92
+ec2:ModifyVolume	https://github.com/popododo0720/vws-conformance/issues/98
+ec2:ReleaseAddress	https://github.com/popododo0720/vws-conformance/issues/95
+ec2:RevokeSecurityGroupIngress	https://github.com/popododo0720/vws-conformance/issues/104
+ec2:RunInstances	https://github.com/popododo0720/vws-conformance/issues/93
+ec2:StartInstances	https://github.com/popododo0720/vws-conformance/issues/94
+ec2:StopInstances	https://github.com/popododo0720/vws-conformance/issues/94
+ec2:TerminateInstances	https://github.com/popododo0720/vws-conformance/issues/93
+
+# IAM Query
+iam:AddUserToGroup	https://github.com/popododo0720/vws-conformance/issues/108
+iam:AttachGroupPolicy	https://github.com/popododo0720/vws-conformance/issues/111
+iam:AttachRolePolicy	https://github.com/popododo0720/vws-conformance/issues/112
+iam:AttachUserPolicy	https://github.com/popododo0720/vws-conformance/issues/111
+iam:CreateAccessKey	https://github.com/popododo0720/vws-conformance/issues/107
+iam:CreateGroup	https://github.com/popododo0720/vws-conformance/issues/108
+iam:CreateLoginProfile	https://github.com/popododo0720/vws-conformance/issues/107
+iam:CreatePolicy	https://github.com/popododo0720/vws-conformance/issues/110
+iam:CreatePolicyVersion	https://github.com/popododo0720/vws-conformance/issues/110
+iam:CreateRole	https://github.com/popododo0720/vws-conformance/issues/109
+iam:CreateUser	https://github.com/popododo0720/vws-conformance/issues/106
+iam:DeleteAccessKey	https://github.com/popododo0720/vws-conformance/issues/107
+iam:DeleteGroup	https://github.com/popododo0720/vws-conformance/issues/108
+iam:DeleteGroupPolicy	https://github.com/popododo0720/vws-conformance/issues/111
+iam:DeleteLoginProfile	https://github.com/popododo0720/vws-conformance/issues/107
+iam:DeletePolicy	https://github.com/popododo0720/vws-conformance/issues/110
+iam:DeletePolicyVersion	https://github.com/popododo0720/vws-conformance/issues/110
+iam:DeleteRole	https://github.com/popododo0720/vws-conformance/issues/109
+iam:DeleteRolePolicy	https://github.com/popododo0720/vws-conformance/issues/112
+iam:DeleteUser	https://github.com/popododo0720/vws-conformance/issues/106
+iam:DeleteUserPolicy	https://github.com/popododo0720/vws-conformance/issues/111
+iam:DetachGroupPolicy	https://github.com/popododo0720/vws-conformance/issues/111
+iam:DetachRolePolicy	https://github.com/popododo0720/vws-conformance/issues/112
+iam:DetachUserPolicy	https://github.com/popododo0720/vws-conformance/issues/111
+iam:GetAccessKeyLastUsed	https://github.com/popododo0720/vws-conformance/issues/107
+iam:GetGroupPolicy	https://github.com/popododo0720/vws-conformance/issues/111
+iam:GetLoginProfile	https://github.com/popododo0720/vws-conformance/issues/107
+iam:GetPolicy	https://github.com/popododo0720/vws-conformance/issues/110
+iam:GetPolicyVersion	https://github.com/popododo0720/vws-conformance/issues/110
+iam:GetRole	https://github.com/popododo0720/vws-conformance/issues/109
+iam:GetRolePolicy	https://github.com/popododo0720/vws-conformance/issues/112
+iam:GetUserPolicy	https://github.com/popododo0720/vws-conformance/issues/111
+iam:ListAccessKeys	https://github.com/popododo0720/vws-conformance/issues/107
+iam:ListAttachedGroupPolicies	https://github.com/popododo0720/vws-conformance/issues/111
+iam:ListAttachedRolePolicies	https://github.com/popododo0720/vws-conformance/issues/112
+iam:ListAttachedUserPolicies	https://github.com/popododo0720/vws-conformance/issues/111
+iam:ListGroupPolicies	https://github.com/popododo0720/vws-conformance/issues/111
+iam:ListGroups	https://github.com/popododo0720/vws-conformance/issues/108
+iam:ListGroupsForUser	https://github.com/popododo0720/vws-conformance/issues/108
+iam:ListMFADeviceTags	https://github.com/popododo0720/vws-conformance/issues/113
+iam:ListMFADevices	https://github.com/popododo0720/vws-conformance/issues/10
+iam:ListPolicies	https://github.com/popododo0720/vws-conformance/issues/110
+iam:ListPolicyTags	https://github.com/popododo0720/vws-conformance/issues/75
+iam:ListRolePolicies	https://github.com/popododo0720/vws-conformance/issues/112
+iam:ListRoles	https://github.com/popododo0720/vws-conformance/issues/109
+iam:ListUserPolicies	https://github.com/popododo0720/vws-conformance/issues/111
+iam:ListVirtualMFADevices	https://github.com/popododo0720/vws-conformance/issues/113
+iam:PutGroupPolicy	https://github.com/popododo0720/vws-conformance/issues/111
+iam:PutRolePolicy	https://github.com/popododo0720/vws-conformance/issues/112
+iam:PutUserPolicy	https://github.com/popododo0720/vws-conformance/issues/111
+iam:RemoveUserFromGroup	https://github.com/popododo0720/vws-conformance/issues/108
+iam:SetDefaultPolicyVersion	https://github.com/popododo0720/vws-conformance/issues/110
+iam:TagMFADevice	https://github.com/popododo0720/vws-conformance/issues/113
+iam:TagPolicy	https://github.com/popododo0720/vws-conformance/issues/77
+iam:UntagMFADevice	https://github.com/popododo0720/vws-conformance/issues/113
+iam:UntagPolicy	https://github.com/popododo0720/vws-conformance/issues/76
+iam:UpdateAccessKey	https://github.com/popododo0720/vws-conformance/issues/107
+iam:UpdateAssumeRolePolicy	https://github.com/popododo0720/vws-conformance/issues/109
+iam:UpdateGroup	https://github.com/popododo0720/vws-conformance/issues/108
+iam:UpdateLoginProfile	https://github.com/popododo0720/vws-conformance/issues/107
+iam:UpdateRole	https://github.com/popododo0720/vws-conformance/issues/109
+iam:UpdateRoleDescription	https://github.com/popododo0720/vws-conformance/issues/109
+iam:UpdateUser	https://github.com/popododo0720/vws-conformance/issues/106
+
+# S3 REST
+s3:CreateBucket	https://github.com/popododo0720/vws-conformance/issues/30
+s3:DeleteBucket	https://github.com/popododo0720/vws-conformance/issues/9
+s3:DeleteObject	https://github.com/popododo0720/vws-conformance/issues/9
+s3:GetObject	https://github.com/popododo0720/vws-conformance/issues/9
+s3:HeadObject	https://github.com/popododo0720/vws-conformance/issues/9
+s3:PutObject	https://github.com/popododo0720/vws-conformance/issues/9
+
+# STS Query
+sts:AssumeRole	https://github.com/popododo0720/vws-conformance/issues/114
