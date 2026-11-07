@@ -113,7 +113,7 @@ func TestExtractRejectsShapeChange(t *testing.T) {
 		{
 			"no Unimplemented default",
 			[3]string{ec2, "resource.Unimplemented(action)", "nil"},
-			ec2 + ":3: no switch whose default",
+			ec2 + ":4: switch on action whose default does not call",
 		},
 		{
 			"unresolvable Action ident",
@@ -137,6 +137,27 @@ func TestExtractRejectsShapeChange(t *testing.T) {
 			"missing mux route",
 			[3]string{s3, "\tmux.HandleFunc(\"HEAD /{bucket}\", h.headBucket)\n", ""},
 			"in the S3 route table but not registered",
+		},
+		{
+			"dispatch in an if before the switch",
+			[3]string{
+				ec2, "\tswitch action {",
+				"\tif action == \"DescribeRegions\" {\n\t\th.describeRegions()\n\t}\n\tswitch action {",
+			},
+			ec2 + ":4: action is compared outside the dispatch switch",
+		},
+		{
+			"second switch on action",
+			[3]string{
+				ec2, "\tswitch action {",
+				"\tswitch action {\n\tcase \"DescribeRegions\":\n\t\th.describeRegions()\n\t}\n\tswitch action {",
+			},
+			ec2 + ":4: switch on action whose default",
+		},
+		{
+			"route registered with Handle",
+			[3]string{s3, "return mux", "mux.Handle(\"POST /{bucket}\", http.HandlerFunc(h.post))\n\treturn mux"},
+			"registered but not in the S3 route table",
 		},
 		{"computed mux pattern", [3]string{s3, `"HEAD /{bucket}"`, "pattern"}, "not a unique string literal"},
 	}

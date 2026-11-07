@@ -80,6 +80,11 @@ func receiver(fn *ast.FuncDecl) string {
 	return strings.TrimPrefix(types.ExprString(fn.Recv.List[0].Type), "*")
 }
 
+func isIdent(e ast.Expr, name string) bool {
+	id, ok := e.(*ast.Ident)
+	return ok && id.Name == name
+}
+
 func stringLit(e ast.Expr) (string, bool) {
 	lit, ok := e.(*ast.BasicLit)
 	if !ok || lit.Kind != token.STRING {
@@ -240,8 +245,23 @@ func ec2Dispatch(s source, names map[string]string) ([]string, error) {
 	var dispatch *ast.SwitchStmt
 	var shapeErr error
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		if shapeErr != nil {
+			return false
+		}
+		if be, ok := n.(*ast.BinaryExpr); ok && (be.Op == token.EQL || be.Op == token.NEQ) &&
+			(isIdent(be.X, "action") || isIdent(be.Y, "action")) {
+			shapeErr = s.errorf(be, "action is compared outside the dispatch switch")
+			return false
+		}
 		sw, ok := n.(*ast.SwitchStmt)
-		if !ok || !callsUnimplemented(sw) {
+		if !ok {
+			return true
+		}
+		if !callsUnimplemented(sw) {
+			if isIdent(sw.Tag, "action") {
+				shapeErr = s.errorf(sw, "switch on action whose default does not call resource.Unimplemented")
+				return false
+			}
 			return true
 		}
 		if dispatch != nil {
@@ -322,12 +342,16 @@ func s3Dispatch(s source) ([]string, error) {
 			return true
 		}
 		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || sel.Sel.Name != "HandleFunc" || len(call.Args) == 0 {
+		if !ok || (sel.Sel.Name != "HandleFunc" && sel.Sel.Name != "Handle") {
 			return true
+		}
+		if len(call.Args) == 0 {
+			shapeErr = s.errorf(call, "%s has no pattern", sel.Sel.Name)
+			return false
 		}
 		pattern, ok := stringLit(call.Args[0])
 		if !ok || routes[pattern] {
-			shapeErr = s.errorf(call, "HandleFunc pattern is not a unique string literal")
+			shapeErr = s.errorf(call, "%s pattern is not a unique string literal", sel.Sel.Name)
 			return false
 		}
 		routes[pattern] = true
