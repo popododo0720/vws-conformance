@@ -283,6 +283,9 @@ func ec2Dispatch(s source, names map[string]string) ([]string, error) {
 			if err != nil {
 				return nil, err
 			}
+			if !opNameRE.MatchString(name) {
+				return nil, s.errorf(e, "dispatch case %q is not an operation name", name)
+			}
 			if slices.Contains(out, name) {
 				return nil, s.errorf(e, "operation %s is dispatched twice", name)
 			}

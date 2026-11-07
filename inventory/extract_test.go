@@ -121,6 +121,11 @@ func TestExtractRejectsShapeChange(t *testing.T) {
 			"ActionBogus is not in Action.String",
 		},
 		{"non-literal case", [3]string{ec2, `"DescribeVpcs"`, "name"}, "neither a string literal"},
+		{
+			"malformed case name",
+			[3]string{ec2, `"DescribeVpcs"`, `"Describe Vpcs"`},
+			ec2 + `:7: dispatch case "Describe Vpcs" is not`,
+		},
 		{"repeated dispatch case", [3]string{ec2, `"DescribeVpcs"`, `"RunInstances"`}, "dispatched twice"},
 		{
 			"Action.String not a switch",
