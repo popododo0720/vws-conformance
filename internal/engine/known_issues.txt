@@ -7,3 +7,5 @@ IAM-MFA-001 https://github.com/popododo0720/vws-iam/issues/133
 
 # ListPolicyTags malformed ARN: vws-console-api#832
 IAM-PTAG-102 https://github.com/popododo0720/vws-console-api/issues/832
+# Fake CreateVpc accepts a /29 (AWS InvalidVpcRange): popododo0720/vws-console-api#836
+VPC-VPC-101 https://github.com/popododo0720/vws-console-api/issues/836
