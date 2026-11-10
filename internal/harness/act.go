@@ -108,10 +108,7 @@ var kinds = map[Kind]kindSpec{
 		doc:     cases.DocIAM("ListPolicyTags"),
 		minted:  true,
 		fetch:   fetchPolicy,
-		remove: func(ctx context.Context, cl *Clients, id string) error {
-			_, err := deletePolicy(ctx, cl, id)
-			return err
-		},
+		remove:  deletePolicyAndVersions,
 	},
 	// A role is owned the way a policy is: its name carries the run id, because VWS CreateRole
 	// does not take Tags. The id is the role name, the key GetRole and DeleteRole take.
@@ -205,44 +202,98 @@ func (rt *Runtime) IAMUntagPolicy(ctx context.Context, in *iam.UntagPolicyInput)
 		})
 }
 
-// IAMProbeUntagPolicy sends an UntagPolicy the service is expected to reject, for a policy this
-// run does not own: an absent one, one in another account, or none. The ARN must carry this run's
-// id, so only this run could ever have made the policy, and an observation must not show it present.
-// In this run's account it must show it absent: a policy that exists, or whose state is unknown,
-// is touched only through IAMUntagPolicy. A target in another verified-different account is sent
-// even when its state is unknown, because a cross-account read is denied just like the call under
-// test, and this run creates resources only in its own account, so the target cannot be its own.
+// IAMCreatePolicyVersion adds a version only when a fresh observation proves this run owns the
+// policy. Cleanup deletes it with the policy.
+func (rt *Runtime) IAMCreatePolicyVersion(ctx context.Context, in *iam.CreatePolicyVersionInput,
+) (*iam.CreatePolicyVersionOutput, error) {
+	if in == nil {
+		return nil, errors.New("CreatePolicyVersion: input is nil")
+	}
+	return mutate(ctx, rt, Ref{Kind: KindPolicy, ID: aws.ToString(in.PolicyArn)}, false,
+		func(ctx context.Context) (*iam.CreatePolicyVersionOutput, error) {
+			out, err := rt.Clients.IAM.CreatePolicyVersion(ctx, in, iamOneAttempt)
+			return out, wrapErr("CreatePolicyVersion", err)
+		})
+}
+
+// IAMSetDefaultPolicyVersion sets the default version only when a fresh observation proves this
+// run owns the policy.
+func (rt *Runtime) IAMSetDefaultPolicyVersion(ctx context.Context, in *iam.SetDefaultPolicyVersionInput,
+) (*iam.SetDefaultPolicyVersionOutput, error) {
+	if in == nil {
+		return nil, errors.New("SetDefaultPolicyVersion: input is nil")
+	}
+	return mutate(ctx, rt, Ref{Kind: KindPolicy, ID: aws.ToString(in.PolicyArn)}, false,
+		func(ctx context.Context) (*iam.SetDefaultPolicyVersionOutput, error) {
+			out, err := rt.Clients.IAM.SetDefaultPolicyVersion(ctx, in, iamOneAttempt)
+			return out, wrapErr("SetDefaultPolicyVersion", err)
+		})
+}
+
+// IAMDeletePolicyVersion deletes a version only when a fresh observation proves this run owns the
+// policy.
+func (rt *Runtime) IAMDeletePolicyVersion(ctx context.Context, in *iam.DeletePolicyVersionInput,
+) (*iam.DeletePolicyVersionOutput, error) {
+	if in == nil {
+		return nil, errors.New("DeletePolicyVersion: input is nil")
+	}
+	return mutate(ctx, rt, Ref{Kind: KindPolicy, ID: aws.ToString(in.PolicyArn)}, false,
+		func(ctx context.Context) (*iam.DeletePolicyVersionOutput, error) {
+			return deletePolicyVersion(ctx, rt.Clients, in)
+		})
+}
+
+// IAMProbeUntagPolicy sends an UntagPolicy the service is expected to reject (see probePolicy).
 func (rt *Runtime) IAMProbeUntagPolicy(ctx context.Context, in *iam.UntagPolicyInput) (*iam.UntagPolicyOutput, error) {
 	if in == nil {
 		return nil, errors.New("UntagPolicy: input is nil")
 	}
-	arn := aws.ToString(in.PolicyArn)
+	return probePolicy(ctx, rt, aws.ToString(in.PolicyArn), func(ctx context.Context) (*iam.UntagPolicyOutput, error) {
+		return untagPolicy(ctx, rt.Clients, in)
+	})
+}
+
+// IAMProbeDeletePolicy sends a DeletePolicy the service is expected to reject (see probePolicy).
+func (rt *Runtime) IAMProbeDeletePolicy(ctx context.Context, arn string) (*iam.DeletePolicyOutput, error) {
+	return probePolicy(ctx, rt, arn, func(ctx context.Context) (*iam.DeletePolicyOutput, error) {
+		return deletePolicy(ctx, rt.Clients, arn)
+	})
+}
+
+// probePolicy sends a call the service is expected to reject, for a policy this run does not own:
+// an absent one, one in another account, or none. The ARN must carry this run's id, so only this
+// run could ever have made the policy, and an observation must not show it present. In this run's
+// account it must show it absent: a policy that exists, or whose state is unknown, is touched only
+// through the gated calls. A target in another verified-different account is sent even when its
+// state is unknown, because a cross-account read is denied just like the call under test, and this
+// run creates resources only in its own account, so the target cannot be its own.
+func probePolicy[Out any](ctx context.Context, rt *Runtime, arn string, send func(context.Context) (Out, error),
+) (Out, error) {
+	var zero Out
 	ref := Ref{Kind: KindPolicy, ID: arn}
 	switch {
 	case arn != "" && !strings.Contains(arn, NamePrefix(rt.RunID())):
-		return nil, &PreserveError{Ref: ref, Reason: "probe target is not named for this run"}
+		return zero, &PreserveError{Ref: ref, Reason: "probe target is not named for this run"}
 	}
 	s, err := rt.admit()
 	if err != nil {
-		return nil, fmt.Errorf("probe %s %s: %w", ref.Kind, arn, err)
+		return zero, fmt.Errorf("probe %s %s: %w", ref.Kind, arn, err)
 	}
 	defer s.mu.Unlock()
 	if arn != "" {
 		switch obs := rt.observeRef(ctx, kinds[KindPolicy], ref); obs.Status {
 		case StatusPresent:
-			return nil, &PreserveError{Ref: ref, Reason: "probe target exists"}
+			return zero, &PreserveError{Ref: ref, Reason: "probe target exists"}
 		case StatusAbsent:
 		case StatusUnknown:
 			if !inOtherAccount(arn, rt.Cfg.AccountID) {
-				return nil, &PreserveError{Ref: ref, Reason: "probe target is not proven absent"}
+				return zero, &PreserveError{Ref: ref, Reason: "probe target is not proven absent"}
 			}
 		default:
-			return nil, &PreserveError{Ref: ref, Reason: "probe target is not proven absent"}
+			return zero, &PreserveError{Ref: ref, Reason: "probe target is not proven absent"}
 		}
 	}
-	out, err := withDeadline(ctx, func(ctx context.Context) (*iam.UntagPolicyOutput, error) {
-		return untagPolicy(ctx, rt.Clients, in)
-	})
+	out, err := withDeadline(ctx, send)
 	if err != nil {
 		return out, fmt.Errorf("probe %s %s: %w", ref.Kind, arn, err)
 	}
@@ -378,6 +429,53 @@ func untagPolicy(ctx context.Context, cl *Clients, in *iam.UntagPolicyInput) (*i
 	}
 	out, err := cl.IAM.UntagPolicy(ctx, in, withoutInputValidation, iamOneAttempt)
 	return out, wrapErr("UntagPolicy", err)
+}
+
+// deletePolicyAndVersions deletes every non-default version, then the policy: DeletePolicy answers
+// DeleteConflict while one is left. All pages are read before the first delete so a delete cannot
+// shift a page marker.
+func deletePolicyAndVersions(ctx context.Context, cl *Clients, arn string) error {
+	if cl == nil || cl.IAM == nil {
+		return errors.New("ListPolicyVersions: iam client is unset")
+	}
+	var stale []string
+	in := &iam.ListPolicyVersionsInput{PolicyArn: aws.String(arn)}
+	for {
+		out, err := cl.IAM.ListPolicyVersions(ctx, in)
+		if err != nil {
+			return wrapErr("ListPolicyVersions", err)
+		}
+		for _, v := range out.Versions {
+			if !v.IsDefaultVersion {
+				stale = append(stale, aws.ToString(v.VersionId))
+			}
+		}
+		if !out.IsTruncated {
+			break
+		}
+		if aws.ToString(out.Marker) == "" {
+			return errors.New("ListPolicyVersions: truncated page has no marker")
+		}
+		in.Marker = out.Marker
+	}
+	for _, id := range stale {
+		if _, err := deletePolicyVersion(ctx, cl, &iam.DeletePolicyVersionInput{
+			PolicyArn: aws.String(arn), VersionId: aws.String(id),
+		}); err != nil {
+			return err
+		}
+	}
+	_, err := deletePolicy(ctx, cl, arn)
+	return err
+}
+
+func deletePolicyVersion(ctx context.Context, cl *Clients, in *iam.DeletePolicyVersionInput,
+) (*iam.DeletePolicyVersionOutput, error) {
+	if cl == nil || cl.IAM == nil {
+		return nil, errors.New("DeletePolicyVersion: iam client is unset")
+	}
+	out, err := cl.IAM.DeletePolicyVersion(ctx, in, iamOneAttempt)
+	return out, wrapErr("DeletePolicyVersion", err)
 }
 
 func deletePolicy(ctx context.Context, cl *Clients, arn string) (*iam.DeletePolicyOutput, error) {

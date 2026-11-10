@@ -28,13 +28,15 @@ type iamFake struct {
 	*httptest.Server
 	mu       sync.Mutex
 	policies map[string]map[string]string
+	versions map[string]*versionSet
 	calls    map[string]int
 	listFail bool
+	pageSize int // ListPolicyVersions page size; zero returns one page
 }
 
 func newIAMFake(t *testing.T) *iamFake {
 	t.Helper()
-	f := &iamFake{policies: map[string]map[string]string{}, calls: map[string]int{}}
+	f := &iamFake{policies: map[string]map[string]string{}, versions: map[string]*versionSet{}, calls: map[string]int{}}
 	f.Server = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.Close)
 	return f
@@ -77,6 +79,7 @@ func (f *iamFake) serve(w http.ResponseWriter, r *http.Request) {
 	case action == "CreatePolicy":
 		arn = fmt.Sprintf("arn:aws:iam::%s:policy/%s", iamAccount, r.Form.Get("PolicyName"))
 		f.policies[arn] = map[string]string{}
+		f.versions[arn] = &versionSet{ids: []string{"v1"}, def: "v1", next: 2}
 		body = "<CreatePolicyResult><Policy><Arn>" + html.EscapeString(arn) +
 			"</Arn></Policy></CreatePolicyResult>"
 	case arn == "":
@@ -104,7 +107,16 @@ func (f *iamFake) serve(w http.ResponseWriter, r *http.Request) {
 		for i := 1; r.Form.Get(fmt.Sprintf("TagKeys.member.%d", i)) != ""; i++ {
 			delete(tags, r.Form.Get(fmt.Sprintf("TagKeys.member.%d", i)))
 		}
+	case strings.Contains(action, "PolicyVersion"):
+		var ok bool
+		if body, ok = f.serveVersion(w, r, action, arn); !ok {
+			return
+		}
 	case action == "DeletePolicy":
+		if vs := f.versions[arn]; vs != nil && len(vs.ids) > 1 {
+			iamError(w, http.StatusConflict, "DeleteConflict")
+			return
+		}
 		delete(f.policies, arn)
 	}
 	w.Header().Set("Content-Type", "text/xml")
