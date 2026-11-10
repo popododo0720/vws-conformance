@@ -378,6 +378,14 @@ func (rt *Runtime) EC2RunInstances(ctx context.Context, in *ec2.RunInstancesInpu
 	if aws.ToInt32(in.MinCount) != 1 || aws.ToInt32(in.MaxCount) != 1 {
 		return nil, errors.New("RunInstances: the cleanup gate requires MinCount and MaxCount of one")
 	}
+	if len(in.NetworkInterfaces) != 0 {
+		return nil, errors.New("RunInstances: network interfaces would create resources the cleanup gate does not track")
+	}
+	for _, m := range in.BlockDeviceMappings {
+		if m.Ebs != nil && m.Ebs.DeleteOnTermination != nil && !*m.Ebs.DeleteOnTermination {
+			return nil, errors.New("RunInstances: DeleteOnTermination=false would leave an untracked volume")
+		}
+	}
 	specs, err := withRunTag(in.TagSpecifications, types.ResourceTypeInstance, rt.RunID())
 	if err != nil {
 		return nil, fmt.Errorf("RunInstances: %w", err)

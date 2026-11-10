@@ -112,6 +112,18 @@ func TestInstanceGateRejectsUnsafeInput(t *testing.T) {
 	if _, err := view.EC2RunInstances(context.Background(), in); err == nil {
 		t.Fatal("forged ownership accepted")
 	}
+	in = instanceInput()
+	in.NetworkInterfaces = []types.InstanceNetworkInterfaceSpecification{{DeviceIndex: aws.Int32(0)}}
+	if _, err := view.EC2RunInstances(context.Background(), in); err == nil {
+		t.Fatal("extra network interface accepted")
+	}
+	in = instanceInput()
+	in.BlockDeviceMappings = []types.BlockDeviceMapping{{
+		DeviceName: aws.String("/dev/sdf"), Ebs: &types.EbsBlockDevice{DeleteOnTermination: aws.Bool(false)},
+	}}
+	if _, err := view.EC2RunInstances(context.Background(), in); err == nil {
+		t.Fatal("surviving volume accepted")
+	}
 	if fake.Calls("RunInstances") != 0 {
 		t.Fatal("unsafe create reached SDK")
 	}
