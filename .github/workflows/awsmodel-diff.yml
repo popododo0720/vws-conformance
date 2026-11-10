@@ -1,0 +1,86 @@
+# Weekly check of the AWS botocore API models for the operations VWS implements (vws-conformance#121).
+# It fetches the models at the newest botocore release tag, diffs them against the pin in
+# cmd/awsmodel-diff/pin.json, and opens one triage issue per changed operation that no issue
+# (open or closed) records yet. It downloads public files from github.com only; it never calls AWS.
+#
+# scripts/guard.sh refuses a schedule trigger in this repo, so the weekly run is started from outside
+# with a repository_dispatch event of type awsmodel-weekly (or by hand with workflow_dispatch).
+name: awsmodel-diff
+
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types: [awsmodel-weekly]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: awsmodel-diff
+  cancel-in-progress: false
+
+jobs:
+  diff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.26.9"
+      - name: Newest botocore release tag
+        id: tag
+        run: |
+          set -euo pipefail
+          # awk reads every line, so no reader closes the pipe early and pipefail sees no SIGPIPE.
+          newest=$(git ls-remote --tags --refs --sort=-version:refname https://github.com/boto/botocore.git \
+            | awk '{ sub("refs/tags/", "", $2) } $2 ~ /^[0-9]+\.[0-9]+\.[0-9]+$/ && !n++ { print $2 }')
+          [ -n "$newest" ] || { echo "no botocore release tag found" >&2; exit 1; }
+          pinned=$(jq -r .botocore cmd/awsmodel-diff/pin.json)
+          echo "pinned $pinned, newest $newest"
+          echo "newest=$newest" >> "$GITHUB_OUTPUT"
+          echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
+      - name: Fetch the models
+        if: steps.tag.outputs.newest != steps.tag.outputs.pinned
+        env:
+          NEWEST: ${{ steps.tag.outputs.newest }}
+          PINNED: ${{ steps.tag.outputs.pinned }}
+        run: |
+          set -euo pipefail
+          scripts/awsmodel-fetch.sh "$PINNED" "$RUNNER_TEMP/base"
+          scripts/awsmodel-fetch.sh "$NEWEST" "$RUNNER_TEMP/current"
+      - name: Diff against the pin
+        if: steps.tag.outputs.newest != steps.tag.outputs.pinned
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NEWEST: ${{ steps.tag.outputs.newest }}
+        run: |
+          set -euo pipefail
+          gh issue list -R "$REPO" --label awsmodel-diff --state all --limit 1000 --json body --jq '.[].body' \
+            > "$RUNNER_TEMP/filed.txt"
+          go run ./cmd/awsmodel-diff -base "$RUNNER_TEMP/base" -current "$RUNNER_TEMP/current" -tag "$NEWEST" \
+            -filed "$RUNNER_TEMP/filed.txt" > "$RUNNER_TEMP/findings.jsonl"
+          echo "$(wc -l < "$RUNNER_TEMP/findings.jsonl") new findings"
+      - name: Open one issue per changed operation
+        if: steps.tag.outputs.newest != steps.tag.outputs.pinned
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          [ -s "$RUNNER_TEMP/findings.jsonl" ] || exit 0
+          labels=$(gh label list -R "$REPO" --limit 500 --json name --jq '.[].name')
+          grep -q -x awsmodel-diff <<<"$labels" ||
+            gh label create awsmodel-diff -R "$REPO" --color 5319e7 --description "AWS API model change (vws-conformance#121)"
+          grep -q -x triage <<<"$labels" ||
+            gh label create triage -R "$REPO" --color d4c5f9 --description "Needs a human decision before work starts"
+          while IFS= read -r finding; do
+            gh issue create -R "$REPO" --label awsmodel-diff --label triage \
+              --title "$(jq -r .title <<<"$finding")" --body "$(jq -r .body <<<"$finding")"
+          done < "$RUNNER_TEMP/findings.jsonl"
