@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 type Server struct {
@@ -82,6 +83,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.create(w, r)
 	case "DescribeVolumes":
 		s.describe(w, r.Form.Get("VolumeId.1"))
+	case "CreateTags", "DeleteTags":
+		s.tags(w, r, action)
 	case "DeleteVolume":
 		s.delete(w, r.Form.Get("VolumeId"))
 	default:
@@ -193,4 +196,35 @@ func note(err error) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ec2fake: %v\n", err)
 	}
+}
+
+func (s *Server) tags(w http.ResponseWriter, r *http.Request, action string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id := r.Form.Get("ResourceId.1")
+	tags, ok := s.vols[id]
+	if !ok {
+		writeError(w, action, "InvalidVolume.NotFound", "The volume does not exist.")
+		return
+	}
+	for i := 1; r.Form.Has(fmt.Sprintf("Tag.%d.Key", i)); i++ {
+		value := r.Form.Get(fmt.Sprintf("Tag.%d.Value", i))
+		if utf8.RuneCountInString(value) > 256 {
+			writeError(w, action, "InvalidParameterValue", fmt.Sprintf("Value (%s) for parameter tagValue is invalid.", value))
+			return
+		}
+	}
+	for i := 1; r.Form.Has(fmt.Sprintf("Tag.%d.Key", i)); i++ {
+		key := r.Form.Get(fmt.Sprintf("Tag.%d.Key", i))
+		valueKey := fmt.Sprintf("Tag.%d.Value", i)
+		value := r.Form.Get(valueKey)
+		if action == "CreateTags" {
+			tags[key] = value
+			continue
+		}
+		if !r.Form.Has(valueKey) || tags[key] == value {
+			delete(tags, key)
+		}
+	}
+	writeXML(w, action, "<return>true</return>")
 }
