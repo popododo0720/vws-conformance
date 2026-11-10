@@ -33,3 +33,8 @@ IAM-MTAG-104 https://github.com/popododo0720/vws-console-api/issues/850
 IAM-MTAG-105 https://github.com/popododo0720/vws-console-api/issues/850
 IAM-MTAG-106 https://github.com/popododo0720/vws-console-api/issues/850
 IAM-MTAG-107 https://github.com/popododo0720/vws-console-api/issues/850
+
+# The gate stamps the run tag on CreateVirtualMFADevice, and console-api main refuses it
+# (400 InvalidInput "Parameter Tags.member.1.Key is not supported"): popododo0720/vws-console-api#850.
+# The pinned fake also predates CreateVirtualMFADevice (400 InvalidAction), so the pin needs a bump too.
+IAM-GAP-005 https://github.com/popododo0720/vws-console-api/issues/850

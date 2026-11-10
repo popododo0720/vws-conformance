@@ -29,6 +29,7 @@ var Rules = []Rule{
 	{Service: "ebs", Group: "gaps", Prefixes: []string{"ebs/gaps"}},
 	{Service: "iam", Group: "mfa", Prefixes: []string{"iam/mfa.go", "iam/mfa_test.go"}},
 	{Service: "iam", Group: "mfatags", Prefixes: []string{"iam/mfatags"}},
+	{Service: "iam", Group: "mfadevices", Prefixes: []string{"iam/mfadevices"}},
 	{Service: "iam", Group: "policytags", Prefixes: []string{"iam/policytags"}},
 	{Service: "iam", Group: "users", Prefixes: []string{"iam/users"}},
 	{Service: "sts", Group: "caller", Prefixes: []string{"sts/"}},

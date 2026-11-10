@@ -1,5 +1,5 @@
 // Package iamfake is a loopback IAM query-protocol server for the virtual MFA device calls the
-// gate and the MFA tag cases make. It answers as the AWS IAM API reference documents, so a case
+// gate and the MFA device and tag cases make. It answers as the AWS IAM API reference documents, so a case
 // that passes here fails only on a real parity gap. Tests use it so no request leaves 127.0.0.1.
 package iamfake
 
@@ -22,6 +22,9 @@ const Account = "123456789012"
 // invalidInputMessage is the description API_TagMFADevice documents for InvalidInput.
 const invalidInputMessage = "The request was rejected because an invalid or out-of-range value " +
 	"was supplied for an input parameter."
+
+// Seed is the Base32StringSeed every created device answers with; no report may contain it.
+const Seed = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXPFAKESEED"
 
 // maxTags is the AWS limit of tags per IAM resource (TagMFADevice LimitExceeded).
 const maxTags = 50
@@ -102,6 +105,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	switch action {
 	case "CreateVirtualMFADevice":
 		s.create(w, r)
+	case "ListVirtualMFADevices":
+		s.list(w, r)
 	case "DeleteVirtualMFADevice", "TagMFADevice", "UntagMFADevice", "ListMFADeviceTags":
 		tags, ok := s.devices[r.Form.Get("SerialNumber")]
 		if !ok {
@@ -129,7 +134,25 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	}
 	s.devices[serial] = tags
 	writeXML(w, "CreateVirtualMFADevice", "<VirtualMFADevice><SerialNumber>"+html.EscapeString(serial)+
-		"</SerialNumber></VirtualMFADevice>")
+		"</SerialNumber><Base32StringSeed>"+Seed+"</Base32StringSeed></VirtualMFADevice>")
+}
+
+// list answers in one page. No device here is ever enabled for a user, so every device is
+// Unassigned and an Assigned filter lists none.
+func (s *Server) list(w http.ResponseWriter, r *http.Request) {
+	var b strings.Builder
+	if r.Form.Get("AssignmentStatus") != "Assigned" {
+		serials := make([]string, 0, len(s.devices))
+		for serial := range s.devices {
+			serials = append(serials, serial)
+		}
+		slices.Sort(serials)
+		for _, serial := range serials {
+			fmt.Fprintf(&b, "<member><SerialNumber>%s</SerialNumber></member>", html.EscapeString(serial))
+		}
+	}
+	writeXML(w, "ListVirtualMFADevices", "<VirtualMFADevices>"+b.String()+
+		"</VirtualMFADevices><IsTruncated>false</IsTruncated>")
 }
 
 func (s *Server) device(w http.ResponseWriter, r *http.Request, action string, tags map[string]string) {
