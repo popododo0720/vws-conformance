@@ -23,6 +23,7 @@ type Server struct {
 	calls            map[string]int
 	seq              int
 	onCreate         func() CreateResult
+	sizes            map[string]int32
 }
 
 // CreateResult is what a create hook asks CreateVolume to do. The zero value creates the volume.
@@ -93,6 +94,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.create(w, r)
 	case "DescribeVolumes":
 		s.describe(w, r.Form.Get("VolumeId.1"))
+	case "ModifyVolume":
+		s.modifyVolume(w, r)
 	case "CreateTags", "DeleteTags":
 		s.tags(w, r, action)
 	case "DeleteVolume":
@@ -135,12 +138,16 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	s.seq++
 	id := fmt.Sprintf("vol-%017d", s.seq)
 	s.vols[id] = tags
+	if s.sizes == nil {
+		s.sizes = map[string]int32{}
+	}
+	s.sizes[id] = 1
 	s.mu.Unlock()
 	if res.Lose {
 		s.hangUp(w)
 		return
 	}
-	writeXML(w, "CreateVolume", "<volumeId>"+id+"</volumeId><size>1</size><status>creating</status>")
+	writeXML(w, "CreateVolume", "<volumeId>"+id+"</volumeId><size>1</size><status>available</status>")
 }
 
 func (s *Server) hangUp(w http.ResponseWriter) {
@@ -169,7 +176,8 @@ func (s *Server) describe(w http.ResponseWriter, id string) {
 		writeError(w, "DescribeVolumes", "InvalidVolume.NotFound", "The volume '"+id+"' does not exist.")
 		return
 	}
-	writeXML(w, "DescribeVolumes", "<volumeSet><item><volumeId>"+html.EscapeString(id)+"</volumeId><tagSet>"+
+	writeXML(w, "DescribeVolumes", "<volumeSet><item><volumeId>"+html.EscapeString(id)+"</volumeId>"+
+		"<status>available</status><size>1</size><tagSet>"+
 		set.String()+"</tagSet></item></volumeSet>")
 }
 
@@ -177,6 +185,7 @@ func (s *Server) delete(w http.ResponseWriter, id string) {
 	s.mu.Lock()
 	_, ok := s.vols[id]
 	delete(s.vols, id)
+	delete(s.sizes, id)
 	s.mu.Unlock()
 	if !ok {
 		writeError(w, "DeleteVolume", "InvalidVolume.NotFound", "The volume '"+id+"' does not exist.")
