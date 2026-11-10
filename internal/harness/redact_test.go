@@ -32,6 +32,23 @@ func TestRedactHidesSecret(t *testing.T) {
 	}
 }
 
+// TestRedactHidesVirtualMFASeed checks the CreateVirtualMFADevice response: its seed and QR code
+// configure an authenticator, so either one is the device secret.
+func TestRedactHidesVirtualMFASeed(t *testing.T) {
+	const seed, qr = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP", "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
+	in := "<VirtualMFADevice><SerialNumber>arn:aws:iam::123456789012:mfa/conf-x</SerialNumber>" +
+		"<Base32StringSeed>" + seed + "</Base32StringSeed><QRCodePNG>" + qr + "</QRCodePNG></VirtualMFADevice>"
+	out := Redact(in)
+	for _, s := range []string{seed, qr} {
+		if strings.Contains(out, s) {
+			t.Fatalf("leaked %q in %s", s, out)
+		}
+	}
+	if !strings.Contains(out, "<SerialNumber>arn:aws:iam::123456789012:mfa/conf-x</SerialNumber>") {
+		t.Fatalf("serial number redacted: %s", out)
+	}
+}
+
 // TestRedactSignatureDoesNotMatchBody checks the S3 SignatureDoesNotMatch
 // error body, which echoes the caller's access key ID, the signature and the
 // canonical request (with any signed session token) back to the client.

@@ -7,12 +7,15 @@ import (
 )
 
 var (
-	reAuth      = regexp.MustCompile(`(?i)(Authorization:\s*).*`)
-	reSig       = regexp.MustCompile(`(?i)(X-Amz-Signature=)([0-9a-fA-F]+)`)
-	reToken     = regexp.MustCompile(`(?i)(X-Amz-Security-Token[=:]\s*)(\S+)`)
-	reCred      = regexp.MustCompile(`(?i)(X-Amz-Credential=)([^/\s]+)`)
-	reSecretKey = regexp.MustCompile(`(SecretAccessKey|SessionToken|KeyMaterial|Password)(["=:]\s*)([^"&\s<]+)`)
-	reXMLSecret = regexp.MustCompile(`(?i)(<(?:SecretAccessKey|SessionToken|KeyMaterial|Password)>)([^<]*)(</)`)
+	reAuth  = regexp.MustCompile(`(?i)(Authorization:\s*).*`)
+	reSig   = regexp.MustCompile(`(?i)(X-Amz-Signature=)([0-9a-fA-F]+)`)
+	reToken = regexp.MustCompile(`(?i)(X-Amz-Security-Token[=:]\s*)(\S+)`)
+	reCred  = regexp.MustCompile(`(?i)(X-Amz-Credential=)([^/\s]+)`)
+	// A virtual MFA device's seed and QR code both configure an authenticator for it.
+	reSecretKey = regexp.MustCompile(
+		`(SecretAccessKey|SessionToken|KeyMaterial|Password|Base32StringSeed|QRCodePNG)(["=:]\s*)([^"&\s<]+)`)
+	reXMLSecret = regexp.MustCompile(
+		`(?i)(<(?:SecretAccessKey|SessionToken|KeyMaterial|Password|Base32StringSeed|QRCodePNG)>)([^<]*)(</)`)
 	// S3 SignatureDoesNotMatch bodies echo the access key ID, the signature and
 	// the canonical request, whose hex form can carry a signed session token.
 	reXMLKeyID = regexp.MustCompile(`(?i)(<AWSAccessKeyId>)([^<]*)(</)`)
