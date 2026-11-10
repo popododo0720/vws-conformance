@@ -1,6 +1,7 @@
 package iam_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/popododo0720/vws-conformance/iam"
@@ -13,6 +14,7 @@ func TestPolicyTagsExpectations(t *testing.T) {
 		"IAM-PTAG-102": {HTTP: 400, Code: "InvalidInput"},
 	}
 	g := iam.PolicyTags()
+	g.Cases = slices.DeleteFunc(slices.Clone(g.Cases), func(c cases.Case) bool { return c.Op != "ListPolicyTags" })
 	if len(g.Cases) != len(want) {
 		t.Fatalf("cases = %d, want %d", len(g.Cases), len(want))
 	}

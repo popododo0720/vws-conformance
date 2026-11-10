@@ -212,7 +212,7 @@ func TestForeignPolicyIsPreserved(t *testing.T) {
 
 func TestProbeRefusesPolicyNotNamedForRun(t *testing.T) {
 	fake, rt := newIAMGate(t)
-	view := begin(t, rt, "IAM-PTAG-105")
+	view := begin(t, rt, "IAM-PTAG-107")
 	arn := policyArn("someone-elses-policy")
 	fake.put(arn, nil)
 	_, err := view.IAMProbeUntagPolicy(context.Background(),
@@ -231,7 +231,7 @@ func TestProbeSendsWhatTheSDKWouldRefuse(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			fake, rt := newIAMGate(t)
-			view := begin(t, rt, "IAM-PTAG-101")
+			view := begin(t, rt, "IAM-PTAG-103")
 			if _, err := view.IAMProbeUntagPolicy(context.Background(), in); err == nil {
 				t.Fatal("the fake rejects both, but no error came back")
 			}
