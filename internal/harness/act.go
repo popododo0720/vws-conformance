@@ -25,6 +25,7 @@ import (
 
 const (
 	KindVolume   Kind = "volume"
+	KindSnapshot Kind = "snapshot"
 	KindKeyPair  Kind = "key-pair"
 	KindInstance Kind = "instance"
 	KindPolicy   Kind = "iam-policy"
@@ -87,6 +88,14 @@ var kinds = map[Kind]kindSpec{
 		fetch: fetchMFADeviceTags,
 		remove: func(ctx context.Context, cl *Clients, id string) error {
 			_, err := deleteVirtualMFADevice(ctx, cl, id)
+			return err
+		},
+	},
+	KindSnapshot: {
+		absence: "InvalidSnapshot.NotFound", doc: cases.DocEC2Errors, minted: true,
+		fetch: fetchSnapshots,
+		remove: func(ctx context.Context, cl *Clients, id string) error {
+			_, err := deleteSnapshot(ctx, cl, id)
 			return err
 		},
 	},
@@ -166,6 +175,66 @@ func (rt *Runtime) EC2ModifyVolume(ctx context.Context, in *ec2.ModifyVolumeInpu
 			out, err := rt.Clients.EC2.ModifyVolume(ctx, in, oneAttempt)
 			return out, wrapErr("ModifyVolume", err)
 		})
+}
+
+// EC2CreateSnapshot registers cleanup before sending and tags the snapshot for this run.
+func (rt *Runtime) EC2CreateSnapshot(ctx context.Context, in *ec2.CreateSnapshotInput,
+) (*ec2.CreateSnapshotOutput, error) {
+	if in == nil {
+		return nil, errors.New("CreateSnapshot: input is nil")
+	}
+	if rt.Clients == nil || rt.Clients.EC2 == nil {
+		return nil, errors.New("CreateSnapshot: ec2 client is unset")
+	}
+	specs, err := withRunTag(in.TagSpecifications, types.ResourceTypeSnapshot, rt.RunID())
+	if err != nil {
+		return nil, fmt.Errorf("CreateSnapshot: %w", err)
+	}
+	tagged := *in
+	tagged.TagSpecifications = specs
+	return create(ctx, rt, KindSnapshot, func(ctx context.Context) (*ec2.CreateSnapshotOutput, error) {
+		out, err := rt.Clients.EC2.CreateSnapshot(ctx, &tagged, oneAttempt)
+		return out, wrapErr("CreateSnapshot", err)
+	}, func(out *ec2.CreateSnapshotOutput) string {
+		if out == nil {
+			return ""
+		}
+		return aws.ToString(out.SnapshotId)
+	})
+}
+
+// EC2DeleteSnapshot requires fresh exact-id ownership evidence before deleting.
+func (rt *Runtime) EC2DeleteSnapshot(ctx context.Context, id string) (*ec2.DeleteSnapshotOutput, error) {
+	return mutate(ctx, rt, Ref{Kind: KindSnapshot, ID: id}, true,
+		func(ctx context.Context) (*ec2.DeleteSnapshotOutput, error) {
+			return deleteSnapshot(ctx, rt.Clients, id)
+		})
+}
+
+func fetchSnapshots(ctx context.Context, cl *Clients, id string, token *string) (page, error) {
+	if cl == nil || cl.EC2 == nil {
+		return page{}, errors.New("DescribeSnapshots: ec2 client is unset")
+	}
+	out, err := cl.EC2.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{SnapshotIds: []string{id}, NextToken: token})
+	if err != nil {
+		return page{}, fmt.Errorf("DescribeSnapshots: %w", err)
+	}
+	if out == nil {
+		return page{}, errors.New("DescribeSnapshots: nil output")
+	}
+	p := page{next: out.NextToken}
+	for _, snap := range out.Snapshots {
+		p.items = append(p.items, item{ID: aws.ToString(snap.SnapshotId), RunTags: ec2RunTags(snap.Tags)})
+	}
+	return p, nil
+}
+
+func deleteSnapshot(ctx context.Context, cl *Clients, id string) (*ec2.DeleteSnapshotOutput, error) {
+	if cl == nil || cl.EC2 == nil {
+		return nil, errors.New("DeleteSnapshot: ec2 client is unset")
+	}
+	out, err := cl.EC2.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: aws.String(id)}, oneAttempt)
+	return out, wrapErr("DeleteSnapshot", err)
 }
 
 // IAMCreatePolicy creates a policy and registers its deletion before the request is sent. The
