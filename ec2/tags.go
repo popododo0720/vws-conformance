@@ -19,16 +19,17 @@ func Tags() bind.Group {
 		{
 			ID: "EC2-TAG-001", Service: "ec2", Group: "tags", Op: "CreateTags", Kind: cases.KindTags, Suite: cases.SuiteSDK,
 			DocURL: cases.DocEC2("CreateTags"),
-			Expect: cases.Expect{HTTP: 200, Patterns: map[string]string{"tag_state": "^present$"}}, Impl: "yes",
+			Expect: cases.Expect{HTTP: 200, Patterns: map[string]string{"setup": "^ok$", "tag_state": "^present$"}}, Impl: "yes",
 		},
 		{
 			ID: "EC2-TAG-101", Service: "ec2", Group: "tags", Op: "CreateTags", Kind: cases.KindError, Suite: cases.SuiteSDK,
-			DocURL: cases.DocEC2Errors, Expect: cases.Expect{HTTP: 400, Code: "InvalidParameterValue"}, Impl: "yes",
+			DocURL: cases.DocEC2Errors, Impl: "yes",
+			Expect: cases.Expect{HTTP: 400, Code: "InvalidParameterValue", Patterns: map[string]string{"setup": "^ok$"}},
 		},
 		{
 			ID: "EC2-GAP-007", Service: "ec2", Group: "tags", Op: "DeleteTags", Kind: cases.KindGap, Suite: cases.SuiteSDK,
 			DocURL: cases.DocEC2("DeleteTags"),
-			Expect: cases.Expect{HTTP: 200, Patterns: map[string]string{"tag_state": "^absent$"}}, Impl: "yes",
+			Expect: cases.Expect{HTTP: 200, Patterns: map[string]string{"setup": "^ok$", "tag_state": "^absent$"}}, Impl: "yes",
 		},
 	}}
 }
@@ -43,11 +44,20 @@ func runTags(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	if err != nil {
 		return cases.Outcome{}, err
 	}
-	volume, err := rt.EC2CreateVolume(ctx, &awsec2.CreateVolumeInput{
-		AvailabilityZone: aws.String("vws-1a"), Size: aws.Int32(harness.VolumeGiB), VolumeType: types.VolumeTypeGp2,
+	var volume *awsec2.CreateVolumeOutput
+	setup, err := rt.Call(ctx, func(ctx context.Context) error {
+		var createErr error
+		volume, createErr = rt.EC2CreateVolume(ctx, &awsec2.CreateVolumeInput{
+			AvailabilityZone: aws.String("vws-1a"), Size: aws.Int32(harness.VolumeGiB), VolumeType: types.VolumeTypeGp2,
+		})
+		return wrapErr("create volume", createErr)
 	})
 	if err != nil {
-		return cases.Outcome{}, fmt.Errorf("tag volume: %w", err)
+		return setup, fmt.Errorf("tag volume: %w", err)
+	}
+	if setup.Code != "" {
+		setup.Fields["setup"] = "refused"
+		return setup, nil
 	}
 	id := aws.ToString(volume.VolumeId)
 	tags := []types.Tag{{Key: aws.String("Name"), Value: aws.String(rt.Name("tag"))}}
@@ -70,6 +80,7 @@ func runTags(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 	if err != nil {
 		return outcome, wrapErr("runTags", err)
 	}
+	outcome.Fields["setup"] = "ok"
 	if c.ID == "EC2-TAG-101" {
 		return outcome, nil
 	}

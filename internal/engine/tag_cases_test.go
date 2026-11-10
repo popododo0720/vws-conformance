@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/popododo0720/vws-conformance/internal/ec2fake"
 	"github.com/popododo0720/vws-conformance/internal/harness"
 
 	ec2cases "github.com/popododo0720/vws-conformance/ec2"
@@ -76,5 +77,19 @@ func TestTagCaseWaitsForEventualRead(t *testing.T) {
 	}
 	if _, ok := fake.Volume("vol-00000000000000001"); ok {
 		t.Fatal("delayed read lost cleanup")
+	}
+}
+
+func TestTagCasesFailWhenVolumeSetupIsRefused(t *testing.T) {
+	fake, rt := gateRuntime(t)
+	fake.SetCreateHook(func() ec2fake.CreateResult { return ec2fake.CreateResult{Code: "InvalidParameterValue"} })
+	group := ec2cases.Tags()
+	for _, c := range group.Cases {
+		t.Run(c.ID, func(t *testing.T) {
+			result := runOne(context.Background(), rt, group, c)
+			if result.Status != "fail" {
+				t.Fatalf("case result = %+v", result)
+			}
+		})
 	}
 }
