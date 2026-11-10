@@ -24,6 +24,8 @@ const (
 	KindInstance Kind = "instance"
 )
 
+const KindVPC Kind = "vpc"
+
 type kindSpec struct {
 	absence string // the error code AWS documents for a missing resource, cited in doc
 	doc     string
@@ -46,6 +48,14 @@ var kinds = map[Kind]kindSpec{
 		fetch: fetchInstances,
 		remove: func(ctx context.Context, cl *Clients, id string) error {
 			_, err := terminateInstance(ctx, cl, id)
+			return err
+		},
+	},
+	KindVPC: {
+		absence: "InvalidVpcID.NotFound", doc: cases.DocEC2Errors, minted: true,
+		fetch: fetchVpcs,
+		remove: func(ctx context.Context, cl *Clients, id string) error {
+			_, err := deleteVpc(ctx, cl, id)
 			return err
 		},
 	},
@@ -437,4 +447,59 @@ func fetchInstances(ctx context.Context, cl *Clients, id string, token *string) 
 		}
 	}
 	return p, nil
+}
+
+func (rt *Runtime) EC2CreateVpc(ctx context.Context, in *ec2.CreateVpcInput) (*ec2.CreateVpcOutput, error) {
+	if in == nil {
+		return nil, errors.New("CreateVpc: input is nil")
+	}
+	if rt.Clients == nil || rt.Clients.EC2 == nil {
+		return nil, errors.New("CreateVpc: ec2 client is unset")
+	}
+	specs, err := withRunTag(in.TagSpecifications, types.ResourceTypeVpc, rt.RunID())
+	if err != nil {
+		return nil, fmt.Errorf("CreateVpc: %w", err)
+	}
+	tagged := *in
+	tagged.TagSpecifications = specs
+	return create(ctx, rt, KindVPC, func(ctx context.Context) (*ec2.CreateVpcOutput, error) {
+		out, err := rt.Clients.EC2.CreateVpc(ctx, &tagged, oneAttempt)
+		return out, wrapErr("CreateVpc", err)
+	}, func(out *ec2.CreateVpcOutput) string {
+		if out == nil || out.Vpc == nil {
+			return ""
+		}
+		return aws.ToString(out.Vpc.VpcId)
+	})
+}
+
+func (rt *Runtime) EC2DeleteVpc(ctx context.Context, id string) (*ec2.DeleteVpcOutput, error) {
+	return mutate(ctx, rt, Ref{Kind: KindVPC, ID: id}, true,
+		func(ctx context.Context) (*ec2.DeleteVpcOutput, error) { return deleteVpc(ctx, rt.Clients, id) })
+}
+
+func fetchVpcs(ctx context.Context, cl *Clients, id string, token *string) (page, error) {
+	if cl == nil || cl.EC2 == nil {
+		return page{}, errors.New("DescribeVpcs: ec2 client is unset")
+	}
+	out, err := cl.EC2.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{VpcIds: []string{id}, NextToken: token})
+	if err != nil {
+		return page{}, fmt.Errorf("DescribeVpcs: %w", err)
+	}
+	if out == nil {
+		return page{}, errors.New("DescribeVpcs: nil output")
+	}
+	p := page{next: out.NextToken}
+	for _, v := range out.Vpcs {
+		p.items = append(p.items, item{ID: aws.ToString(v.VpcId), RunTags: ec2RunTags(v.Tags)})
+	}
+	return p, nil
+}
+
+func deleteVpc(ctx context.Context, cl *Clients, id string) (*ec2.DeleteVpcOutput, error) {
+	if cl == nil || cl.EC2 == nil {
+		return nil, errors.New("DeleteVpc: ec2 client is unset")
+	}
+	out, err := cl.EC2.DeleteVpc(ctx, &ec2.DeleteVpcInput{VpcId: aws.String(id)}, oneAttempt)
+	return out, wrapErr("DeleteVpc", err)
 }

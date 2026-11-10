@@ -17,6 +17,7 @@ type Server struct {
 
 	mu       sync.Mutex
 	vols     map[string]map[string]string
+	vpcs     map[string]map[string]string
 	calls    map[string]int
 	seq      int
 	onCreate func() CreateResult
@@ -30,7 +31,7 @@ type CreateResult struct {
 }
 
 func New() *Server {
-	s := &Server{vols: map[string]map[string]string{}, calls: map[string]int{}}
+	s := &Server{vols: map[string]map[string]string{}, vpcs: map[string]map[string]string{}, calls: map[string]int{}}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
 	return s
 }
@@ -71,6 +72,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	s.calls[action]++
 	s.mu.Unlock()
 	switch action {
+	case "CreateVpc":
+		s.createVpc(w, r)
+	case "DescribeVpcs":
+		s.describeVpc(w, r.Form.Get("VpcId.1"))
+	case "DeleteVpc":
+		s.deleteVpc(w, r.Form.Get("VpcId"))
 	case "CreateVolume":
 		s.create(w, r)
 	case "DescribeVolumes":
