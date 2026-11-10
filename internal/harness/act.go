@@ -5,11 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/smithy-go"
+	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 
 	"github.com/popododo0720/vws-conformance/internal/cases"
@@ -22,6 +25,7 @@ const (
 	KindVolume   Kind = "volume"
 	KindKeyPair  Kind = "key-pair"
 	KindInstance Kind = "instance"
+	KindPolicy   Kind = "iam-policy"
 )
 
 const (
@@ -80,6 +84,19 @@ var kinds = map[Kind]kindSpec{
 			return err
 		},
 	},
+	// A policy name carries the run id, so only this run mints that ARN and the ledger proves
+	// ownership. VWS CreatePolicy does not take Tags, so a run tag cannot be stamped at creation;
+	// a policy that carries another run's tag is still preserved.
+	KindPolicy: {
+		absence: "NoSuchEntity",
+		doc:     cases.DocIAM("ListPolicyTags"),
+		minted:  true,
+		fetch:   fetchPolicy,
+		remove: func(ctx context.Context, cl *Clients, id string) error {
+			_, err := deletePolicy(ctx, cl, id)
+			return err
+		},
+	},
 }
 
 // EC2CreateVolume creates a volume tagged with this run and registers its deletion before the
@@ -114,6 +131,122 @@ func (rt *Runtime) EC2DeleteVolume(ctx context.Context, id string) (*ec2.DeleteV
 		func(ctx context.Context) (*ec2.DeleteVolumeOutput, error) { return deleteVolume(ctx, rt.Clients, id) })
 }
 
+// IAMCreatePolicy creates a policy and registers its deletion before the request is sent. The
+// policy name must carry this run's id.
+func (rt *Runtime) IAMCreatePolicy(ctx context.Context, in *iam.CreatePolicyInput) (*iam.CreatePolicyOutput, error) {
+	if in == nil {
+		return nil, errors.New("CreatePolicy: input is nil")
+	}
+	if rt.Clients == nil || rt.Clients.IAM == nil {
+		return nil, errors.New("CreatePolicy: iam client is unset")
+	}
+	if !strings.HasPrefix(aws.ToString(in.PolicyName), NamePrefix(rt.RunID())) {
+		return nil, fmt.Errorf("CreatePolicy: policy name must start with %s", NamePrefix(rt.RunID()))
+	}
+	return create(ctx, rt, KindPolicy, func(ctx context.Context) (*iam.CreatePolicyOutput, error) {
+		out, err := rt.Clients.IAM.CreatePolicy(ctx, in, iamOneAttempt)
+		return out, wrapErr("CreatePolicy", err)
+	}, func(out *iam.CreatePolicyOutput) string {
+		if out == nil || out.Policy == nil {
+			return ""
+		}
+		return aws.ToString(out.Policy.Arn)
+	})
+}
+
+// IAMTagPolicy tags a policy only when a fresh observation proves this run owns it.
+func (rt *Runtime) IAMTagPolicy(ctx context.Context, in *iam.TagPolicyInput) (*iam.TagPolicyOutput, error) {
+	return mutate(ctx, rt, Ref{Kind: KindPolicy, ID: aws.ToString(in.PolicyArn)}, false,
+		func(ctx context.Context) (*iam.TagPolicyOutput, error) {
+			out, err := rt.Clients.IAM.TagPolicy(ctx, in, iamOneAttempt)
+			return out, wrapErr("TagPolicy", err)
+		})
+}
+
+// IAMUntagPolicy untags a policy only when a fresh observation proves this run owns it.
+func (rt *Runtime) IAMUntagPolicy(ctx context.Context, in *iam.UntagPolicyInput) (*iam.UntagPolicyOutput, error) {
+	return mutate(ctx, rt, Ref{Kind: KindPolicy, ID: aws.ToString(in.PolicyArn)}, false,
+		func(ctx context.Context) (*iam.UntagPolicyOutput, error) {
+			return untagPolicy(ctx, rt.Clients, in)
+		})
+}
+
+// IAMProbeUntagPolicy sends an UntagPolicy the service is expected to reject, for a policy this
+// run does not own: an absent one, one in another account, or none. The ARN must carry this run's
+// id, so only this run could ever have made the policy, and an observation must not show it
+// present: a policy that exists is touched only through IAMUntagPolicy.
+func (rt *Runtime) IAMProbeUntagPolicy(ctx context.Context, in *iam.UntagPolicyInput) (*iam.UntagPolicyOutput, error) {
+	arn := aws.ToString(in.PolicyArn)
+	ref := Ref{Kind: KindPolicy, ID: arn}
+	switch {
+	case arn != "" && !strings.Contains(arn, NamePrefix(rt.RunID())):
+		return nil, &PreserveError{Ref: ref, Reason: "probe target is not named for this run"}
+	}
+	s, err := rt.admit()
+	if err != nil {
+		return nil, fmt.Errorf("probe %s %s: %w", ref.Kind, arn, err)
+	}
+	defer s.mu.Unlock()
+	if arn != "" {
+		if obs := rt.observeRef(ctx, kinds[KindPolicy], ref); obs.Status == StatusPresent {
+			return nil, &PreserveError{Ref: ref, Reason: "probe target exists"}
+		}
+	}
+	out, err := withDeadline(ctx, func(ctx context.Context) (*iam.UntagPolicyOutput, error) {
+		return untagPolicy(ctx, rt.Clients, in)
+	})
+	if err != nil {
+		return out, fmt.Errorf("probe %s %s: %w", ref.Kind, arn, err)
+	}
+	return out, nil
+}
+
+// IAMDeletePolicy deletes a policy only when a fresh observation proves this run owns it.
+func (rt *Runtime) IAMDeletePolicy(ctx context.Context, arn string) (*iam.DeletePolicyOutput, error) {
+	return mutate(ctx, rt, Ref{Kind: KindPolicy, ID: arn}, true,
+		func(ctx context.Context) (*iam.DeletePolicyOutput, error) { return deletePolicy(ctx, rt.Clients, arn) })
+}
+
+func fetchPolicy(ctx context.Context, cl *Clients, id string, token *string) (page, error) {
+	if cl == nil || cl.IAM == nil {
+		return page{}, errors.New("ListPolicyTags: iam client is unset")
+	}
+	out, err := cl.IAM.ListPolicyTags(ctx, &iam.ListPolicyTagsInput{PolicyArn: aws.String(id), Marker: token})
+	if err != nil {
+		return page{}, fmt.Errorf("ListPolicyTags: %w", err)
+	}
+	if out == nil {
+		return page{}, errors.New("ListPolicyTags: nil output")
+	}
+	it := item{ID: id}
+	for _, t := range out.Tags {
+		if aws.ToString(t.Key) == RunTagKey {
+			it.RunTags = append(it.RunTags, aws.ToString(t.Value))
+		}
+	}
+	p := page{items: []item{it}}
+	if out.IsTruncated {
+		p.next = out.Marker
+	}
+	return p, nil
+}
+
+func untagPolicy(ctx context.Context, cl *Clients, in *iam.UntagPolicyInput) (*iam.UntagPolicyOutput, error) {
+	if cl == nil || cl.IAM == nil {
+		return nil, errors.New("UntagPolicy: iam client is unset")
+	}
+	out, err := cl.IAM.UntagPolicy(ctx, in, withoutInputValidation, iamOneAttempt)
+	return out, wrapErr("UntagPolicy", err)
+}
+
+func deletePolicy(ctx context.Context, cl *Clients, arn string) (*iam.DeletePolicyOutput, error) {
+	if cl == nil || cl.IAM == nil {
+		return nil, errors.New("DeletePolicy: iam client is unset")
+	}
+	out, err := cl.IAM.DeletePolicy(ctx, &iam.DeletePolicyInput{PolicyArn: aws.String(arn)}, iamOneAttempt)
+	return out, wrapErr("DeletePolicy", err)
+}
+
 func fetchVolumes(ctx context.Context, cl *Clients, id string, token *string) (page, error) {
 	if cl == nil || cl.EC2 == nil {
 		return page{}, errors.New("DescribeVolumes: ec2 client is unset")
@@ -144,6 +277,17 @@ func deleteVolume(ctx context.Context, cl *Clients, id string) (*ec2.DeleteVolum
 // delete a resource whose owner changed after the observation, or answer an API error for a
 // volume the first attempt made. census_test.go requires it on every mutating call here.
 func oneAttempt(o *ec2.Options) { o.RetryMaxAttempts = 1 }
+
+func iamOneAttempt(o *iam.Options) { o.RetryMaxAttempts = 1 }
+
+// withoutInputValidation drops the SDK's required-member check so a request with a missing member
+// reaches the service, which must answer the documented error itself.
+func withoutInputValidation(o *iam.Options) {
+	o.APIOptions = append(o.APIOptions, func(s *middleware.Stack) error {
+		_, err := s.Initialize.Remove("OperationInputValidation")
+		return wrapErr("withoutInputValidation", err)
+	})
+}
 
 func ec2RunTags(tags []types.Tag) []string {
 	var values []string

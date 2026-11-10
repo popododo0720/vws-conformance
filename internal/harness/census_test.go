@@ -394,9 +394,10 @@ func moduleRoot(t *testing.T) string {
 	}
 }
 
-// isPackageOneAttempt reports that id resolves to the package-level oneAttempt of the harness,
+// isPackageOneAttempt reports that id resolves to the package-level oneAttempt or iamOneAttempt of the harness,
 // not a local value that happens to share its name.
 func isPackageOneAttempt(pkg *packages.Package, id *ast.Ident) bool {
 	obj, ok := pkg.TypesInfo.Uses[id].(*types.Func)
-	return ok && obj.Name() == "oneAttempt" && obj.Pkg() == pkg.Types && obj.Parent() == pkg.Types.Scope()
+	return ok && (obj.Name() == "oneAttempt" || obj.Name() == "iamOneAttempt") &&
+		obj.Pkg() == pkg.Types && obj.Parent() == pkg.Types.Scope()
 }
