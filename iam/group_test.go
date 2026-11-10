@@ -16,3 +16,4 @@ func TestUsers(t *testing.T)      { engine.TestGroup(t, "iam", "users") }
 func TestMFA(t *testing.T)        { engine.TestGroup(t, "iam", "mfa") }
 func TestMFATags(t *testing.T)    { engine.TestGroup(t, "iam", "mfatags") }
 func TestPolicyTags(t *testing.T) { engine.TestGroup(t, "iam", "policytags") }
+func TestRoles(t *testing.T)      { engine.TestGroup(t, "iam", "roles") }
