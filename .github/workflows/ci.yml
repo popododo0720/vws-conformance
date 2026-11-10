@@ -16,6 +16,8 @@ jobs:
       - run: scripts/guard-agents.sh selftest
       - run: scripts/guard-agents.sh agents
       - run: scripts/guard-agents.sh rules
+      - name: Install strace
+        run: sudo apt-get update && sudo apt-get install -y strace
       - name: Go tests
         run: |
           if [ ! -f go.mod ]; then echo "no go.mod yet: nothing to test"; exit 0; fi
