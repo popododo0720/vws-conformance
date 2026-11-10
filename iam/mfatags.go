@@ -66,7 +66,7 @@ func runMFATags(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.O
 		if rt.Cfg.AccountID == "" {
 			return cases.Outcome{}, fmt.Errorf("account ID is unset")
 		}
-		serial := fmt.Sprintf("arn:aws:iam::%s:mfa/%s", rt.Cfg.AccountID, rt.Name("mtag"))
+		serial := fmt.Sprintf("arn:aws:iam::%s:mfa/%s", rt.Cfg.AccountID, rt.Name("mtag-none"))
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
 			_, err := rt.Clients.IAM.ListMFADeviceTags(ctx, &awsiam.ListMFADeviceTagsInput{SerialNumber: aws.String(serial)})
 			return wrapErr("list tags", err)
