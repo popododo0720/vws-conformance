@@ -503,3 +503,44 @@ func deleteVpc(ctx context.Context, cl *Clients, id string) (*ec2.DeleteVpcOutpu
 	out, err := cl.EC2.DeleteVpc(ctx, &ec2.DeleteVpcInput{VpcId: aws.String(id)}, oneAttempt)
 	return out, wrapErr("DeleteVpc", err)
 }
+
+func writableTags(tags []types.Tag) error {
+	for _, tag := range tags {
+		if aws.ToString(tag.Key) == "" {
+			return errors.New("tag key is required by the cleanup gate")
+		}
+		if aws.ToString(tag.Key) == RunTagKey {
+			return fmt.Errorf("tag %s is reserved for the cleanup gate", RunTagKey)
+		}
+	}
+	return nil
+}
+
+func (rt *Runtime) EC2CreateTags(ctx context.Context, id string, tags []types.Tag) (*ec2.CreateTagsOutput, error) {
+	if err := writableTags(tags); err != nil {
+		return nil, err
+	}
+	return mutate(ctx, rt, Ref{Kind: KindVolume, ID: id}, false, func(ctx context.Context) (*ec2.CreateTagsOutput, error) {
+		if rt.Clients == nil || rt.Clients.EC2 == nil {
+			return nil, errors.New("CreateTags: ec2 client is unset")
+		}
+		out, err := rt.Clients.EC2.CreateTags(ctx, &ec2.CreateTagsInput{Resources: []string{id}, Tags: tags}, oneAttempt)
+		return out, wrapErr("CreateTags", err)
+	})
+}
+
+func (rt *Runtime) EC2DeleteTags(ctx context.Context, id string, tags []types.Tag) (*ec2.DeleteTagsOutput, error) {
+	if len(tags) == 0 {
+		return nil, errors.New("DeleteTags: deleting all tags would remove cleanup ownership")
+	}
+	if err := writableTags(tags); err != nil {
+		return nil, err
+	}
+	return mutate(ctx, rt, Ref{Kind: KindVolume, ID: id}, false, func(ctx context.Context) (*ec2.DeleteTagsOutput, error) {
+		if rt.Clients == nil || rt.Clients.EC2 == nil {
+			return nil, errors.New("DeleteTags: ec2 client is unset")
+		}
+		out, err := rt.Clients.EC2.DeleteTags(ctx, &ec2.DeleteTagsInput{Resources: []string{id}, Tags: tags}, oneAttempt)
+		return out, wrapErr("DeleteTags", err)
+	})
+}
