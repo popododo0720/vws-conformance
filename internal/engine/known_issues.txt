@@ -21,17 +21,15 @@ VPC-GAP-006 https://github.com/popododo0720/vws-console-api/issues/205
 # UntagPolicy on another account's policy answers NoSuchEntity, not AccessDenied: popododo0720/vws-console-api#560
 IAM-PTAG-108 https://github.com/popododo0720/vws-console-api/issues/560
 
-# The virtual MFA device setup is refused on local-fake: the console-api fake pinned in CI predates
-# CreateVirtualMFADevice (vws-console-api#173, closed) and vws-proto#129 (closed) added the Tags field
-# to CreateVirtualMfaDeviceRequest, but the pinned fake does not forward Tags.member.N. The
-# TagMFADevice, UntagMFADevice and ListMFADeviceTags calls themselves are not implemented yet:
-# each case links the open vws-iam parity issue for the call it needs.
-IAM-MTAG-001 https://github.com/popododo0720/vws-iam/issues/77
-IAM-MTAG-002 https://github.com/popododo0720/vws-iam/issues/78
-IAM-MTAG-003 https://github.com/popododo0720/vws-iam/issues/79
-IAM-MTAG-101 https://github.com/popododo0720/vws-iam/issues/77
-IAM-MTAG-102 https://github.com/popododo0720/vws-iam/issues/78
-IAM-MTAG-104 https://github.com/popododo0720/vws-iam/issues/77
-IAM-MTAG-105 https://github.com/popododo0720/vws-iam/issues/77
-IAM-MTAG-106 https://github.com/popododo0720/vws-iam/issues/77
-IAM-MTAG-107 https://github.com/popododo0720/vws-iam/issues/77
+# The virtual MFA device setup is refused: the pinned console-api fake does not forward Tags.member.N
+# on CreateVirtualMFADevice, so every IAM-MTAG case fails at setup (setup=refused) before it reaches
+# the tag call: popododo0720/vws-console-api#850
+IAM-MTAG-001 https://github.com/popododo0720/vws-console-api/issues/850
+IAM-MTAG-002 https://github.com/popododo0720/vws-console-api/issues/850
+IAM-MTAG-003 https://github.com/popododo0720/vws-console-api/issues/850
+IAM-MTAG-101 https://github.com/popododo0720/vws-console-api/issues/850
+IAM-MTAG-102 https://github.com/popododo0720/vws-console-api/issues/850
+IAM-MTAG-104 https://github.com/popododo0720/vws-console-api/issues/850
+IAM-MTAG-105 https://github.com/popododo0720/vws-console-api/issues/850
+IAM-MTAG-106 https://github.com/popododo0720/vws-console-api/issues/850
+IAM-MTAG-107 https://github.com/popododo0720/vws-console-api/issues/850
