@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,23 +15,38 @@ import (
 // execs that binary under strace, so the build cost is paid once per test run.
 var buildOnce struct {
 	sync.Once
+	dir string
 	bin string
 	err error
 }
 
+// TestMain removes the build directory once every test in the package has run.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if buildOnce.dir != "" {
+		if err := os.RemoveAll(buildOnce.dir); err != nil {
+			fmt.Fprintln(os.Stderr, "remove build dir:", err)
+		}
+	}
+	os.Exit(code)
+}
+
 func confRunBinary(t *testing.T) string {
 	t.Helper()
+	root := repoRoot(t)
 	buildOnce.Do(func() {
-		root := repoRoot(t)
 		dir, err := os.MkdirTemp("", "conf-run-egress-*")
 		if err != nil {
 			buildOnce.err = err
 			return
 		}
+		buildOnce.dir = dir
 		bin := filepath.Join(dir, "conf-run")
 		cmd := exec.CommandContext(t.Context(), "go", "build", "-o", bin, "./cmd/conf-run")
 		cmd.Dir = root
-		cmd.Env = scriptEnv(dir, nil)
+		// CGO_ENABLED=0 keeps every lookup in the Go resolver, so a lookup cannot go through
+		// glibc NSS over AF_UNIX and slip past the AF_INET trace.
+		cmd.Env = scriptEnv(dir, []string{"CGO_ENABLED=0"})
 		if out, buildErr := cmd.CombinedOutput(); buildErr != nil {
 			buildOnce.err = wrapBuildErr(buildErr, out)
 			return
@@ -66,12 +82,17 @@ func straceOrSkip(t *testing.T) {
 	}
 }
 
-// tracedRun runs bin under strace, tracing only the syscalls that open or use a network socket.
-// It returns the process exit code, its stderr and the raw strace output.
+// tracedRun runs bin under strace and fails closed: connect, sendto, sendmsg and sendmmsg are
+// injected with ENETUNREACH and never executed, so no packet (DNS included) can leave even if the
+// guard under test regresses. The attempt is still recorded in the trace. It returns the process
+// exit code, its stderr and the raw strace output.
 func tracedRun(t *testing.T, bin string, args, env []string) (code int, stderr, trace string) {
 	t.Helper()
 	traceFile := filepath.Join(t.TempDir(), "strace.log")
-	full := append([]string{"-f", "-e", "trace=connect,sendto,sendmsg", "-o", traceFile, bin}, args...)
+	full := append([]string{
+		"-f", "-e", "trace=connect,sendto,sendmsg,sendmmsg",
+		"-e", "inject=connect,sendto,sendmsg,sendmmsg:error=ENETUNREACH", "-o", traceFile, bin,
+	}, args...)
 	cmd := exec.CommandContext(t.Context(), "strace", full...)
 	cmd.Env = env
 	var errBuf strings.Builder
