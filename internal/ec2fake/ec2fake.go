@@ -16,12 +16,13 @@ import (
 type Server struct {
 	*httptest.Server
 
-	mu       sync.Mutex
-	vols     map[string]map[string]string
-	vpcs     map[string]map[string]string
-	calls    map[string]int
-	seq      int
-	onCreate func() CreateResult
+	mu               sync.Mutex
+	vols             map[string]map[string]string
+	vpcs             map[string]map[string]string
+	internetGateways map[string]map[string]string
+	calls            map[string]int
+	seq              int
+	onCreate         func() CreateResult
 }
 
 // CreateResult is what a create hook asks CreateVolume to do. The zero value creates the volume.
@@ -32,7 +33,10 @@ type CreateResult struct {
 }
 
 func New() *Server {
-	s := &Server{vols: map[string]map[string]string{}, vpcs: map[string]map[string]string{}, calls: map[string]int{}}
+	s := &Server{
+		vols: map[string]map[string]string{}, vpcs: map[string]map[string]string{},
+		internetGateways: map[string]map[string]string{}, calls: map[string]int{},
+	}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
 	return s
 }
@@ -79,6 +83,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.describeVpc(w, r.Form.Get("VpcId.1"))
 	case "DeleteVpc":
 		s.deleteVpc(w, r.Form.Get("VpcId"))
+	case "CreateInternetGateway":
+		s.createInternetGateway(w, r)
+	case "DescribeInternetGateways":
+		s.describeInternetGateway(w, r.Form.Get("InternetGatewayId.1"))
+	case "DeleteInternetGateway":
+		s.deleteInternetGateway(w, r.Form.Get("InternetGatewayId"))
 	case "CreateVolume":
 		s.create(w, r)
 	case "DescribeVolumes":
