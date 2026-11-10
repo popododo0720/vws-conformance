@@ -20,3 +20,16 @@ VPC-GAP-006 https://github.com/popododo0720/vws-console-api/issues/205
 
 # UntagPolicy on another account's policy answers NoSuchEntity, not AccessDenied: popododo0720/vws-console-api#560
 IAM-PTAG-108 https://github.com/popododo0720/vws-console-api/issues/560
+
+# The virtual MFA device setup is refused: the pinned console-api fake does not forward Tags.member.N
+# on CreateVirtualMFADevice, so every IAM-MTAG case fails at setup (setup=refused) before it reaches
+# the tag call: popododo0720/vws-console-api#850
+IAM-MTAG-001 https://github.com/popododo0720/vws-console-api/issues/850
+IAM-MTAG-002 https://github.com/popododo0720/vws-console-api/issues/850
+IAM-MTAG-003 https://github.com/popododo0720/vws-console-api/issues/850
+IAM-MTAG-101 https://github.com/popododo0720/vws-console-api/issues/850
+IAM-MTAG-102 https://github.com/popododo0720/vws-console-api/issues/850
+IAM-MTAG-104 https://github.com/popododo0720/vws-console-api/issues/850
+IAM-MTAG-105 https://github.com/popododo0720/vws-console-api/issues/850
+IAM-MTAG-106 https://github.com/popododo0720/vws-console-api/issues/850
+IAM-MTAG-107 https://github.com/popododo0720/vws-console-api/issues/850

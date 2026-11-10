@@ -36,6 +36,7 @@ func TestIAMGroups(t *testing.T) {
 	}{
 		{"iam/mfa.go", Group{Service: "iam", Name: "mfa"}},
 		{"iam/policytags.go", Group{Service: "iam", Name: "policytags"}},
+		{"iam/mfatags.go", Group{Service: "iam", Name: "mfatags"}},
 		{"iam/users.go", Group{Service: "iam", Name: "users"}},
 	} {
 		got := Select([]string{tc.file})

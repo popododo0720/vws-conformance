@@ -6,6 +6,8 @@ package expect
 // EC2: https://docs.aws.amazon.com/AWSEC2/latest/APIReference/errors-overview.html
 // S3: https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
 // IAM: https://docs.aws.amazon.com/IAM/latest/APIReference/CommonErrors.html
+// IAM InvalidInput is not a common error: its phrase is the description each action documents,
+// "an invalid or out-of-range value was supplied for an input parameter" (API_TagMFADevice.html).
 // IAM access denied: https://docs.aws.amazon.com/IAM/latest/UserGuide/troubleshoot_access-denied.html
 var documentedMessage = map[string]string{
 	"InvalidVpcRange":               `(?i)(cidr|block).+(/28.+/16|/16.+/28)`,
@@ -50,6 +52,7 @@ var documentedMessage = map[string]string{
 	"UnauthorizedOperation":         `(?i)you are not authorized to perform this operation`,
 	"EntityAlreadyExists":           `(?i)already exists`,
 	"NoSuchEntity":                  `(?i)(cannot be found|does not exist)`,
+	"InvalidInput":                  `(?i)an invalid or out-of-range value was supplied for (an|the) input parameter`,
 	"DeleteConflict":                `(?i)cannot be deleted`,
 	"ValidationError":               `(?i)validation error`,
 	"LimitExceeded":                 `(?i)cannot exceed quota`,

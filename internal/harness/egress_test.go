@@ -199,6 +199,10 @@ var egressGrants = []grant{
 	{site{"internal/ec2fake/ec2fake.go", "New"}, symbol{"net/http/httptest", "NewServer"}},
 	{site{"internal/ec2fake/ec2fake.go", "New"}, symbol{"net/http/httptest", "Server"}},
 	{site{"internal/ec2fake/ec2fake.go", "Server"}, symbol{"net/http/httptest", "Server"}},
+	// iamfake is the loopback IAM server the tests run against.
+	{site{"internal/iamfake/iamfake.go", "New"}, symbol{"net/http/httptest", "NewServer"}},
+	{site{"internal/iamfake/iamfake.go", "New"}, symbol{"net/http/httptest", "Server"}},
+	{site{"internal/iamfake/iamfake.go", "Server"}, symbol{"net/http/httptest", "Server"}},
 	// These tests stand in for the aws CLI, which sends through the pinned loopback proxy with a
 	// default client.
 	{site{"internal/harness/pin_test.go", "TestPinDialsApprovedAddress"}, symbol{"net/http", "DefaultClient"}},
