@@ -85,7 +85,9 @@ func observe(ctx context.Context, runID string, ref Ref, absence string,
 		if gone != 1 || obs.Matches != 1 {
 			return fail(errors.New("conflicting terminated observations"))
 		}
+		// A terminated instance is gone: report the same shape as a NotFound answer.
 		obs.Status = StatusAbsent
+		obs.Matches = 0
 		return obs
 	}
 	obs.Status = StatusPresent

@@ -141,4 +141,13 @@ func TestInstanceGateTreatsTerminatedAsGone(t *testing.T) {
 	if obs.Status != StatusAbsent {
 		t.Fatalf("terminated observation = %+v", obs)
 	}
+	rec := Record{Ref: obs.Ref, State: StateDeleted}
+	d := Decide(IntentCleanup, true, rec, obs)
+	if d.Verdict != VerdictAlreadyGone {
+		t.Fatalf("terminated instance after our terminate decided %+v from %+v", d, obs)
+	}
+	rec.State = StateCreated
+	if d := Decide(IntentCleanup, true, rec, obs); d.Verdict != VerdictProceed {
+		t.Fatalf("terminated instance after create decided %+v from %+v", d, obs)
+	}
 }
