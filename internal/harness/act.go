@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsarn "github.com/aws/aws-sdk-go-v2/aws/arn"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
@@ -179,8 +180,11 @@ func (rt *Runtime) IAMUntagPolicy(ctx context.Context, in *iam.UntagPolicyInput)
 
 // IAMProbeUntagPolicy sends an UntagPolicy the service is expected to reject, for a policy this
 // run does not own: an absent one, one in another account, or none. The ARN must carry this run's
-// id, so only this run could ever have made the policy, and an observation must show it absent:
-// a policy that exists, or whose state is unknown, is touched only through IAMUntagPolicy.
+// id, so only this run could ever have made the policy, and an observation must not show it present.
+// In this run's account it must show it absent: a policy that exists, or whose state is unknown,
+// is touched only through IAMUntagPolicy. A target in another verified-different account is sent
+// even when its state is unknown, because a cross-account read is denied just like the call under
+// test, and this run creates resources only in its own account, so the target cannot be its own.
 func (rt *Runtime) IAMProbeUntagPolicy(ctx context.Context, in *iam.UntagPolicyInput) (*iam.UntagPolicyOutput, error) {
 	if in == nil {
 		return nil, errors.New("UntagPolicy: input is nil")
@@ -201,6 +205,10 @@ func (rt *Runtime) IAMProbeUntagPolicy(ctx context.Context, in *iam.UntagPolicyI
 		case StatusPresent:
 			return nil, &PreserveError{Ref: ref, Reason: "probe target exists"}
 		case StatusAbsent:
+		case StatusUnknown:
+			if !inOtherAccount(arn, rt.Cfg.AccountID) {
+				return nil, &PreserveError{Ref: ref, Reason: "probe target is not proven absent"}
+			}
 		default:
 			return nil, &PreserveError{Ref: ref, Reason: "probe target is not proven absent"}
 		}
@@ -212,6 +220,12 @@ func (rt *Runtime) IAMProbeUntagPolicy(ctx context.Context, in *iam.UntagPolicyI
 		return out, fmt.Errorf("probe %s %s: %w", ref.Kind, arn, err)
 	}
 	return out, nil
+}
+
+// inOtherAccount reports whether arn parses and names an account other than the verified account.
+func inOtherAccount(arn, account string) bool {
+	parsed, err := awsarn.Parse(arn)
+	return err == nil && account != "" && parsed.AccountID != "" && parsed.AccountID != account
 }
 
 // IAMDeletePolicy deletes a policy only when a fresh observation proves this run owns it.

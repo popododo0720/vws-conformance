@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html"
 	"net/http"
@@ -14,9 +15,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
+	"github.com/aws/smithy-go"
 )
 
-const iamAccount = "123456789012"
+const (
+	iamAccount     = "123456789012"
+	foreignAccount = "210987654321"
+)
 
 // iamFake is a loopback IAM query server for the managed-policy calls the gate makes.
 type iamFake struct {
@@ -76,6 +81,9 @@ func (f *iamFake) serve(w http.ResponseWriter, r *http.Request) {
 			"</Arn></Policy></CreatePolicyResult>"
 	case arn == "":
 		iamError(w, http.StatusBadRequest, "ValidationError")
+		return
+	case strings.Contains(arn, ":"+foreignAccount+":"):
+		iamError(w, http.StatusForbidden, "AccessDenied")
 		return
 	case !exists:
 		iamError(w, http.StatusNotFound, "NoSuchEntity")
@@ -248,12 +256,44 @@ func TestProbeSendsWhatTheSDKWouldRefuse(t *testing.T) {
 
 func TestProbeRefusesWhenOwnershipIsUnknown(t *testing.T) {
 	fake, rt := newIAMGate(t)
+	rt.Cfg.AccountID = iamAccount
 	view := begin(t, rt, "IAM-PTAG-107")
 	fake.mu.Lock()
 	fake.listFail = true
 	fake.mu.Unlock()
 	_, err := view.IAMProbeUntagPolicy(context.Background(),
 		&iam.UntagPolicyInput{PolicyArn: aws.String(policyArn(NamePrefix(testRun) + "-gone")), TagKeys: []string{"a"}})
+	wantPreserve(t, err, "not proven absent")
+	if fake.count("UntagPolicy") != 0 {
+		t.Fatal("UntagPolicy reached the server")
+	}
+}
+
+// A cross-account read is denied like the call under test, so ownership stays unknown; the target
+// is in another account, which this run never creates in, so the probe must still send.
+func TestProbeSendsCrossAccountCallAndGetsAccessDenied(t *testing.T) {
+	fake, rt := newIAMGate(t)
+	rt.Cfg.AccountID = iamAccount
+	view := begin(t, rt, "IAM-PTAG-108")
+	arn := fmt.Sprintf("arn:aws:iam::%s:policy/%s", foreignAccount, rt.Name("ptag-foreign"))
+	_, err := view.IAMProbeUntagPolicy(context.Background(),
+		&iam.UntagPolicyInput{PolicyArn: aws.String(arn), TagKeys: []string{"a"}})
+	var api smithy.APIError
+	if !errors.As(err, &api) || api.ErrorCode() != "AccessDenied" {
+		t.Fatalf("err %v, want AccessDenied from the service", err)
+	}
+	if fake.count("UntagPolicy") != 1 {
+		t.Fatalf("UntagPolicy reached the server %d times, want 1", fake.count("UntagPolicy"))
+	}
+}
+
+// Without a verified account the probe cannot tell a foreign target from its own and must refuse.
+func TestProbeRefusesCrossAccountWithoutVerifiedAccount(t *testing.T) {
+	fake, rt := newIAMGate(t)
+	view := begin(t, rt, "IAM-PTAG-108")
+	arn := fmt.Sprintf("arn:aws:iam::%s:policy/%s", foreignAccount, rt.Name("ptag-foreign"))
+	_, err := view.IAMProbeUntagPolicy(context.Background(),
+		&iam.UntagPolicyInput{PolicyArn: aws.String(arn), TagKeys: []string{"a"}})
 	wantPreserve(t, err, "not proven absent")
 	if fake.count("UntagPolicy") != 0 {
 		t.Fatal("UntagPolicy reached the server")
