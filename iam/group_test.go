@@ -12,5 +12,6 @@ func TestMain(m *testing.M) {
 	os.Exit(harness.Main(m))
 }
 
-func TestUsers(t *testing.T) { engine.TestGroup(t, "iam", "users") }
-func TestMFA(t *testing.T)   { engine.TestGroup(t, "iam", "mfa") }
+func TestUsers(t *testing.T)      { engine.TestGroup(t, "iam", "users") }
+func TestMFA(t *testing.T)        { engine.TestGroup(t, "iam", "mfa") }
+func TestPolicyTags(t *testing.T) { engine.TestGroup(t, "iam", "policytags") }
