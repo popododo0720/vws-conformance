@@ -1,0 +1,25 @@
+{
+  "botocore": "1.44.0",
+  "models": [
+    {
+      "service": "ec2",
+      "path": "botocore/data/ec2/2016-11-15/service-2.json",
+      "sha256": "442433e85066484814197a9b56427ca5955c0517a55ffd2c063699f7a43a0c60"
+    },
+    {
+      "service": "iam",
+      "path": "botocore/data/iam/2010-05-08/service-2.json",
+      "sha256": "15c70eaeb15bda321fbf0e9a0db35036d67c6ccd34d38acbcad3a086b89251c5"
+    },
+    {
+      "service": "s3",
+      "path": "botocore/data/s3/2006-03-01/service-2.json",
+      "sha256": "84c3a4e6ac1c80ed49cb1ddf1f548ea7f51d8a41acbfa0f198b9ba0028d784e8"
+    },
+    {
+      "service": "sts",
+      "path": "botocore/data/sts/2011-06-15/service-2.json",
+      "sha256": "d97a08aa49223dee070009624c1d70f5b6af6ccc43220cc30ff566d5f02f3c0b"
+    }
+  ]
+}
