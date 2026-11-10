@@ -1,0 +1,191 @@
+{
+  "metadata": {
+    "apiVersion": "2010-05-08",
+    "protocol": "query",
+    "serviceId": "Fixture"
+  },
+  "operations": {
+    "AddMember": {
+      "name": "AddMember",
+      "input": {
+        "shape": "AddMemberRequest"
+      },
+      "output": {
+        "shape": "Empty"
+      }
+    },
+    "RemoveMember": {
+      "name": "RemoveMember",
+      "input": {
+        "shape": "RemoveMemberRequest"
+      }
+    },
+    "EnumOp": {
+      "name": "EnumOp",
+      "input": {
+        "shape": "EnumOpRequest"
+      }
+    },
+    "ErrorOp": {
+      "name": "ErrorOp",
+      "input": {
+        "shape": "Empty"
+      },
+      "errors": [
+        {
+          "shape": "NoSuchEntityException"
+        },
+        {
+          "shape": "LimitExceededException"
+        }
+      ]
+    },
+    "RequiredOp": {
+      "name": "RequiredOp",
+      "input": {
+        "shape": "RequiredOpRequest"
+      }
+    },
+    "SameOp": {
+      "name": "SameOp",
+      "input": {
+        "shape": "SameOpRequest"
+      },
+      "output": {
+        "shape": "Node"
+      },
+      "errors": [
+        {
+          "shape": "NoSuchEntityException"
+        }
+      ],
+      "documentation": "<p>New text.</p>"
+    }
+  },
+  "shapes": {
+    "Empty": {
+      "type": "structure",
+      "members": {}
+    },
+    "String": {
+      "type": "string"
+    },
+    "AddMemberRequest": {
+      "type": "structure",
+      "members": {
+        "Name": {
+          "shape": "String"
+        },
+        "Extra": {
+          "shape": "String"
+        }
+      }
+    },
+    "RemoveMemberRequest": {
+      "type": "structure",
+      "members": {
+        "Name": {
+          "shape": "String"
+        }
+      }
+    },
+    "EnumOpRequest": {
+      "type": "structure",
+      "members": {
+        "State": {
+          "shape": "State"
+        }
+      }
+    },
+    "State": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "running",
+        "stopped"
+      ]
+    },
+    "RequiredOpRequest": {
+      "type": "structure",
+      "members": {
+        "Name": {
+          "shape": "String"
+        }
+      },
+      "required": [
+        "Name"
+      ]
+    },
+    "SameOpRequest": {
+      "type": "structure",
+      "required": [
+        "Tags"
+      ],
+      "members": {
+        "Tags": {
+          "shape": "TagMap"
+        },
+        "Ids": {
+          "shape": "IdList"
+        }
+      }
+    },
+    "TagMap": {
+      "type": "map",
+      "key": {
+        "shape": "String"
+      },
+      "value": {
+        "shape": "String"
+      }
+    },
+    "IdList": {
+      "type": "list",
+      "member": {
+        "shape": "String"
+      }
+    },
+    "Node": {
+      "type": "structure",
+      "members": {
+        "Children": {
+          "shape": "NodeList"
+        }
+      }
+    },
+    "NodeList": {
+      "type": "list",
+      "member": {
+        "shape": "Node"
+      }
+    },
+    "NoSuchEntityException": {
+      "type": "structure",
+      "members": {
+        "message": {
+          "shape": "String"
+        }
+      },
+      "error": {
+        "code": "NoSuchEntity",
+        "httpStatusCode": 404,
+        "senderFault": true
+      },
+      "exception": true
+    },
+    "LimitExceededException": {
+      "type": "structure",
+      "members": {
+        "message": {
+          "shape": "String"
+        }
+      },
+      "error": {
+        "code": "LimitExceeded",
+        "httpStatusCode": 409,
+        "senderFault": true
+      },
+      "exception": true
+    }
+  }
+}
