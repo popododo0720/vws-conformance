@@ -8,6 +8,7 @@ package expect
 // IAM: https://docs.aws.amazon.com/IAM/latest/APIReference/CommonErrors.html
 // IAM access denied: https://docs.aws.amazon.com/IAM/latest/UserGuide/troubleshoot_access-denied.html
 var documentedMessage = map[string]string{
+	"InvalidVpcRange":               `(?i)(cidr|block).+(/28.+/16|/16.+/28)`,
 	"InvalidVolume.NotFound":        `(?i)volume '.+' does not exist`,
 	"InvalidSnapshot.NotFound":      `(?i)snapshot '.+' does not exist`,
 	"InvalidInstanceID.NotFound":    `(?i)instance id '.+' does not exist`,
