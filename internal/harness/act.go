@@ -24,7 +24,10 @@ const (
 	KindInstance Kind = "instance"
 )
 
-const KindVPC Kind = "vpc"
+const (
+	KindVPC             Kind = "vpc"
+	KindInternetGateway Kind = "internet-gateway"
+)
 
 type kindSpec struct {
 	absence string // the error code AWS documents for a missing resource, cited in doc
@@ -56,6 +59,14 @@ var kinds = map[Kind]kindSpec{
 		fetch: fetchVpcs,
 		remove: func(ctx context.Context, cl *Clients, id string) error {
 			_, err := deleteVpc(ctx, cl, id)
+			return err
+		},
+	},
+	KindInternetGateway: {
+		absence: "InvalidInternetGatewayID.NotFound", doc: cases.DocEC2Errors, minted: true,
+		fetch: fetchInternetGateways,
+		remove: func(ctx context.Context, cl *Clients, id string) error {
+			_, err := deleteInternetGateway(ctx, cl, id)
 			return err
 		},
 	},
@@ -496,6 +507,58 @@ func fetchVpcs(ctx context.Context, cl *Clients, id string, token *string) (page
 	return p, nil
 }
 
+func (rt *Runtime) EC2CreateInternetGateway(ctx context.Context, in *ec2.CreateInternetGatewayInput,
+) (*ec2.CreateInternetGatewayOutput, error) {
+	if in == nil {
+		return nil, errors.New("CreateInternetGateway: input is nil")
+	}
+	if rt.Clients == nil || rt.Clients.EC2 == nil {
+		return nil, errors.New("CreateInternetGateway: ec2 client is unset")
+	}
+	specs, err := withRunTag(in.TagSpecifications, types.ResourceTypeInternetGateway, rt.RunID())
+	if err != nil {
+		return nil, fmt.Errorf("CreateInternetGateway: %w", err)
+	}
+	tagged := *in
+	tagged.TagSpecifications = specs
+	return create(ctx, rt, KindInternetGateway, func(ctx context.Context) (*ec2.CreateInternetGatewayOutput, error) {
+		out, err := rt.Clients.EC2.CreateInternetGateway(ctx, &tagged, oneAttempt)
+		return out, wrapErr("CreateInternetGateway", err)
+	}, func(out *ec2.CreateInternetGatewayOutput) string {
+		if out == nil || out.InternetGateway == nil {
+			return ""
+		}
+		return aws.ToString(out.InternetGateway.InternetGatewayId)
+	})
+}
+
+func (rt *Runtime) EC2DeleteInternetGateway(ctx context.Context, id string) (*ec2.DeleteInternetGatewayOutput, error) {
+	return mutate(ctx, rt, Ref{Kind: KindInternetGateway, ID: id}, true,
+		func(ctx context.Context) (*ec2.DeleteInternetGatewayOutput, error) {
+			return deleteInternetGateway(ctx, rt.Clients, id)
+		})
+}
+
+func fetchInternetGateways(ctx context.Context, cl *Clients, id string, token *string) (page, error) {
+	if cl == nil || cl.EC2 == nil {
+		return page{}, errors.New("DescribeInternetGateways: ec2 client is unset")
+	}
+	out, err := cl.EC2.DescribeInternetGateways(ctx, &ec2.DescribeInternetGatewaysInput{
+		InternetGatewayIds: []string{id}, NextToken: token,
+	})
+	if err != nil {
+		return page{}, fmt.Errorf("DescribeInternetGateways: %w", err)
+	}
+	if out == nil {
+		return page{}, errors.New("DescribeInternetGateways: nil output")
+	}
+	p := page{next: out.NextToken}
+	for _, v := range out.InternetGateways {
+		p.items = append(p.items, item{ID: aws.ToString(v.InternetGatewayId), RunTags: ec2RunTags(v.Tags)})
+	}
+	return p, nil
+}
+
 func deleteVpc(ctx context.Context, cl *Clients, id string) (*ec2.DeleteVpcOutput, error) {
 	if cl == nil || cl.EC2 == nil {
 		return nil, errors.New("DeleteVpc: ec2 client is unset")
@@ -543,4 +606,13 @@ func (rt *Runtime) EC2DeleteTags(ctx context.Context, id string, tags []types.Ta
 		out, err := rt.Clients.EC2.DeleteTags(ctx, &ec2.DeleteTagsInput{Resources: []string{id}, Tags: tags}, oneAttempt)
 		return out, wrapErr("DeleteTags", err)
 	})
+}
+
+func deleteInternetGateway(ctx context.Context, cl *Clients, id string) (*ec2.DeleteInternetGatewayOutput, error) {
+	if cl == nil || cl.EC2 == nil {
+		return nil, errors.New("DeleteInternetGateway: ec2 client is unset")
+	}
+	out, err := cl.EC2.DeleteInternetGateway(ctx,
+		&ec2.DeleteInternetGatewayInput{InternetGatewayId: aws.String(id)}, oneAttempt)
+	return out, wrapErr("DeleteInternetGateway", err)
 }

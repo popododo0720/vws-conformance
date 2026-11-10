@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+
 	awsec2 "github.com/aws/aws-sdk-go-v2/service/ec2"
 
 	"github.com/popododo0720/vws-conformance/internal/bind"
@@ -16,6 +18,11 @@ func Gaps() bind.Group {
 	return bind.Group{Service: "vpc", Name: "gaps", Run: runGaps, Cases: []cases.Case{
 		vpcGap("VPC-GAP-004", "DescribeAvailabilityZones"),
 		vpcGap("VPC-GAP-005", "DescribeRegions"),
+		{
+			ID: "VPC-GAP-006", Service: "vpc", Group: "gaps", Op: "CreateInternetGateway", Kind: cases.KindGap,
+			Suite: cases.SuiteSDK, DocURL: cases.DocEC2("CreateInternetGateway"), Impl: "yes",
+			Expect: cases.Expect{HTTP: 200, Patterns: map[string]string{"internetGatewayId": "^igw-[0-9a-f]+$"}},
+		},
 		vpcGap("VPC-GAP-007", "DescribeRouteTables"),
 	}}
 }
@@ -36,6 +43,17 @@ func runGaps(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outc
 		return cases.Outcome{}, err
 	}
 	switch c.ID {
+	case "VPC-GAP-006":
+		var created *awsec2.CreateInternetGatewayOutput
+		o, err := rt.Call(ctx, func(ctx context.Context) error {
+			var callErr error
+			created, callErr = rt.EC2CreateInternetGateway(ctx, &awsec2.CreateInternetGatewayInput{})
+			return wrapErr("runGaps", callErr)
+		})
+		if created != nil && created.InternetGateway != nil {
+			o.Fields["internetGatewayId"] = aws.ToString(created.InternetGateway.InternetGatewayId)
+		}
+		return o, wrapErr("runGaps", err)
 	case "VPC-GAP-004":
 		o, err := rt.Call(ctx, func(ctx context.Context) error {
 			_, err := api.DescribeAvailabilityZones(ctx, &awsec2.DescribeAvailabilityZonesInput{})
