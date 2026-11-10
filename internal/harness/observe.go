@@ -15,6 +15,7 @@ const RunTagKey = "vws-conformance:run"
 const maxPages = 100
 
 type item struct {
+	Gone    bool
 	ID      string
 	RunTags []string // values of every tag whose key is RunTagKey
 }
@@ -44,6 +45,7 @@ func observe(ctx context.Context, runID string, ref Ref, absence string,
 	var token *string
 	seen := map[string]bool{}
 	var tags []string
+	var gone int
 	for n := 1; ; n++ {
 		if n > maxPages {
 			return fail(fmt.Errorf("more than %d pages", maxPages))
@@ -62,6 +64,9 @@ func observe(ctx context.Context, runID string, ref Ref, absence string,
 				return fail(fmt.Errorf("page %d: id mismatch: got %q", n, it.ID))
 			}
 			obs.Matches++
+			if it.Gone {
+				gone++
+			}
 			tags = append(tags, it.RunTags...)
 		}
 		if p.next == nil || *p.next == "" {
@@ -75,6 +80,15 @@ func observe(ctx context.Context, runID string, ref Ref, absence string,
 	}
 	if obs.Matches == 0 {
 		return fail(errors.New("empty answer is not absence"))
+	}
+	if gone != 0 {
+		if gone != 1 || obs.Matches != 1 {
+			return fail(errors.New("conflicting terminated observations"))
+		}
+		// A terminated instance is gone: report the same shape as a NotFound answer.
+		obs.Status = StatusAbsent
+		obs.Matches = 0
+		return obs
 	}
 	obs.Status = StatusPresent
 	obs.Owner = owner(runID, tags)

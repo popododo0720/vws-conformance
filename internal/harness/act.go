@@ -19,8 +19,9 @@ import (
 // (census_test.go). Every such call goes through create or mutate, and cleanup through remove.
 
 const (
-	KindVolume  Kind = "volume"
-	KindKeyPair Kind = "key-pair"
+	KindVolume   Kind = "volume"
+	KindKeyPair  Kind = "key-pair"
+	KindInstance Kind = "instance"
 )
 
 type kindSpec struct {
@@ -37,6 +38,14 @@ var kinds = map[Kind]kindSpec{
 		fetch: fetchKeyPairs,
 		remove: func(ctx context.Context, cl *Clients, id string) error {
 			_, err := deleteKeyPair(ctx, cl, id)
+			return err
+		},
+	},
+	KindInstance: {
+		absence: "InvalidInstanceID.NotFound", doc: cases.DocEC2Errors, minted: true,
+		fetch: fetchInstances,
+		remove: func(ctx context.Context, cl *Clients, id string) error {
+			_, err := terminateInstance(ctx, cl, id)
 			return err
 		},
 	},
@@ -354,6 +363,78 @@ func fetchKeyPairs(ctx context.Context, cl *Clients, id string, token *string) (
 	var p page
 	for _, key := range out.KeyPairs {
 		p.items = append(p.items, item{ID: aws.ToString(key.KeyPairId), RunTags: ec2RunTags(key.Tags)})
+	}
+	return p, nil
+}
+
+// EC2RunInstances gates one instance per call so its cleanup record has one exact ID.
+func (rt *Runtime) EC2RunInstances(ctx context.Context, in *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {
+	if in == nil {
+		return nil, errors.New("RunInstances: input is nil")
+	}
+	if rt.Clients == nil || rt.Clients.EC2 == nil {
+		return nil, errors.New("RunInstances: ec2 client is unset")
+	}
+	if aws.ToInt32(in.MinCount) != 1 || aws.ToInt32(in.MaxCount) != 1 {
+		return nil, errors.New("RunInstances: the cleanup gate requires MinCount and MaxCount of one")
+	}
+	if len(in.NetworkInterfaces) != 0 {
+		return nil, errors.New("RunInstances: network interfaces would create resources the cleanup gate does not track")
+	}
+	for _, m := range in.BlockDeviceMappings {
+		if m.Ebs != nil && m.Ebs.DeleteOnTermination != nil && !*m.Ebs.DeleteOnTermination {
+			return nil, errors.New("RunInstances: DeleteOnTermination=false would leave an untracked volume")
+		}
+	}
+	specs, err := withRunTag(in.TagSpecifications, types.ResourceTypeInstance, rt.RunID())
+	if err != nil {
+		return nil, fmt.Errorf("RunInstances: %w", err)
+	}
+	tagged := *in
+	tagged.TagSpecifications = specs
+	return create(ctx, rt, KindInstance, func(ctx context.Context) (*ec2.RunInstancesOutput, error) {
+		out, err := rt.Clients.EC2.RunInstances(ctx, &tagged, oneAttempt)
+		return out, wrapErr("RunInstances", err)
+	}, func(out *ec2.RunInstancesOutput) string {
+		if out == nil || len(out.Instances) != 1 {
+			return ""
+		}
+		return aws.ToString(out.Instances[0].InstanceId)
+	})
+}
+
+func (rt *Runtime) EC2TerminateInstances(ctx context.Context, id string) (*ec2.TerminateInstancesOutput, error) {
+	return mutate(ctx, rt, Ref{Kind: KindInstance, ID: id}, true,
+		func(ctx context.Context) (*ec2.TerminateInstancesOutput, error) {
+			return terminateInstance(ctx, rt.Clients, id)
+		})
+}
+
+func terminateInstance(ctx context.Context, cl *Clients, id string) (*ec2.TerminateInstancesOutput, error) {
+	if cl == nil || cl.EC2 == nil {
+		return nil, errors.New("TerminateInstances: ec2 client is unset")
+	}
+	out, err := cl.EC2.TerminateInstances(ctx, &ec2.TerminateInstancesInput{InstanceIds: []string{id}}, oneAttempt)
+	return out, wrapErr("TerminateInstances", err)
+}
+
+func fetchInstances(ctx context.Context, cl *Clients, id string, token *string) (page, error) {
+	if cl == nil || cl.EC2 == nil {
+		return page{}, errors.New("DescribeInstances: ec2 client is unset")
+	}
+	out, err := cl.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{id}, NextToken: token})
+	if err != nil {
+		return page{}, fmt.Errorf("DescribeInstances: %w", err)
+	}
+	if out == nil {
+		return page{}, errors.New("DescribeInstances: nil output")
+	}
+	p := page{next: out.NextToken}
+	for _, res := range out.Reservations {
+		for _, inst := range res.Instances {
+			gone := inst.State != nil && inst.State.Name == types.InstanceStateNameTerminated
+			p.items = append(p.items, item{ID: aws.ToString(inst.InstanceId), RunTags: ec2RunTags(inst.Tags), Gone: gone})
+		}
 	}
 	return p, nil
 }
