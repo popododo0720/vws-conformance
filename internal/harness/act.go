@@ -18,7 +18,10 @@ import (
 // This file is the only place allowed to select a mutating method on an SDK client
 // (census_test.go). Every such call goes through create or mutate, and cleanup through remove.
 
-const KindVolume Kind = "volume"
+const (
+	KindVolume  Kind = "volume"
+	KindKeyPair Kind = "key-pair"
+)
 
 type kindSpec struct {
 	absence string // the error code AWS documents for a missing resource, cited in doc
@@ -29,6 +32,14 @@ type kindSpec struct {
 }
 
 var kinds = map[Kind]kindSpec{
+	KindKeyPair: {
+		absence: "InvalidKeyPair.NotFound", doc: cases.DocEC2Errors, minted: true,
+		fetch: fetchKeyPairs,
+		remove: func(ctx context.Context, cl *Clients, id string) error {
+			_, err := deleteKeyPair(ctx, cl, id)
+			return err
+		},
+	},
 	KindVolume: {
 		absence: "InvalidVolume.NotFound",
 		doc:     cases.DocEC2Errors,
@@ -263,4 +274,86 @@ func (rt *Runtime) observeRef(ctx context.Context, spec kindSpec, ref Ref) Obser
 		func(ctx context.Context, token *string) (page, error) {
 			return spec.fetch(ctx, rt.Clients, ref.ID, token)
 		})
+}
+
+func (rt *Runtime) EC2CreateKeyPair(ctx context.Context, in *ec2.CreateKeyPairInput) (*ec2.CreateKeyPairOutput, error) {
+	if in == nil {
+		return nil, errors.New("CreateKeyPair: input is nil")
+	}
+	if rt.Clients == nil || rt.Clients.EC2 == nil {
+		return nil, errors.New("CreateKeyPair: ec2 client is unset")
+	}
+	specs, err := withRunTag(in.TagSpecifications, types.ResourceTypeKeyPair, rt.RunID())
+	if err != nil {
+		return nil, fmt.Errorf("CreateKeyPair: %w", err)
+	}
+	tagged := *in
+	tagged.TagSpecifications = specs
+	return create(ctx, rt, KindKeyPair, func(ctx context.Context) (*ec2.CreateKeyPairOutput, error) {
+		out, err := rt.Clients.EC2.CreateKeyPair(ctx, &tagged, oneAttempt)
+		return out, wrapErr("CreateKeyPair", err)
+	}, func(out *ec2.CreateKeyPairOutput) string {
+		if out == nil {
+			return ""
+		}
+		return aws.ToString(out.KeyPairId)
+	})
+}
+
+func (rt *Runtime) EC2ImportKeyPair(ctx context.Context, in *ec2.ImportKeyPairInput) (*ec2.ImportKeyPairOutput, error) {
+	if in == nil {
+		return nil, errors.New("ImportKeyPair: input is nil")
+	}
+	if rt.Clients == nil || rt.Clients.EC2 == nil {
+		return nil, errors.New("ImportKeyPair: ec2 client is unset")
+	}
+	specs, err := withRunTag(in.TagSpecifications, types.ResourceTypeKeyPair, rt.RunID())
+	if err != nil {
+		return nil, fmt.Errorf("ImportKeyPair: %w", err)
+	}
+	tagged := *in
+	tagged.TagSpecifications = specs
+	return create(ctx, rt, KindKeyPair, func(ctx context.Context) (*ec2.ImportKeyPairOutput, error) {
+		out, err := rt.Clients.EC2.ImportKeyPair(ctx, &tagged, oneAttempt)
+		return out, wrapErr("ImportKeyPair", err)
+	}, func(out *ec2.ImportKeyPairOutput) string {
+		if out == nil {
+			return ""
+		}
+		return aws.ToString(out.KeyPairId)
+	})
+}
+
+func (rt *Runtime) EC2DeleteKeyPair(ctx context.Context, id string) (*ec2.DeleteKeyPairOutput, error) {
+	return mutate(ctx, rt, Ref{Kind: KindKeyPair, ID: id}, true,
+		func(ctx context.Context) (*ec2.DeleteKeyPairOutput, error) { return deleteKeyPair(ctx, rt.Clients, id) })
+}
+
+func deleteKeyPair(ctx context.Context, cl *Clients, id string) (*ec2.DeleteKeyPairOutput, error) {
+	if cl == nil || cl.EC2 == nil {
+		return nil, errors.New("DeleteKeyPair: ec2 client is unset")
+	}
+	out, err := cl.EC2.DeleteKeyPair(ctx, &ec2.DeleteKeyPairInput{KeyPairId: aws.String(id)}, oneAttempt)
+	return out, wrapErr("DeleteKeyPair", err)
+}
+
+func fetchKeyPairs(ctx context.Context, cl *Clients, id string, token *string) (page, error) {
+	if cl == nil || cl.EC2 == nil {
+		return page{}, errors.New("DescribeKeyPairs: ec2 client is unset")
+	}
+	if token != nil && *token != "" {
+		return page{}, errors.New("DescribeKeyPairs: unexpected pagination token")
+	}
+	out, err := cl.EC2.DescribeKeyPairs(ctx, &ec2.DescribeKeyPairsInput{KeyPairIds: []string{id}})
+	if err != nil {
+		return page{}, fmt.Errorf("DescribeKeyPairs: %w", err)
+	}
+	if out == nil {
+		return page{}, errors.New("DescribeKeyPairs: nil output")
+	}
+	var p page
+	for _, key := range out.KeyPairs {
+		p.items = append(p.items, item{ID: aws.ToString(key.KeyPairId), RunTags: ec2RunTags(key.Tags)})
+	}
+	return p, nil
 }
