@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
+	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
@@ -33,6 +34,9 @@ const (
 	KindVPC             Kind = "vpc"
 	KindInternetGateway Kind = "internet-gateway"
 )
+
+// KindMFADevice is a virtual MFA device; its id is the serial number.
+const KindMFADevice Kind = "mfa-device"
 
 type kindSpec struct {
 	absence string // the error code AWS documents for a missing resource, cited in doc
@@ -72,6 +76,16 @@ var kinds = map[Kind]kindSpec{
 		fetch: fetchInternetGateways,
 		remove: func(ctx context.Context, cl *Clients, id string) error {
 			_, err := deleteInternetGateway(ctx, cl, id)
+			return err
+		},
+	},
+	// A serial number is made from the device name, so a deleted one can be made again by anyone:
+	// only the run tag proves ownership.
+	KindMFADevice: {
+		absence: "NoSuchEntity", doc: cases.DocIAM("ListMFADeviceTags"), minted: false,
+		fetch: fetchMFADeviceTags,
+		remove: func(ctx context.Context, cl *Clients, id string) error {
+			_, err := deleteVirtualMFADevice(ctx, cl, id)
 			return err
 		},
 	},
@@ -786,4 +800,120 @@ func deleteInternetGateway(ctx context.Context, cl *Clients, id string) (*ec2.De
 	out, err := cl.EC2.DeleteInternetGateway(ctx,
 		&ec2.DeleteInternetGatewayInput{InternetGatewayId: aws.String(id)}, oneAttempt)
 	return out, wrapErr("DeleteInternetGateway", err)
+}
+
+// IAM tag keys are case-insensitive, so any spelling of the run tag key is refused.
+func reservedIAMKey(key string) error {
+	if strings.EqualFold(key, RunTagKey) {
+		return fmt.Errorf("tag %s is reserved for the cleanup gate", RunTagKey)
+	}
+	return nil
+}
+
+// IAMCreateVirtualMFADevice creates a virtual MFA device tagged with this run and registers its
+// deletion before the request is sent. The caller's input is not modified.
+func (rt *Runtime) IAMCreateVirtualMFADevice(ctx context.Context, in *iam.CreateVirtualMFADeviceInput,
+) (*iam.CreateVirtualMFADeviceOutput, error) {
+	if in == nil {
+		return nil, errors.New("CreateVirtualMFADevice: input is nil")
+	}
+	if rt.Clients == nil || rt.Clients.IAM == nil {
+		return nil, errors.New("CreateVirtualMFADevice: iam client is unset")
+	}
+	for _, t := range in.Tags {
+		if err := reservedIAMKey(aws.ToString(t.Key)); err != nil {
+			return nil, fmt.Errorf("CreateVirtualMFADevice: %w", err)
+		}
+	}
+	tagged := *in
+	tagged.Tags = append(slices.Clone(in.Tags), iamtypes.Tag{Key: aws.String(RunTagKey), Value: aws.String(rt.RunID())})
+	return create(ctx, rt, KindMFADevice, func(ctx context.Context) (*iam.CreateVirtualMFADeviceOutput, error) {
+		out, err := rt.Clients.IAM.CreateVirtualMFADevice(ctx, &tagged, iamOneAttempt)
+		return out, wrapErr("CreateVirtualMFADevice", err)
+	}, func(out *iam.CreateVirtualMFADeviceOutput) string {
+		if out == nil || out.VirtualMFADevice == nil {
+			return ""
+		}
+		return aws.ToString(out.VirtualMFADevice.SerialNumber)
+	})
+}
+
+func (rt *Runtime) IAMDeleteVirtualMFADevice(ctx context.Context, serial string,
+) (*iam.DeleteVirtualMFADeviceOutput, error) {
+	return mutate(ctx, rt, Ref{Kind: KindMFADevice, ID: serial}, true,
+		func(ctx context.Context) (*iam.DeleteVirtualMFADeviceOutput, error) {
+			return deleteVirtualMFADevice(ctx, rt.Clients, serial)
+		})
+}
+
+func (rt *Runtime) IAMTagMFADevice(ctx context.Context, serial string, tags []iamtypes.Tag,
+) (*iam.TagMFADeviceOutput, error) {
+	for _, t := range tags {
+		if err := reservedIAMKey(aws.ToString(t.Key)); err != nil {
+			return nil, fmt.Errorf("TagMFADevice: %w", err)
+		}
+	}
+	return mutate(ctx, rt, Ref{Kind: KindMFADevice, ID: serial}, false,
+		func(ctx context.Context) (*iam.TagMFADeviceOutput, error) {
+			if rt.Clients == nil || rt.Clients.IAM == nil {
+				return nil, errors.New("TagMFADevice: iam client is unset")
+			}
+			out, err := rt.Clients.IAM.TagMFADevice(ctx,
+				&iam.TagMFADeviceInput{SerialNumber: aws.String(serial), Tags: tags}, iamOneAttempt)
+			return out, wrapErr("TagMFADevice", err)
+		})
+}
+
+func (rt *Runtime) IAMUntagMFADevice(ctx context.Context, serial string, keys []string,
+) (*iam.UntagMFADeviceOutput, error) {
+	for _, key := range keys {
+		if err := reservedIAMKey(key); err != nil {
+			return nil, fmt.Errorf("UntagMFADevice: %w", err)
+		}
+	}
+	return mutate(ctx, rt, Ref{Kind: KindMFADevice, ID: serial}, false,
+		func(ctx context.Context) (*iam.UntagMFADeviceOutput, error) {
+			if rt.Clients == nil || rt.Clients.IAM == nil {
+				return nil, errors.New("UntagMFADevice: iam client is unset")
+			}
+			out, err := rt.Clients.IAM.UntagMFADevice(ctx,
+				&iam.UntagMFADeviceInput{SerialNumber: aws.String(serial), TagKeys: keys}, iamOneAttempt)
+			return out, wrapErr("UntagMFADevice", err)
+		})
+}
+
+func deleteVirtualMFADevice(ctx context.Context, cl *Clients, serial string,
+) (*iam.DeleteVirtualMFADeviceOutput, error) {
+	if cl == nil || cl.IAM == nil {
+		return nil, errors.New("DeleteVirtualMFADevice: iam client is unset")
+	}
+	out, err := cl.IAM.DeleteVirtualMFADevice(ctx,
+		&iam.DeleteVirtualMFADeviceInput{SerialNumber: aws.String(serial)}, iamOneAttempt)
+	return out, wrapErr("DeleteVirtualMFADevice", err)
+}
+
+// fetchMFADeviceTags observes a device through its tags. A device holds at most 50 tags, so one
+// page of the maximum size is the whole answer; a truncated one is not trusted.
+func fetchMFADeviceTags(ctx context.Context, cl *Clients, serial string, token *string) (page, error) {
+	if cl == nil || cl.IAM == nil {
+		return page{}, errors.New("ListMFADeviceTags: iam client is unset")
+	}
+	if token != nil && *token != "" {
+		return page{}, errors.New("ListMFADeviceTags: unexpected pagination token")
+	}
+	out, err := cl.IAM.ListMFADeviceTags(ctx,
+		&iam.ListMFADeviceTagsInput{SerialNumber: aws.String(serial), MaxItems: aws.Int32(1000)})
+	if err != nil {
+		return page{}, fmt.Errorf("ListMFADeviceTags: %w", err)
+	}
+	if out == nil || out.IsTruncated {
+		return page{}, errors.New("ListMFADeviceTags: nil or truncated output")
+	}
+	it := item{ID: serial}
+	for _, t := range out.Tags {
+		if strings.EqualFold(aws.ToString(t.Key), RunTagKey) {
+			it.RunTags = append(it.RunTags, aws.ToString(t.Value))
+		}
+	}
+	return page{items: []item{it}}, nil
 }
