@@ -28,6 +28,7 @@ const (
 	KindKeyPair  Kind = "key-pair"
 	KindInstance Kind = "instance"
 	KindPolicy   Kind = "iam-policy"
+	KindRole     Kind = "iam-role"
 )
 
 const (
@@ -109,6 +110,18 @@ var kinds = map[Kind]kindSpec{
 		fetch:   fetchPolicy,
 		remove: func(ctx context.Context, cl *Clients, id string) error {
 			_, err := deletePolicy(ctx, cl, id)
+			return err
+		},
+	},
+	// A role is owned the way a policy is: its name carries the run id, because VWS CreateRole
+	// does not take Tags. The id is the role name, the key GetRole and DeleteRole take.
+	KindRole: {
+		absence: "NoSuchEntity",
+		doc:     cases.DocIAM("GetRole"),
+		minted:  true,
+		fetch:   fetchRole,
+		remove: func(ctx context.Context, cl *Clients, id string) error {
+			_, err := deleteRole(ctx, cl, id)
 			return err
 		},
 	},
@@ -246,6 +259,93 @@ func inOtherAccount(arn, account string) bool {
 func (rt *Runtime) IAMDeletePolicy(ctx context.Context, arn string) (*iam.DeletePolicyOutput, error) {
 	return mutate(ctx, rt, Ref{Kind: KindPolicy, ID: arn}, true,
 		func(ctx context.Context) (*iam.DeletePolicyOutput, error) { return deletePolicy(ctx, rt.Clients, arn) })
+}
+
+// IAMCreateRole creates a role and registers its deletion before the request is sent. The role
+// name must carry this run's id. A response naming another role leaves the record lost, so cleanup
+// never deletes a role this run did not ask for.
+func (rt *Runtime) IAMCreateRole(ctx context.Context, in *iam.CreateRoleInput) (*iam.CreateRoleOutput, error) {
+	if in == nil {
+		return nil, errors.New("CreateRole: input is nil")
+	}
+	if rt.Clients == nil || rt.Clients.IAM == nil {
+		return nil, errors.New("CreateRole: iam client is unset")
+	}
+	name := aws.ToString(in.RoleName)
+	if !strings.HasPrefix(name, NamePrefix(rt.RunID())) {
+		return nil, fmt.Errorf("CreateRole: role name must start with %s", NamePrefix(rt.RunID()))
+	}
+	return create(ctx, rt, KindRole, func(ctx context.Context) (*iam.CreateRoleOutput, error) {
+		out, err := rt.Clients.IAM.CreateRole(ctx, in, iamOneAttempt)
+		return out, wrapErr("CreateRole", err)
+	}, func(out *iam.CreateRoleOutput) string {
+		if out == nil || out.Role == nil || aws.ToString(out.Role.RoleName) != name {
+			return ""
+		}
+		return name
+	})
+}
+
+// IAMDeleteRole deletes a role only when a fresh observation proves this run owns it.
+func (rt *Runtime) IAMDeleteRole(ctx context.Context, name string) (*iam.DeleteRoleOutput, error) {
+	return mutate(ctx, rt, Ref{Kind: KindRole, ID: name}, true,
+		func(ctx context.Context) (*iam.DeleteRoleOutput, error) { return deleteRole(ctx, rt.Clients, name) })
+}
+
+// IAMProbeDeleteRole sends a DeleteRole the service is expected to reject: the role is named for
+// this run, so only this run could have made it, and a fresh observation must show it absent. A
+// role that exists, or whose state is unknown, is touched only through IAMDeleteRole.
+func (rt *Runtime) IAMProbeDeleteRole(ctx context.Context, name string) (*iam.DeleteRoleOutput, error) {
+	ref := Ref{Kind: KindRole, ID: name}
+	if !strings.HasPrefix(name, NamePrefix(rt.RunID())) {
+		return nil, &PreserveError{Ref: ref, Reason: "probe target is not named for this run"}
+	}
+	s, err := rt.admit()
+	if err != nil {
+		return nil, fmt.Errorf("probe %s %s: %w", ref.Kind, name, err)
+	}
+	defer s.mu.Unlock()
+	if obs := rt.observeRef(ctx, kinds[KindRole], ref); obs.Status != StatusAbsent {
+		return nil, &PreserveError{Ref: ref, Reason: "probe target is not proven absent"}
+	}
+	out, err := withDeadline(ctx, func(ctx context.Context) (*iam.DeleteRoleOutput, error) {
+		return deleteRole(ctx, rt.Clients, name)
+	})
+	if err != nil {
+		return out, fmt.Errorf("probe %s %s: %w", ref.Kind, name, err)
+	}
+	return out, nil
+}
+
+func fetchRole(ctx context.Context, cl *Clients, id string, token *string) (page, error) {
+	if cl == nil || cl.IAM == nil {
+		return page{}, errors.New("GetRole: iam client is unset")
+	}
+	if token != nil && *token != "" {
+		return page{}, errors.New("GetRole: unexpected pagination token")
+	}
+	out, err := cl.IAM.GetRole(ctx, &iam.GetRoleInput{RoleName: aws.String(id)})
+	if err != nil {
+		return page{}, fmt.Errorf("GetRole: %w", err)
+	}
+	if out == nil || out.Role == nil {
+		return page{}, errors.New("GetRole: no role in output")
+	}
+	it := item{ID: aws.ToString(out.Role.RoleName)}
+	for _, t := range out.Role.Tags {
+		if aws.ToString(t.Key) == RunTagKey {
+			it.RunTags = append(it.RunTags, aws.ToString(t.Value))
+		}
+	}
+	return page{items: []item{it}}, nil
+}
+
+func deleteRole(ctx context.Context, cl *Clients, name string) (*iam.DeleteRoleOutput, error) {
+	if cl == nil || cl.IAM == nil {
+		return nil, errors.New("DeleteRole: iam client is unset")
+	}
+	out, err := cl.IAM.DeleteRole(ctx, &iam.DeleteRoleInput{RoleName: aws.String(name)}, iamOneAttempt)
+	return out, wrapErr("DeleteRole", err)
 }
 
 func fetchPolicy(ctx context.Context, cl *Clients, id string, token *string) (page, error) {
