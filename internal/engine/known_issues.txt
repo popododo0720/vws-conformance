@@ -4,3 +4,6 @@
 
 # FIDO GetMFADevice success: popododo0720/vws-iam#133
 IAM-MFA-001 https://github.com/popododo0720/vws-iam/issues/133
+
+# ListPolicyTags malformed ARN: vws-console-api#832
+IAM-PTAG-102 https://github.com/popododo0720/vws-console-api/issues/832
