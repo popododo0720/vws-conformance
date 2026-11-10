@@ -15,3 +15,5 @@ VPC-VPC-101 https://github.com/popododo0720/vws-console-api/issues/836
 EC2-TAG-001 https://github.com/popododo0720/vws-console-api/issues/838
 EC2-TAG-101 https://github.com/popododo0720/vws-console-api/issues/838
 EC2-GAP-007 https://github.com/popododo0720/vws-console-api/issues/838
+# CreateInternetGateway not implemented by the console-api fake backend: popododo0720/vws-console-api#205
+VPC-GAP-006 https://github.com/popododo0720/vws-console-api/issues/205
