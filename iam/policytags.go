@@ -15,7 +15,7 @@ import (
 const malformedPolicyARN = "not-a-policy-arn-value"
 
 func PolicyTags() bind.Group {
-	return bind.Group{Service: "iam", Name: "policytags", Run: runPolicyTags, Cases: []cases.Case{
+	return bind.Group{Service: "iam", Name: "policytags", Run: runPolicyTags, Cases: append([]cases.Case{
 		{
 			ID: "IAM-PTAG-101", Service: "iam", Group: "policytags", Op: "ListPolicyTags", Kind: cases.KindError,
 			Suite: cases.SuiteSDK, DocURL: cases.DocIAM("ListPolicyTags"),
@@ -26,10 +26,13 @@ func PolicyTags() bind.Group {
 			Suite: cases.SuiteSDK, DocURL: cases.DocIAM("ListPolicyTags"),
 			Expect: cases.Expect{HTTP: 400, Code: "InvalidInput"}, Impl: "yes",
 		},
-	}}
+	}, untagCases()...)}
 }
 
 func runPolicyTags(ctx context.Context, rt *harness.Runtime, c cases.Case) (cases.Outcome, error) {
+	if c.Op == "UntagPolicy" {
+		return runUntagPolicy(ctx, rt, c)
+	}
 	if rt.Clients == nil || rt.Clients.IAM == nil {
 		return cases.Outcome{}, fmt.Errorf("iam client is unset")
 	}

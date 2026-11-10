@@ -90,3 +90,40 @@ func ShapeField(o cases.Outcome, op, list string, required ...string) string {
 	}
 	return ShapeOK
 }
+
+// QueryNoResult checks the body of a Query-protocol action that returns no
+// data, such as IAM UntagPolicy: the root is <op>Response and holds only
+// ResponseMetadata with a RequestId, and no <op>Result element.
+func QueryNoResult(body []byte, op string) error {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return errors.New("response body is empty")
+	}
+	var root xmlNode
+	if err := xml.Unmarshal(body, &root); err != nil {
+		return fmt.Errorf("response body is not XML: %w", err)
+	}
+	if want := op + "Response"; root.XMLName.Local != want {
+		return fmt.Errorf("root element is %q, want %q", root.XMLName.Local, want)
+	}
+	for _, c := range root.Nodes {
+		if c.XMLName.Local != "ResponseMetadata" {
+			return fmt.Errorf("unexpected element %q", c.XMLName.Local)
+		}
+	}
+	id, ok := root.path("ResponseMetadata/RequestId")
+	if !ok || strings.TrimSpace(id.Text) == "" {
+		return errors.New("ResponseMetadata has no RequestId")
+	}
+	return nil
+}
+
+// QueryNoResultField runs QueryNoResult on a successful outcome, as ShapeField does.
+func QueryNoResultField(o cases.Outcome, op string) string {
+	if o.Code != "" || o.HTTP != 200 {
+		return ""
+	}
+	if err := QueryNoResult(o.Body, op); err != nil {
+		return err.Error()
+	}
+	return ShapeOK
+}
