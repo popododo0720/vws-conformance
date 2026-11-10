@@ -79,6 +79,23 @@ func TestJudgeIAMAccessAndNotFoundMessages(t *testing.T) {
 	}
 }
 
+func TestJudgeInvalidInputNeedsDocumentedPhrase(t *testing.T) {
+	exp := cases.Expect{HTTP: 400, Code: "InvalidInput"}
+	for _, msg := range []string{
+		"The request was rejected because an invalid or out-of-range value was supplied for an input parameter.",
+		"An invalid or out-of-range value was supplied for the input parameter.",
+	} {
+		if status, reason := Judge(exp, cases.Outcome{HTTP: 400, Code: "InvalidInput", Message: msg}); status != "pass" {
+			t.Fatalf("documented %q: status %s reason %q", msg, status, reason)
+		}
+	}
+	for _, msg := range []string{"Invalid tag.", "invalid", "value is out-of-range"} {
+		if status, _ := Judge(exp, cases.Outcome{HTTP: 400, Code: "InvalidInput", Message: msg}); status != "fail" {
+			t.Fatalf("undocumented %q: status %s, want fail", msg, status)
+		}
+	}
+}
+
 func TestJudgePass(t *testing.T) {
 	exp := cases.Expect{HTTP: 200, Patterns: map[string]string{"id": `^i-[0-9a-f]{8,17}$`}}
 	got := cases.Outcome{HTTP: 200, Fields: map[string]string{"id": "i-0123456789abcdef0"}}

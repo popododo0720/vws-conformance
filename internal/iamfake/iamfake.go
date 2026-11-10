@@ -19,6 +19,10 @@ import (
 // Account is the account every device serial number names.
 const Account = "123456789012"
 
+// invalidInputMessage is the description API_TagMFADevice documents for InvalidInput.
+const invalidInputMessage = "The request was rejected because an invalid or out-of-range value " +
+	"was supplied for an input parameter."
+
 // maxTags is the AWS limit of tags per IAM resource (TagMFADevice LimitExceeded).
 const maxTags = 50
 
@@ -150,7 +154,7 @@ func (s *Server) device(w http.ResponseWriter, r *http.Request, action string, t
 		for i := 1; r.Form.Has(fmt.Sprintf("TagKeys.member.%d", i)); i++ {
 			key := r.Form.Get(fmt.Sprintf("TagKeys.member.%d", i))
 			if !tagKeyRE.MatchString(key) {
-				writeError(w, http.StatusBadRequest, "InvalidInput", "Invalid tag key.")
+				writeError(w, http.StatusBadRequest, "InvalidInput", invalidInputMessage)
 				return
 			}
 			keys = append(keys, key)
@@ -193,9 +197,9 @@ func merge(dst map[string]string, tags []tag) (int, string, string) {
 	for _, t := range tags {
 		switch {
 		case !tagKeyRE.MatchString(t.key), utf8.RuneCountInString(t.value) > 256, !tagValueRE.MatchString(t.value):
-			return http.StatusBadRequest, "InvalidInput", "Invalid tag."
+			return http.StatusBadRequest, "InvalidInput", invalidInputMessage
 		case strings.HasPrefix(strings.ToLower(t.key), "aws:"):
-			return http.StatusBadRequest, "InvalidInput", "Invalid tag key: user-defined tag keys can't start with 'aws:'."
+			return http.StatusBadRequest, "InvalidInput", invalidInputMessage
 		}
 	}
 	for _, t := range tags {

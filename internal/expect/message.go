@@ -52,7 +52,7 @@ var documentedMessage = map[string]string{
 	"UnauthorizedOperation":         `(?i)you are not authorized to perform this operation`,
 	"EntityAlreadyExists":           `(?i)already exists`,
 	"NoSuchEntity":                  `(?i)(cannot be found|does not exist)`,
-	"InvalidInput":                  `(?i)(invalid|out-of-range)`,
+	"InvalidInput":                  `(?i)an invalid or out-of-range value was supplied for (an|the) input parameter`,
 	"DeleteConflict":                `(?i)cannot be deleted`,
 	"ValidationError":               `(?i)validation error`,
 	"LimitExceeded":                 `(?i)cannot exceed quota`,
