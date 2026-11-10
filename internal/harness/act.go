@@ -156,6 +156,9 @@ func (rt *Runtime) IAMCreatePolicy(ctx context.Context, in *iam.CreatePolicyInpu
 
 // IAMTagPolicy tags a policy only when a fresh observation proves this run owns it.
 func (rt *Runtime) IAMTagPolicy(ctx context.Context, in *iam.TagPolicyInput) (*iam.TagPolicyOutput, error) {
+	if in == nil {
+		return nil, errors.New("TagPolicy: input is nil")
+	}
 	return mutate(ctx, rt, Ref{Kind: KindPolicy, ID: aws.ToString(in.PolicyArn)}, false,
 		func(ctx context.Context) (*iam.TagPolicyOutput, error) {
 			out, err := rt.Clients.IAM.TagPolicy(ctx, in, iamOneAttempt)
@@ -165,6 +168,9 @@ func (rt *Runtime) IAMTagPolicy(ctx context.Context, in *iam.TagPolicyInput) (*i
 
 // IAMUntagPolicy untags a policy only when a fresh observation proves this run owns it.
 func (rt *Runtime) IAMUntagPolicy(ctx context.Context, in *iam.UntagPolicyInput) (*iam.UntagPolicyOutput, error) {
+	if in == nil {
+		return nil, errors.New("UntagPolicy: input is nil")
+	}
 	return mutate(ctx, rt, Ref{Kind: KindPolicy, ID: aws.ToString(in.PolicyArn)}, false,
 		func(ctx context.Context) (*iam.UntagPolicyOutput, error) {
 			return untagPolicy(ctx, rt.Clients, in)
@@ -173,9 +179,12 @@ func (rt *Runtime) IAMUntagPolicy(ctx context.Context, in *iam.UntagPolicyInput)
 
 // IAMProbeUntagPolicy sends an UntagPolicy the service is expected to reject, for a policy this
 // run does not own: an absent one, one in another account, or none. The ARN must carry this run's
-// id, so only this run could ever have made the policy, and an observation must not show it
-// present: a policy that exists is touched only through IAMUntagPolicy.
+// id, so only this run could ever have made the policy, and an observation must show it absent:
+// a policy that exists, or whose state is unknown, is touched only through IAMUntagPolicy.
 func (rt *Runtime) IAMProbeUntagPolicy(ctx context.Context, in *iam.UntagPolicyInput) (*iam.UntagPolicyOutput, error) {
+	if in == nil {
+		return nil, errors.New("UntagPolicy: input is nil")
+	}
 	arn := aws.ToString(in.PolicyArn)
 	ref := Ref{Kind: KindPolicy, ID: arn}
 	switch {
@@ -188,8 +197,12 @@ func (rt *Runtime) IAMProbeUntagPolicy(ctx context.Context, in *iam.UntagPolicyI
 	}
 	defer s.mu.Unlock()
 	if arn != "" {
-		if obs := rt.observeRef(ctx, kinds[KindPolicy], ref); obs.Status == StatusPresent {
+		switch obs := rt.observeRef(ctx, kinds[KindPolicy], ref); obs.Status {
+		case StatusPresent:
 			return nil, &PreserveError{Ref: ref, Reason: "probe target exists"}
+		case StatusAbsent:
+		default:
+			return nil, &PreserveError{Ref: ref, Reason: "probe target is not proven absent"}
 		}
 	}
 	out, err := withDeadline(ctx, func(ctx context.Context) (*iam.UntagPolicyOutput, error) {

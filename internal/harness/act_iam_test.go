@@ -24,6 +24,7 @@ type iamFake struct {
 	mu       sync.Mutex
 	policies map[string]map[string]string
 	calls    map[string]int
+	listFail bool
 }
 
 func newIAMFake(t *testing.T) *iamFake {
@@ -65,6 +66,9 @@ func (f *iamFake) serve(w http.ResponseWriter, r *http.Request) {
 	tags, exists := f.policies[arn]
 	body := ""
 	switch {
+	case action == "ListPolicyTags" && f.listFail:
+		iamError(w, http.StatusForbidden, "AccessDenied")
+		return
 	case action == "CreatePolicy":
 		arn = fmt.Sprintf("arn:aws:iam::%s:policy/%s", iamAccount, r.Form.Get("PolicyName"))
 		f.policies[arn] = map[string]string{}
@@ -239,5 +243,34 @@ func TestProbeSendsWhatTheSDKWouldRefuse(t *testing.T) {
 				t.Fatalf("UntagPolicy reached the server %d times, want 1", fake.count("UntagPolicy"))
 			}
 		})
+	}
+}
+
+func TestProbeRefusesWhenOwnershipIsUnknown(t *testing.T) {
+	fake, rt := newIAMGate(t)
+	view := begin(t, rt, "IAM-PTAG-107")
+	fake.mu.Lock()
+	fake.listFail = true
+	fake.mu.Unlock()
+	_, err := view.IAMProbeUntagPolicy(context.Background(),
+		&iam.UntagPolicyInput{PolicyArn: aws.String(policyArn(NamePrefix(testRun) + "-gone")), TagKeys: []string{"a"}})
+	wantPreserve(t, err, "not proven absent")
+	if fake.count("UntagPolicy") != 0 {
+		t.Fatal("UntagPolicy reached the server")
+	}
+}
+
+func TestNilPolicyInputsReturnErrors(t *testing.T) {
+	_, rt := newIAMGate(t)
+	view := begin(t, rt, "IAM-PTAG-001")
+	ctx := context.Background()
+	if _, err := view.IAMTagPolicy(ctx, nil); err == nil {
+		t.Error("IAMTagPolicy(nil) returned no error")
+	}
+	if _, err := view.IAMUntagPolicy(ctx, nil); err == nil {
+		t.Error("IAMUntagPolicy(nil) returned no error")
+	}
+	if _, err := view.IAMProbeUntagPolicy(ctx, nil); err == nil {
+		t.Error("IAMProbeUntagPolicy(nil) returned no error")
 	}
 }
