@@ -11,7 +11,7 @@
       "type": "object",
       "required": ["name", "region", "console_api_version"],
       "properties": {
-        "name": {"enum": ["vws-test", "local-fake", "local-grpc"]},
+        "name": {"enum": ["vws-test", "local-fake", "local-pve", "pve-test"]},
         "region": {"type": "string"},
         "console_api_version": {"type": "string"},
         "service_images": {"type": "object"}

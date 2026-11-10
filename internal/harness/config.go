@@ -36,7 +36,7 @@ func FromEnv() (Config, error) {
 		Secret:            os.Getenv("VWS_CONF_SECRET_ACCESS_KEY"),
 		Session:           os.Getenv("VWS_CONF_SESSION_TOKEN"),
 		AccountID:         os.Getenv("VWS_CONF_ACCOUNT_ID"),
-		Region:            "vws-1",
+		Region:            envDefault("VWS_CONF_REGION", "vws-1"),
 		EC2Endpoint:       os.Getenv("VWS_CONF_EC2_ENDPOINT"),
 		S3Endpoint:        os.Getenv("VWS_CONF_S3_ENDPOINT"),
 		IAMEndpoint:       os.Getenv("VWS_CONF_IAM_ENDPOINT"),
@@ -57,7 +57,7 @@ func FromEnv() (Config, error) {
 	}
 	c.Parallel = n
 	switch c.Target {
-	case "vws-test", "local-fake", "local-grpc":
+	case "vws-test", "local-fake", "local-pve", "pve-test":
 	default:
 		return Config{}, fmt.Errorf("VWS_CONF_TARGET %q is not a known target", c.Target)
 	}
