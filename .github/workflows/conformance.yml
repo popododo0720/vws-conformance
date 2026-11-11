@@ -18,6 +18,10 @@ jobs:
         run: sh scripts/guard.sh
       - name: guard fails on an empty /correct loop section
         run: scripts/guard_test.sh
+      - name: tests use seeded randomness
+        run: scripts/check-test-rand.sh
+      - name: check-test-rand fails on unseeded randomness
+        run: scripts/check-test-rand_test.sh
       - name: Install strace
         run: sudo apt-get update && sudo apt-get install -y strace
       - name: unit tests
