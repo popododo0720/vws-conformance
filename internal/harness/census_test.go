@@ -401,3 +401,10 @@ func isPackageOneAttempt(pkg *packages.Package, id *ast.Ident) bool {
 	return ok && (obj.Name() == "oneAttempt" || obj.Name() == "iamOneAttempt") &&
 		obj.Pkg() == pkg.Types && obj.Parent() == pkg.Types.Scope()
 }
+
+func TestCensusIncludesModifyVolume(t *testing.T) {
+	c := runCensus(t, nil)
+	if !slices.Contains(c.hits, hit{actFile, "ModifyVolume", true}) {
+		t.Fatal("ModifyVolume missing from gated census")
+	}
+}

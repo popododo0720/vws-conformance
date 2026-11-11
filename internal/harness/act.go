@@ -156,6 +156,18 @@ func (rt *Runtime) EC2DeleteVolume(ctx context.Context, id string) (*ec2.DeleteV
 		func(ctx context.Context) (*ec2.DeleteVolumeOutput, error) { return deleteVolume(ctx, rt.Clients, id) })
 }
 
+// EC2ModifyVolume changes only a volume that fresh exact-id evidence proves this run owns.
+func (rt *Runtime) EC2ModifyVolume(ctx context.Context, in *ec2.ModifyVolumeInput) (*ec2.ModifyVolumeOutput, error) {
+	if in == nil {
+		return nil, errors.New("ModifyVolume: input is nil")
+	}
+	return mutate(ctx, rt, Ref{Kind: KindVolume, ID: aws.ToString(in.VolumeId)}, false,
+		func(ctx context.Context) (*ec2.ModifyVolumeOutput, error) {
+			out, err := rt.Clients.EC2.ModifyVolume(ctx, in, oneAttempt)
+			return out, wrapErr("ModifyVolume", err)
+		})
+}
+
 // IAMCreatePolicy creates a policy and registers its deletion before the request is sent. The
 // policy name must carry this run's id.
 func (rt *Runtime) IAMCreatePolicy(ctx context.Context, in *iam.CreatePolicyInput) (*iam.CreatePolicyOutput, error) {
