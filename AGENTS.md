@@ -40,6 +40,7 @@ A rule whose enforcer cell is `Judgment` has no check; the author and reviewer u
 | Do not push to main directly. Work on a branch | `.github/workflows/direct-push-watch.yml` (detected after the fact) |
 | A pull request targets main, says `Part of #N` and closes no issue | `.github/workflows/repo-guard-pr.yml` `pr-hygiene` |
 | Merge only after vws-verify PASS for the exact head | `.github/workflows/repo-guard.yml` `verify-gate` |
+| Tests that generate random data or ids use a fixed seed (`rand.New(rand.NewPCG(seed, ...))` from `math/rand/v2`, or `cryptotest.SetGlobalRandom` for crypto keys) and print the seed on failure when it can be overridden; a test that needs real randomness carries `//vws:unseeded <reason>` | `scripts/check-test-rand.sh` (fails on unseeded use in `_test.go` files; `scripts/check-test-rand_test.sh` shows it fails on planted input; both run in the `local-fake` job); printing the seed is Judgment |
 | Commits are atomic | Judgment |
 
 ## English only
