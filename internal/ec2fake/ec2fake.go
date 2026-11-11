@@ -114,6 +114,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) create(w http.ResponseWriter, r *http.Request) {
+	if r.Form.Get("Size") == "0" {
+		writeError(w, "CreateVolume", "InvalidParameterValue", "Value (0) for parameter Size is invalid.")
+		return
+	}
 	s.mu.Lock()
 	hook := s.onCreate
 	s.mu.Unlock()
