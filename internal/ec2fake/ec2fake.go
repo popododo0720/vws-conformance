@@ -18,6 +18,7 @@ type Server struct {
 
 	mu               sync.Mutex
 	vols             map[string]map[string]string
+	snaps            map[string]snapshot
 	vpcs             map[string]map[string]string
 	internetGateways map[string]map[string]string
 	calls            map[string]int
@@ -35,7 +36,8 @@ type CreateResult struct {
 
 func New() *Server {
 	s := &Server{
-		vols: map[string]map[string]string{}, vpcs: map[string]map[string]string{},
+		vols: map[string]map[string]string{}, snaps: map[string]snapshot{},
+		vpcs:             map[string]map[string]string{},
 		internetGateways: map[string]map[string]string{}, calls: map[string]int{},
 	}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
@@ -90,6 +92,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.describeInternetGateway(w, r.Form.Get("InternetGatewayId.1"))
 	case "DeleteInternetGateway":
 		s.deleteInternetGateway(w, r.Form.Get("InternetGatewayId"))
+	case "CreateSnapshot":
+		s.createSnapshot(w, r)
+	case "DescribeSnapshots":
+		s.describeSnapshot(w, r.Form.Get("SnapshotId.1"))
+	case "DeleteSnapshot":
+		s.deleteSnapshot(w, r.Form.Get("SnapshotId"))
 	case "CreateVolume":
 		s.create(w, r)
 	case "DescribeVolumes":
@@ -246,4 +254,91 @@ func (s *Server) tags(w http.ResponseWriter, r *http.Request, action string) {
 		}
 	}
 	writeXML(w, action, "<return>true</return>")
+}
+
+type snapshot struct {
+	volume string
+	tags   map[string]string
+}
+
+func (s *Server) Snapshot(id string) (map[string]string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snap, ok := s.snaps[id]
+	return snap.tags, ok
+}
+
+func (s *Server) PutSnapshot(id, volume string, tags map[string]string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.snaps[id] = snapshot{volume: volume, tags: tags}
+}
+
+func (s *Server) createSnapshot(w http.ResponseWriter, r *http.Request) {
+	volume := r.Form.Get("VolumeId")
+	if volume == "" {
+		writeError(w, "CreateSnapshot", "MissingParameter", "The request must contain the parameter VolumeId")
+		return
+	}
+	s.mu.Lock()
+	_, exists := s.vols[volume]
+	if !exists {
+		s.mu.Unlock()
+		writeError(w, "CreateSnapshot", "InvalidVolume.NotFound", "The volume '"+volume+"' does not exist.")
+		return
+	}
+	tags := map[string]string{}
+	for i := 1; r.Form.Get(fmt.Sprintf("TagSpecification.%d.ResourceType", i)) != ""; i++ {
+		if r.Form.Get(fmt.Sprintf("TagSpecification.%d.ResourceType", i)) != "snapshot" {
+			continue
+		}
+		for j := 1; ; j++ {
+			key := r.Form.Get(fmt.Sprintf("TagSpecification.%d.Tag.%d.Key", i, j))
+			if key == "" {
+				break
+			}
+			tags[key] = r.Form.Get(fmt.Sprintf("TagSpecification.%d.Tag.%d.Value", i, j))
+		}
+	}
+	s.seq++
+	id := fmt.Sprintf("snap-%017d", s.seq)
+	s.snaps[id] = snapshot{volume: volume, tags: tags}
+	s.mu.Unlock()
+	writeXML(w, "CreateSnapshot", "<snapshotId>"+id+"</snapshotId><volumeId>"+html.EscapeString(volume)+"</volumeId>"+
+		"<volumeSize>1</volumeSize><status>pending</status>")
+}
+
+func (s *Server) describeSnapshot(w http.ResponseWriter, id string) {
+	s.mu.Lock()
+	snap, ok := s.snaps[id]
+	var tags strings.Builder
+	for k, v := range snap.tags {
+		fmt.Fprintf(&tags, "<item><key>%s</key><value>%s</value></item>", html.EscapeString(k), html.EscapeString(v))
+	}
+	s.mu.Unlock()
+	if !ok {
+		writeError(w, "DescribeSnapshots", "InvalidSnapshot.NotFound", "The snapshot '"+id+"' does not exist.")
+		return
+	}
+	writeXML(w, "DescribeSnapshots", "<snapshotSet><item><snapshotId>"+html.EscapeString(id)+"</snapshotId>"+
+		"<volumeId>"+html.EscapeString(snap.volume)+"</volumeId>"+
+		"<status>completed</status><tagSet>"+tags.String()+"</tagSet></item></snapshotSet>")
+}
+
+func (s *Server) deleteSnapshot(w http.ResponseWriter, id string) {
+	s.mu.Lock()
+	_, ok := s.snaps[id]
+	delete(s.snaps, id)
+	s.mu.Unlock()
+	if !ok {
+		writeError(w, "DeleteSnapshot", "InvalidSnapshot.NotFound", "The snapshot '"+id+"' does not exist.")
+		return
+	}
+	writeXML(w, "DeleteSnapshot", "<return>true</return>")
+}
+
+func (s *Server) ResourceCounts() (int, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.vols), len(s.snaps)
 }
