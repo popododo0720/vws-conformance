@@ -1,11 +1,13 @@
 package engine
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/popododo0720/vws-conformance/internal/bind"
 	"github.com/popododo0720/vws-conformance/internal/cases"
+	"github.com/popododo0720/vws-conformance/internal/harness"
 )
 
 func TestKnownIssuesFileParses(t *testing.T) {
@@ -104,6 +106,94 @@ func TestKnownIssuesValidateExcludedTargets(t *testing.T) {
 	} {
 		if _, err := parseKnownIssues(data, groups, "local-fake"); err == nil {
 			t.Fatalf("accepted malformed excluded entry %q", data)
+		}
+	}
+}
+
+func TestKnownIssuesTargetOverridesUnscoped(t *testing.T) {
+	groups := []bind.Group{{Cases: []cases.Case{{ID: "IAM-X-001"}}}}
+	const fallback = "https://github.com/example/tracker/issues/1"
+	const specific = "https://github.com/example/tracker/issues/2"
+	global := "IAM-X-001 " + fallback
+	local := "IAM-X-001 " + specific + " local-pve"
+	for _, data := range []string{global + "\n" + local, local + "\n" + global} {
+		for _, target := range []string{"local-pve", "local-fake", "pve-test", "vws-test"} {
+			known, err := parseKnownIssues(data, groups, target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := fallback
+			if target == "local-pve" {
+				want = specific
+			}
+			if known["IAM-X-001"] != want {
+				t.Fatalf("target %s: got %v, want %s", target, known, want)
+			}
+		}
+	}
+	// Distinct targets may track distinct causes; repeats within a target fail
+	// closed even when that target is excluded from the current run.
+	if _, err := parseKnownIssues(local+"\n"+local, groups, "local-fake"); err == nil {
+		t.Fatal("accepted repeated target override")
+	}
+}
+
+func TestMFATagsKeepExistingKnownIssuesWithoutRedundantOverrides(t *testing.T) {
+	for _, target := range []string{"local-pve", "local-fake", "vws-test", "pve-test"} {
+		known, err := parseKnownIssues(knownIssuesFile, Groups(), target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		repo := "vws-console-api/issues/850"
+		for _, id := range []string{
+			"IAM-MTAG-001", "IAM-MTAG-002", "IAM-MTAG-003", "IAM-MTAG-101",
+			"IAM-MTAG-102", "IAM-MTAG-104", "IAM-MTAG-105", "IAM-MTAG-106",
+			"IAM-MTAG-107", "IAM-GAP-005",
+		} {
+			if want := "https://github.com/popododo0720/" + repo; known[id] != want {
+				t.Fatalf("%s on %s: got %s, want %s", id, target, known[id], want)
+			}
+			if count := strings.Count(knownIssuesFile, "\n"+id+" "); count != 1 {
+				t.Fatalf("%s has %d known-issue entries, want one for the other targets", id, count)
+			}
+		}
+	}
+	const issue = "https://github.com/popododo0720/" + "vws-iam/issues/501"
+	if strings.Contains(knownIssuesFile, issue+" local-pve") {
+		t.Fatal("ownership exclusion also has a redundant local-pve known-failure entry")
+	}
+}
+
+func TestLocalPVESkipsExactlyTenOwnershipCases(t *testing.T) {
+	excluded := map[string]bool{
+		"IAM-MTAG-001": true, "IAM-MTAG-002": true, "IAM-MTAG-003": true,
+		"IAM-MTAG-101": true, "IAM-MTAG-102": true, "IAM-MTAG-104": true,
+		"IAM-MTAG-105": true, "IAM-MTAG-106": true, "IAM-MTAG-107": true,
+		"IAM-GAP-005": true,
+	}
+	original := map[string]cases.Case{}
+	for _, g := range Groups() {
+		for _, c := range g.Cases {
+			original[c.ID] = c
+		}
+	}
+	for _, target := range []string{"local-pve", "local-fake", "vws-test", "pve-test", "local-pve"} {
+		got := selectGroups(harness.Config{Full: true, Target: target}, "", "")
+		count := 0
+		for _, g := range got {
+			for _, c := range g.Cases {
+				want := original[c.ID]
+				if target == "local-pve" && excluded[c.ID] {
+					want.Skip = "ownership cleanup blocked by https://github.com/popododo0720/" + "vws-iam/issues/501"
+				}
+				if !reflect.DeepEqual(c, want) {
+					t.Fatalf("%s on %s: got %+v, want %+v", c.ID, target, c, want)
+				}
+				count++
+			}
+		}
+		if count != len(original) {
+			t.Fatalf("%s: selected %d cases, want %d with explicit skip records", target, count, len(original))
 		}
 	}
 }

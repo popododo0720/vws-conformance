@@ -104,6 +104,7 @@ jobs:
     timeout-minutes: 20
     env:
       CONSOLE_API_PIN: 05840905e958f6ad5e57e200931d542798b22d73
+      IAM_PIN: d01a814a91afba7d884d9f5b0bf4ad7a23110a91
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -134,7 +135,17 @@ jobs:
           go build -o bin/vws-region ./cmd/vws-region
           go build -o bin/vws-console-api ./cmd/vws-console-api
           go test -c -o bin/region-helper ./internal/regionhelper
-      - name: Proxmox read groups
+      - name: build pinned IAM
+        run: |
+          src="$RUNNER_TEMP/iam"
+          git init "$src"
+          git -C "$src" remote add origin https://github.com/popododo0720/vws-iam.git
+          git -C "$src" fetch --depth 1 origin "$IAM_PIN"
+          git -C "$src" checkout --detach FETCH_HEAD
+          test "$(git -C "$src" rev-parse HEAD)" = "$IAM_PIN"
+          cd "$src"
+          go build -o "$RUNNER_TEMP/console-api/bin/vws-iam" ./cmd/vws-iam
+      - name: Proxmox read and IAM STS AUTH groups
         env:
           STACK_BIN: ${{ runner.temp }}/console-api/bin
         run: bash scripts/local-pve.sh
