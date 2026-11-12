@@ -230,6 +230,7 @@ func selectGroups(cfg harness.Config, onlyService, onlyGroup string) []bind.Grou
 		if *flagReadOnly {
 			g.Cases = readOnlyCases(g.Cases)
 		}
+		g.Cases = skipKnownOwnershipCases(g.Cases, cfg.Target)
 		if len(g.Cases) != 0 {
 			selected = append(selected, g)
 		}

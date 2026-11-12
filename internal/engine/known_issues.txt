@@ -2,6 +2,7 @@
 # as known and does not fail the run; any other failing case does. Remove a line once its case passes.
 # Every ID must name a case in engine.Groups(), and every URL a GitHub issue.
 # An optional target restricts the exception; omitted targets apply to every run.
+# A target-specific entry overrides an unscoped entry for the same case.
 
 # FIDO GetMFADevice success: popododo0720/vws-iam#133
 IAM-MFA-001 https://github.com/popododo0720/vws-iam/issues/133
@@ -54,3 +55,7 @@ VPC-VPC-104 https://github.com/popododo0720/vws-console-api/issues/792 local-pve
 VPC-SUB-103 https://github.com/popododo0720/vws-console-api/issues/792 local-pve
 VPC-SG-104 https://github.com/popododo0720/vws-console-api/issues/792 local-pve
 AUTH-001 https://github.com/popododo0720/vws-console-api/issues/792 local-pve
+
+# local-pve ownership exclusions live only in known.go, with their issue URL in
+# ci/local-pve-evidence.md: https://github.com/popododo0720/vws-iam/issues/501.
+# The unscoped console-api#850 entries above remain for the other targets.

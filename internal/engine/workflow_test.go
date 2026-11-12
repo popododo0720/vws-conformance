@@ -44,6 +44,9 @@ func TestCIRunsLocalPVE(t *testing.T) {
 	for _, required := range []string{
 		"05840905e958f6ad5e57e200931d542798b22d73",
 		"./cmd/pvefake", "./cmd/vws-region", "./cmd/vws-console-api",
+		"IAM_PIN: d01a814a91afba7d884d9f5b0bf4ad7a23110a91",
+		"\"$(git -C \"$src\" rev-parse HEAD)\" = \"$IAM_PIN\"",
+		"./cmd/vws-iam",
 		"./internal/harness ./cmd/conf-run", "bash scripts/local-pve.sh",
 		"if: always()", "name: conformance-local-pve",
 	} {
@@ -60,10 +63,16 @@ func TestCIRunsLocalPVE(t *testing.T) {
 		t.Fatal("local-pve requests bypass the guarded probe")
 	}
 	for _, required := range []string{
-		"-backend proxmox", "-backend regions -iam fake", "/api/v1/admin/regions",
+		"-backend proxmox", "-backend regions -iam grpc", "/api/v1/admin/regions",
+		"bootstrap -store etcd", "\"$STACK_BIN/vws-iam\" -store etcd",
+		"-iam-endpoint 127.0.0.1:9095", "-listen 127.0.0.1:9095 -health-listen 127.0.0.1:9096",
+		"-iam-tls-ca-file", "-iam-tls-cert-file", "-iam-tls-key-file",
+		"--client-cert-auth --trusted-ca-file", "ss -Hltnp",
+		"VWS_IAM_ROOT_PROJECT=123456789012", "export VWS_IAM_ROOT_ACCESS_KEY_ID",
 		"go build -o \"$probe\" ./cmd/conf-probe", "\"$probe\" -method POST",
 		"VWS_CONF_ALLOWED_HOSTS=127.0.0.1", "VWS_CONF_REGION=pve-test-1",
-		"./ec2 ./ebs ./vpc ./auth -args -full -read-only", "trap cleanup EXIT",
+		"./ec2 ./ebs ./vpc -args -full -read-only",
+		"./iam ./sts ./auth -args -full || status=1", "trap cleanup EXIT",
 	} {
 		if !strings.Contains(string(script), required) {
 			t.Fatalf("local-pve script is missing %q", required)
