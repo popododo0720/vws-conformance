@@ -4,6 +4,8 @@ cd "$(dirname "$0")/.."
 : "${STACK_BIN:?set STACK_BIN to the pinned console-api bin directory}"
 : "${RUNNER_TEMP:?set RUNNER_TEMP outside the Go module}"
 work=$(mktemp -d "$RUNNER_TEMP/local-pve.XXXXXX")
+probe="$work/conf-probe"
+go build -o "$probe" ./cmd/conf-probe
 mkdir -p "$work"/{public,private,locks}
 umask 077
 pids=()
@@ -24,7 +26,7 @@ wait_ready() {
   local url=$1
   shift
   for ((i=0; i<30; i++)); do
-    if curl --noproxy '*' --max-time 2 -fsS "$@" "$url" >/dev/null 2>&1; then return; fi
+    if "$probe" "$@" "$url" >/dev/null 2>&1; then return; fi
     sleep 1
   done
   echo "readiness timed out: $url" >&2
@@ -54,12 +56,12 @@ etcd --name local-pve --data-dir "$work/etcd" \
   --initial-cluster local-pve=http://127.0.0.1:2380 \
   --cert-file "$work/cert.pem" --key-file "$work/key.pem" >"$work/etcd.log" 2>&1 &
 pids+=("$!")
-wait_ready https://127.0.0.1:2379/health --cacert "$work/cert.pem"
+SSL_CERT_FILE="$work/cert.pem" wait_ready https://127.0.0.1:2379/health
 "$STACK_BIN/pvefake" -listen 127.0.0.1:8006 -scenario ci/pve-scenario.yaml \
   -ca-file "$work/pve-ca.pem" >"$work/pvefake.log" 2>&1 &
 pids+=("$!")
-wait_ready https://127.0.0.1:8006/api2/json/version --cacert "$work/pve-ca.pem" \
-  -H 'Authorization: PVEAPIToken=vws@pve!inventory=fake-secret'
+SSL_CERT_FILE="$work/pve-ca.pem" wait_ready https://127.0.0.1:8006/api2/json/version \
+  -authorization 'PVEAPIToken=vws@pve!inventory=fake-secret'
 "$STACK_BIN/vws-region" -backend proxmox -config "$work/region.yaml" \
   -registration-file "$work/public/registration.json" -helper-path "$STACK_BIN/region-helper" \
   -pve-endpoint https://127.0.0.1:8006 -pve-ca-file "$work/pve-ca.pem" \
@@ -73,13 +75,13 @@ wait_ready http://127.0.0.1:8085/healthz
   -iam-addr 127.0.0.1:8084 -ops-addr 127.0.0.1:8083 >"$work/console-api.log" 2>&1 &
 pids+=("$!")
 wait_ready http://127.0.0.1:8083/healthz
-curl --noproxy '*' --max-time 20 -fsS http://127.0.0.1:8080/api/v1/admin/regions \
-  -H 'Authorization: Bearer dev-token' -H 'Content-Type: application/json' \
-  -d '{"name":"pve-test-1","clusterName":"test","pveApiUrl":"https://127.0.0.1:8006","tokenId":"vws@pve!inventory","tokenSecret":"fake-secret","regionEndpoint":"https://127.0.0.1:8443","zones":[{"letter":"a","nodes":["pve1"]}]}' \
-  >"$work/registration.log"
+"$probe" -method POST -authorization 'Bearer dev-token' \
+  http://127.0.0.1:8080/api/v1/admin/regions >"$work/registration.log" <<'JSON'
+{"name":"pve-test-1","clusterName":"test","pveApiUrl":"https://127.0.0.1:8006","tokenId":"vws@pve!inventory","tokenSecret":"fake-secret","regionEndpoint":"https://127.0.0.1:8443","zones":[{"letter":"a","nodes":["pve1"]}]}
+JSON
 wait_ready http://127.0.0.1:8085/readyz
-curl --noproxy '*' --max-time 10 -fsS http://127.0.0.1:8080/api/v1/instances \
-  -H 'Authorization: Bearer dev-token' -H 'X-Vws-Region: pve-test-1' >"$work/inventory.log"
+"$probe" -authorization 'Bearer dev-token' -region pve-test-1 \
+  http://127.0.0.1:8080/api/v1/instances >"$work/inventory.log"
 jq -e '.items | length > 0' "$work/inventory.log"
 export VWS_CONF_ACCESS_KEY_ID=AKIDEXAMPLE VWS_CONF_SECRET_ACCESS_KEY=secret
 export VWS_CONF_ACCOUNT_ID=123456789012 VWS_CONF_ALLOWED_ACCOUNTS=123456789012

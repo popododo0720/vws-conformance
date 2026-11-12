@@ -242,7 +242,7 @@ func runGroups(ctx context.Context, cfg harness.Config, onlyService, onlyGroup s
 	if len(selected) == 0 {
 		return nil, fmt.Errorf("no groups selected")
 	}
-	known, err := parseKnownIssues(knownIssuesFile, Groups())
+	known, err := parseKnownIssues(knownIssuesFile, Groups(), cfg.Target)
 	if err != nil {
 		return nil, err
 	}

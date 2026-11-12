@@ -56,8 +56,12 @@ func TestCIRunsLocalPVE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if strings.Contains(string(script), "curl ") {
+		t.Fatal("local-pve requests bypass the guarded probe")
+	}
 	for _, required := range []string{
 		"-backend proxmox", "-backend regions -iam fake", "/api/v1/admin/regions",
+		"go build -o \"$probe\" ./cmd/conf-probe", "\"$probe\" -method POST",
 		"VWS_CONF_ALLOWED_HOSTS=127.0.0.1", "VWS_CONF_REGION=pve-test-1",
 		"./ec2 ./ebs ./vpc ./auth -args -full -read-only", "trap cleanup EXIT",
 	} {

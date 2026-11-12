@@ -63,3 +63,33 @@ Repository verification:
   `go test -race -count=1 -timeout 300s ./internal/harness` with that directory
   on PATH: exit 0 (`ok`, 70.496s). Every package from the full race run is now
   verified; no test was changed or skipped to handle the missing prerequisite.
+
+After review, the 14 Proxmox exceptions were scoped to `local-pve`.
+`TestKnownIssuesStayInTheirTarget` checks all 14 on all four targets and keeps
+unscoped exceptions working. `TestKnownIssuesValidateExcludedTargets` refuses
+malformed records even when their target is excluded. The negative assertion
+failed on the original PR head with `Proxmox-only exception masks local-fake`.
+The corrected full race command exited 0, lint reported `0 issues`, formatting
+had no diff, and the complete local-pve script exited 0 again with the same
+12 pass / 14 known / 3 skip / 0 error result.
+
+The final revision replaces every setup request with `cmd/conf-probe`, using
+the existing `harness.NewHTTPClient` and endpoint check. HTTPS readiness uses
+the generated CA through `SSL_CERT_FILE`. The guarded script, complete race
+suite, lint, formatting and repository guards all exited 0 after this change.
+The workflow test rejects direct curl probes; helper tests cover request
+headers/body, repeat execution, invalid inputs, HTTP failures and redirects.
+Incident disclosure: https://github.com/popododo0720/vws-conformance/issues/157.
+
+Additional manual guard check:
+
+```sh
+go build -o .tmp/conf-probe ./cmd/conf-probe
+strace -f -e trace=connect,sendto,sendmsg,sendmmsg \
+  -e inject=connect,sendto,sendmsg,sendmmsg:error=ENETUNREACH \
+  -o .tmp/probe-egress.trace .tmp/conf-probe http://192.0.2.1
+```
+
+The probe exited 1 with `endpoint host "192.0.2.1" is refused`. The trace had
+no `AF_INET` syscall: rejection preceded all IP networking, with network
+syscalls disabled during the proof.
