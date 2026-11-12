@@ -27,9 +27,10 @@ import (
 )
 
 var (
-	flagService = flag.String("service", "", "service to run")
-	flagGroup   = flag.String("group", "", "operation group to run")
-	flagFull    = flag.Bool("full", false, "run every group")
+	flagService  = flag.String("service", "", "service to run")
+	flagGroup    = flag.String("group", "", "operation group to run")
+	flagFull     = flag.Bool("full", false, "run every group")
+	flagReadOnly = flag.Bool("read-only", false, "run only the EC2, EBS, VPC and AUTH cases that create nothing")
 )
 
 func Groups() []bind.Group {
@@ -48,7 +49,7 @@ func TestGroup(t Tester, service, group string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.Selected(service, group) {
+	if !cfg.Selected(service, group) || len(selectGroups(cfg, service, group)) == 0 {
 		t.Skip("not selected")
 	}
 	rep, err := runGroups(harness.ShutdownContext(), cfg, service, group)
@@ -217,7 +218,7 @@ func runtime(ctx context.Context, cfg harness.Config) (*harness.Runtime, error) 
 	return gate.rt, gate.err
 }
 
-func runGroups(ctx context.Context, cfg harness.Config, onlyService, onlyGroup string) (*report.Report, error) {
+func selectGroups(cfg harness.Config, onlyService, onlyGroup string) []bind.Group {
 	var selected []bind.Group
 	for _, g := range Groups() {
 		if onlyService != "" && (g.Service != onlyService || g.Name != onlyGroup) {
@@ -226,8 +227,18 @@ func runGroups(ctx context.Context, cfg harness.Config, onlyService, onlyGroup s
 		if onlyService == "" && !cfg.Selected(g.Service, g.Name) {
 			continue
 		}
-		selected = append(selected, g)
+		if *flagReadOnly {
+			g.Cases = readOnlyCases(g.Cases)
+		}
+		if len(g.Cases) != 0 {
+			selected = append(selected, g)
+		}
 	}
+	return selected
+}
+
+func runGroups(ctx context.Context, cfg harness.Config, onlyService, onlyGroup string) (*report.Report, error) {
+	selected := selectGroups(cfg, onlyService, onlyGroup)
 	if len(selected) == 0 {
 		return nil, fmt.Errorf("no groups selected")
 	}
