@@ -9,7 +9,7 @@ the upstream helper test binary, which runs the real encrypted-file operations
 under a temporary sandbox root without requiring a Proxmox host.
 
 Run the job locally after building the four binaries listed in
-`.github/workflows/conformance.yml` and placing `etcd`, `openssl`, `curl` and
+`.github/workflows/conformance.yml` and placing `etcd`, `openssl` and
 `jq` on PATH:
 
 ```sh
@@ -30,3 +30,8 @@ and reports under `out/`; CI uploads both on failure.
 Known-issue lines accept `CASE-ID ISSUE-URL [TARGET]`. A target limits an
 exception to that environment; the Proxmox routing exceptions apply only to
 `local-pve`, so the same cases still detect regressions on other targets.
+
+The script builds `cmd/conf-probe` for readiness, registration and inventory
+requests. It uses the existing guarded HTTP client with only `127.0.0.1`
+allowed, refuses redirects and bounds requests to five seconds. HTTPS probes
+trust the generated CA through `SSL_CERT_FILE`; TLS verification stays enabled.

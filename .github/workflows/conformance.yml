@@ -120,7 +120,7 @@ jobs:
           dpkg-deb -x etcd-server*.deb etcd
           echo "$RUNNER_TEMP/etcd/usr/bin" >> "$GITHUB_PATH"
       - name: existing egress guard
-        run: go test -race -count=1 -p 1 ./internal/harness ./cmd/conf-run
+        run: go test -race -count=1 -p 1 ./internal/harness ./cmd/conf-run ./cmd/conf-probe
       - name: build pinned console-api stack
         run: |
           src="$RUNNER_TEMP/console-api"
