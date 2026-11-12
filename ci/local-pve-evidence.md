@@ -63,3 +63,12 @@ Repository verification:
   `go test -race -count=1 -timeout 300s ./internal/harness` with that directory
   on PATH: exit 0 (`ok`, 70.496s). Every package from the full race run is now
   verified; no test was changed or skipped to handle the missing prerequisite.
+
+After review, the 14 Proxmox exceptions were scoped to `local-pve`.
+`TestKnownIssuesStayInTheirTarget` checks all 14 on all four targets and keeps
+unscoped exceptions working. `TestKnownIssuesValidateExcludedTargets` refuses
+malformed records even when their target is excluded. The negative assertion
+failed on the original PR head with `Proxmox-only exception masks local-fake`.
+The corrected full race command exited 0, lint reported `0 issues`, formatting
+had no diff, and the complete local-pve script exited 0 again with the same
+12 pass / 14 known / 3 skip / 0 error result.

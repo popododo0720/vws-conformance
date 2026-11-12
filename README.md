@@ -26,3 +26,7 @@ selection. Existing IAM-dependent AUTH skips remain unchanged. Reports include
 known parity failures with their issue links; harness errors and untracked
 failures still fail the job. Process logs remain under `RUNNER_TEMP/local-pve.*`
 and reports under `out/`; CI uploads both on failure.
+
+Known-issue lines accept `CASE-ID ISSUE-URL [TARGET]`. A target limits an
+exception to that environment; the Proxmox routing exceptions apply only to
+`local-pve`, so the same cases still detect regressions on other targets.
