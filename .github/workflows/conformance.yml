@@ -3,6 +3,8 @@ name: conformance
 on:
   pull_request:
   workflow_dispatch:
+  repository_dispatch:
+    types: [console-api]
 
 jobs:
   local-fake:
@@ -52,7 +54,7 @@ jobs:
       - name: select groups
         id: sel
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "mode=FULL" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -95,4 +97,53 @@ jobs:
         with:
           name: conformance-reports
           path: out/
+          if-no-files-found: ignore
+
+  local-pve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CONSOLE_API_PIN: 05840905e958f6ad5e57e200931d542798b22d73
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.9"
+      - name: guard
+        run: sh scripts/guard.sh
+      - name: Install strace and extract etcd
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y strace
+          cd "$RUNNER_TEMP"
+          apt-get download etcd-server
+          dpkg-deb -x etcd-server*.deb etcd
+          echo "$RUNNER_TEMP/etcd/usr/bin" >> "$GITHUB_PATH"
+      - name: existing egress guard
+        run: go test -race -count=1 -p 1 ./internal/harness ./cmd/conf-run
+      - name: build pinned console-api stack
+        run: |
+          src="$RUNNER_TEMP/console-api"
+          git init "$src"
+          git -C "$src" remote add origin https://github.com/popododo0720/vws-console-api.git
+          git -C "$src" fetch --depth 1 origin "$CONSOLE_API_PIN"
+          git -C "$src" checkout --detach FETCH_HEAD
+          test "$(git -C "$src" rev-parse HEAD)" = "$CONSOLE_API_PIN"
+          cd "$src"
+          go build -o bin/pvefake ./cmd/pvefake
+          go build -o bin/vws-region ./cmd/vws-region
+          go build -o bin/vws-console-api ./cmd/vws-console-api
+          go test -c -o bin/region-helper ./internal/regionhelper
+      - name: Proxmox read groups
+        env:
+          STACK_BIN: ${{ runner.temp }}/console-api/bin
+        run: bash scripts/local-pve.sh
+      - name: upload reports and process logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-local-pve
+          path: |
+            out/
+            ${{ runner.temp }}/local-pve.*/*.log
           if-no-files-found: ignore

@@ -36,3 +36,20 @@ IAM-MTAG-107 https://github.com/popododo0720/vws-console-api/issues/850
 # (400 InvalidInput "Parameter Tags.member.1.Key is not supported"): popododo0720/vws-console-api#850.
 # The pinned fake also predates CreateVirtualMFADevice (400 InvalidAction), so the pin needs a bump too.
 IAM-GAP-005 https://github.com/popododo0720/vws-console-api/issues/850
+
+# local-pve: the SigV4 verifier validates the credential-scope region but drops it from Caller,
+# so regionset receives an empty region and refuses the read. Tracked by the region router.
+EC2-DI-101 https://github.com/popododo0720/vws-console-api/issues/792
+EC2-DIA-101 https://github.com/popododo0720/vws-console-api/issues/792
+EC2-DIMG-001 https://github.com/popododo0720/vws-console-api/issues/792
+EC2-DIMG-101 https://github.com/popododo0720/vws-console-api/issues/792
+EC2-KP-103 https://github.com/popododo0720/vws-console-api/issues/792
+EC2-EIP-103 https://github.com/popododo0720/vws-console-api/issues/792
+EC2-GAP-003 https://github.com/popododo0720/vws-console-api/issues/792
+EC2-GAP-008 https://github.com/popododo0720/vws-console-api/issues/792
+EBS-VOL-104 https://github.com/popododo0720/vws-console-api/issues/792
+EBS-SNAP-102 https://github.com/popododo0720/vws-console-api/issues/792
+VPC-VPC-104 https://github.com/popododo0720/vws-console-api/issues/792
+VPC-SUB-103 https://github.com/popododo0720/vws-console-api/issues/792
+VPC-SG-104 https://github.com/popododo0720/vws-console-api/issues/792
+AUTH-001 https://github.com/popododo0720/vws-console-api/issues/792
