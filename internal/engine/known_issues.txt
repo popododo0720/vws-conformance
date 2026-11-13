@@ -59,3 +59,10 @@ AUTH-001 https://github.com/popododo0720/vws-console-api/issues/792 local-pve
 # local-pve ownership exclusions live only in known.go, with their issue URL in
 # ci/local-pve-evidence.md: https://github.com/popododo0720/vws-iam/issues/501.
 # The unscoped console-api#850 entries above remain for the other targets.
+
+# VM-wide snapshot scope has no per-volume isolation case in Groups():
+# https://github.com/popododo0720/vws-console-api/issues/1002
+# CreateVolume from SnapshotId has no case in Groups():
+# https://github.com/popododo0720/vws-console-api/issues/1003
+# Add scoped failures only when those cases exist; ordinary snapshot lifecycle
+# cases do not assert either limitation and must not hide unrelated failures.

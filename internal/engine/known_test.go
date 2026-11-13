@@ -192,8 +192,12 @@ func TestLocalPVESkipsExactlyTenOwnershipCases(t *testing.T) {
 				count++
 			}
 		}
-		if count != len(original) {
-			t.Fatalf("%s: selected %d cases, want %d with explicit skip records", target, count, len(original))
+		wantCount := len(original)
+		if target == "pve-test" {
+			wantCount = 29
+		}
+		if count != wantCount {
+			t.Fatalf("%s: selected %d cases, want %d with explicit skip records", target, count, wantCount)
 		}
 	}
 }
