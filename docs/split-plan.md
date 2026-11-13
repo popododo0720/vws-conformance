@@ -30,6 +30,14 @@ Auth keeps `AUTH-001`, `AUTH-002`, `AUTH-003`, `AUTH-004`, `AUTH-005`, `AUTH-006
 
 ## EC2
 
+Issue #139 restores `EC2-RUN-001/101/110/201/202`, `EC2-DI-001/201`,
+`EC2-DIA-001`, `EC2-STOP-001`, `EC2-START-001`, and `EC2-TERM-001` in the
+existing instances group. Their mutating calls use the instance ownership gate.
+The local-pve job runs that group even though its pinned Proxmox connection
+forces read-only mode; linked parity failures record the blocked setup.
+The remaining lifecycle error cases, key pairs, and `EC2-GAP-001/002` remain
+for the next independently mergeable part of #139.
+
 - `EC2-RUN-001` RunInstances
 - `EC2-RUN-101` RunInstances
 - `EC2-RUN-110` RunInstances

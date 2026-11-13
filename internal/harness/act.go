@@ -895,6 +895,28 @@ func (rt *Runtime) EC2TerminateInstances(ctx context.Context, id string) (*ec2.T
 		})
 }
 
+func (rt *Runtime) EC2StopInstances(ctx context.Context, id string) (*ec2.StopInstancesOutput, error) {
+	return mutate(ctx, rt, Ref{Kind: KindInstance, ID: id}, false,
+		func(ctx context.Context) (*ec2.StopInstancesOutput, error) {
+			if rt.Clients == nil || rt.Clients.EC2 == nil {
+				return nil, errors.New("StopInstances: ec2 client is unset")
+			}
+			out, err := rt.Clients.EC2.StopInstances(ctx, &ec2.StopInstancesInput{InstanceIds: []string{id}}, oneAttempt)
+			return out, wrapErr("StopInstances", err)
+		})
+}
+
+func (rt *Runtime) EC2StartInstances(ctx context.Context, id string) (*ec2.StartInstancesOutput, error) {
+	return mutate(ctx, rt, Ref{Kind: KindInstance, ID: id}, false,
+		func(ctx context.Context) (*ec2.StartInstancesOutput, error) {
+			if rt.Clients == nil || rt.Clients.EC2 == nil {
+				return nil, errors.New("StartInstances: ec2 client is unset")
+			}
+			out, err := rt.Clients.EC2.StartInstances(ctx, &ec2.StartInstancesInput{InstanceIds: []string{id}}, oneAttempt)
+			return out, wrapErr("StartInstances", err)
+		})
+}
+
 func terminateInstance(ctx context.Context, cl *Clients, id string) (*ec2.TerminateInstancesOutput, error) {
 	if cl == nil || cl.EC2 == nil {
 		return nil, errors.New("TerminateInstances: ec2 client is unset")

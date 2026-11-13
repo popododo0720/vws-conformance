@@ -25,6 +25,8 @@ type Server struct {
 	seq              int
 	onCreate         func() CreateResult
 	sizes            map[string]int32
+	instances        map[string]instance
+	tokens           map[string]string
 }
 
 // CreateResult is what a create hook asks CreateVolume to do. The zero value creates the volume.
@@ -39,6 +41,7 @@ func New() *Server {
 		vols: map[string]map[string]string{}, snaps: map[string]snapshot{},
 		vpcs:             map[string]map[string]string{},
 		internetGateways: map[string]map[string]string{}, calls: map[string]int{},
+		instances: map[string]instance{}, tokens: map[string]string{},
 	}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
 	return s
@@ -80,6 +83,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	s.calls[action]++
 	s.mu.Unlock()
 	switch action {
+	case "DescribeSubnets":
+		writeXML(w, action, "<subnetSet><item><subnetId>subnet-0123456789abcdef0</subnetId>"+
+			"<state>available</state></item></subnetSet>")
+	case "RunInstances", "DescribeInstances", "DescribeInstanceAttribute",
+		"StopInstances", "StartInstances", "TerminateInstances":
+		s.instanceAction(w, r, action)
 	case "CreateVpc":
 		s.createVpc(w, r)
 	case "DescribeVpcs":

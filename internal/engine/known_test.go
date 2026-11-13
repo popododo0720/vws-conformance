@@ -8,6 +8,7 @@ import (
 	"github.com/popododo0720/vws-conformance/internal/bind"
 	"github.com/popododo0720/vws-conformance/internal/cases"
 	"github.com/popododo0720/vws-conformance/internal/harness"
+	"github.com/popododo0720/vws-conformance/internal/report"
 )
 
 func TestKnownIssuesFileParses(t *testing.T) {
@@ -77,6 +78,9 @@ func TestKnownIssuesStayInTheirTarget(t *testing.T) {
 					t.Fatal(err)
 				}
 				for _, id := range []string{
+					"EC2-RUN-001", "EC2-RUN-110", "EC2-RUN-201",
+					"EC2-DI-001", "EC2-DI-201", "EC2-DIA-001",
+					"EC2-STOP-001", "EC2-START-001", "EC2-TERM-001",
 					"EC2-DI-101", "EC2-DIA-101", "EC2-DIMG-001", "EC2-DIMG-101",
 					"EC2-KP-103", "EC2-EIP-103", "EC2-GAP-003", "EC2-GAP-008",
 					"EBS-VOL-104", "EBS-SNAP-102", "VPC-VPC-104", "VPC-SUB-103",
@@ -91,6 +95,40 @@ func TestKnownIssuesStayInTheirTarget(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestInstanceKnownFailuresRequireTheirTargetAndIssue(t *testing.T) {
+	const issue = "https://github.com/popododo0720/" + "vws-console-api/issues/1005"
+	for _, target := range []string{"local-pve", "local-fake", "vws-test", "pve-test"} {
+		known, err := parseKnownIssues(knownIssuesFile, Groups(), target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := ""
+		switch target {
+		case "local-fake":
+			want = issue
+		case "local-pve":
+			want = "https://github.com/popododo0720/" + "vws-console-api/issues/792"
+		}
+		if known["EC2-RUN-202"] != want || known["EC2-RUN-101"] != issue {
+			t.Fatalf("launch errors on %s: %v", target, known)
+		}
+	}
+	line := "EC2-RUN-202 " + issue + " local-fake\n"
+	if !strings.Contains(knownIssuesFile, line) {
+		t.Fatal("missing exact known-failure record")
+	}
+	known, err := parseKnownIssues(strings.ReplaceAll(knownIssuesFile, line, ""), Groups(), "local-fake")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep := &report.Report{Results: []report.Result{{
+		ID: "EC2-RUN-202", Status: "fail", Issue: known["EC2-RUN-202"],
+	}}}
+	if failures := parityGate(rep, func(string) {}); len(failures) != 1 {
+		t.Fatal("removing the exception did not fail the parity gate")
 	}
 }
 

@@ -106,6 +106,7 @@ wait_ready http://127.0.0.1:8085/healthz
   -iam-tls-ca-file "$work/etcd-ca.pem" -iam-tls-cert-file "$work/client.pem" \
   -iam-tls-key-file "$work/client-key.pem" -default-region pve-test-1 \
   -global-config "$work/global.yaml" -console-token dev-token -access-key AKIDEXAMPLE -secret secret \
+  -ec2-launch-burst 100 -ec2-launch-rate 100 \
   -console-addr 127.0.0.1:8080 -ec2-addr 127.0.0.1:8081 -s3-addr 127.0.0.1:8082 \
   -iam-addr 127.0.0.1:8084 -ops-addr 127.0.0.1:8083 >"$work/console-api.log" 2>&1 &
 pids+=("$!")
@@ -136,9 +137,9 @@ export VWS_CONF_EC2_ENDPOINT=http://127.0.0.1:8081 VWS_CONF_S3_ENDPOINT=http://1
 export VWS_CONF_IAM_ENDPOINT=http://127.0.0.1:8084 VWS_CONF_ALLOWED_HOSTS=127.0.0.1
 export VWS_CONF_REGION=pve-test-1 VWS_CONF_TARGET=local-pve
 export VWS_CONF_CONSOLE_API_VERSION="${CONSOLE_API_PIN:?set CONSOLE_API_PIN}"
-# Proxmox remains read-only; IAM/STS/AUTH may create run-owned resources in this
-# disposable etcd store. Run both commands even when one reports a parity gap.
+# The pinned Proxmox connection forces read-only mode regardless of region.yaml.
 status=0
 go test -v -p 1 -count=1 -timeout 300s ./ec2 ./ebs ./vpc -args -full -read-only || status=1
+go test -v -p 1 -count=1 -timeout 300s ./ec2 -args -service ec2 -group instances || status=1
 go test -v -p 1 -count=1 -timeout 300s ./iam ./sts ./auth -args -full || status=1
 exit "$status"

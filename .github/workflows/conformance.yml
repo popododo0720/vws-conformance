@@ -41,7 +41,7 @@ jobs:
             exit 1
           fi
           (cd /tmp/src/vws-console-api && go build -o /tmp/vws-console-api ./cmd/vws-console-api)
-          /tmp/vws-console-api -backend fake -iam fake >/tmp/console-api.log 2>&1 &
+          /tmp/vws-console-api -backend fake -iam fake -ec2-launch-burst 100 -ec2-launch-rate 100 >/tmp/console-api.log 2>&1 &
           echo $! > /tmp/console-api.pid
           for i in 1 2 3 4 5 6 7 8 9 10; do
             if curl -sf http://127.0.0.1:8083/healthz; then
@@ -145,7 +145,7 @@ jobs:
           test "$(git -C "$src" rev-parse HEAD)" = "$IAM_PIN"
           cd "$src"
           go build -o "$RUNNER_TEMP/console-api/bin/vws-iam" ./cmd/vws-iam
-      - name: Proxmox read and IAM STS AUTH groups
+      - name: Proxmox read, EC2 instance lifecycle, and IAM STS AUTH groups
         env:
           STACK_BIN: ${{ runner.temp }}/console-api/bin
         run: bash scripts/local-pve.sh
