@@ -1,6 +1,15 @@
 package engine
 
-import "github.com/popododo0720/vws-conformance/internal/cases"
+import (
+	"github.com/popododo0720/vws-conformance/internal/bind"
+	"github.com/popododo0720/vws-conformance/internal/cases"
+	"github.com/popododo0720/vws-conformance/internal/harness"
+)
+
+// ReadOnlyGroups is the same selection used when executing the pve-test target.
+func ReadOnlyGroups() []bind.Group {
+	return selectGroups(harness.Config{Full: true, Target: "pve-test"}, "", "")
+}
 
 // These are the cases in docs/split-plan.md that need no resource setup.
 // Filtering on the operation alone would admit Describe cases with mutating fixtures.

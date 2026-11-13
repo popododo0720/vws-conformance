@@ -227,7 +227,7 @@ func selectGroups(cfg harness.Config, onlyService, onlyGroup string) []bind.Grou
 		if onlyService == "" && !cfg.Selected(g.Service, g.Name) {
 			continue
 		}
-		if *flagReadOnly {
+		if *flagReadOnly || cfg.Target == "pve-test" {
 			g.Cases = readOnlyCases(g.Cases)
 		}
 		g.Cases = skipKnownOwnershipCases(g.Cases, cfg.Target)
