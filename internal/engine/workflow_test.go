@@ -72,6 +72,8 @@ func TestCIRunsLocalPVE(t *testing.T) {
 		"go build -o \"$probe\" ./cmd/conf-probe", "\"$probe\" -method POST",
 		"VWS_CONF_ALLOWED_HOSTS=127.0.0.1", "VWS_CONF_REGION=pve-test-1",
 		"./ec2 ./ebs ./vpc -args -full -read-only",
+		"./ec2 -args -service ec2 -group instances || status=1",
+		"-ec2-launch-burst 100 -ec2-launch-rate 100",
 		"./iam ./sts ./auth -args -full || status=1", "trap cleanup EXIT",
 	} {
 		if !strings.Contains(string(script), required) {

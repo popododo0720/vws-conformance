@@ -23,6 +23,7 @@ func TestInstanceGateOwnershipAndCleanup(t *testing.T) {
 	for _, foreign := range []bool{false, true} {
 		t.Run(fmt.Sprint(foreign), func(t *testing.T) {
 			var deletes atomic.Int32
+			var mutations atomic.Int32
 			var state atomic.Value
 			state.Store("running")
 			owner := testRun
@@ -52,6 +53,12 @@ func TestInstanceGateOwnershipAndCleanup(t *testing.T) {
 					state.Store("terminated")
 					body = "<instancesSet><item><instanceId>i-0123456789abcdef0</instanceId><currentSta" +
 						"te><name>terminated</name></currentState></item></instancesSet>"
+				case "StopInstances", "StartInstances":
+					mutations.Add(1)
+					if r.Form.Get("InstanceId.1") != "i-0123456789abcdef0" {
+						t.Error("mutation did not use exact ID")
+					}
+					body = "<instancesSet><item><instanceId>i-0123456789abcdef0</instanceId></item></instancesSet>"
 				default:
 					return false
 				}
@@ -69,16 +76,24 @@ func TestInstanceGateOwnershipAndCleanup(t *testing.T) {
 			if len(in.TagSpecifications) != 0 {
 				t.Fatal("caller input changed")
 			}
+			id := aws.ToString(out.Instances[0].InstanceId)
+			_, stopErr := view.EC2StopInstances(context.Background(), id)
+			_, startErr := view.EC2StartInstances(context.Background(), id)
 			if foreign {
-				_, err = view.EC2TerminateInstances(context.Background(), aws.ToString(out.Instances[0].InstanceId))
+				wantPreserve(t, stopErr, "")
+				wantPreserve(t, startErr, "")
+				_, err = view.EC2TerminateInstances(context.Background(), id)
 				wantPreserve(t, err, "")
 				if err := view.EndCase(context.Background()); err == nil {
 					t.Fatal("foreign cleanup succeeded")
 				}
-				if deletes.Load() != 0 {
-					t.Fatal("foreign instance terminated")
+				if deletes.Load() != 0 || mutations.Load() != 0 {
+					t.Fatal("foreign instance mutated")
 				}
 				return
+			}
+			if stopErr != nil || startErr != nil || mutations.Load() != 2 {
+				t.Fatalf("owned mutations: stop=%v start=%v calls=%d", stopErr, startErr, mutations.Load())
 			}
 			if err := view.EndCase(context.Background()); err != nil {
 				t.Fatal(err)

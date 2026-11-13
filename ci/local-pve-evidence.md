@@ -1,5 +1,106 @@
 # Local Proxmox job evidence
 
+## Issue #139: instance lifecycle restoration, first part
+
+Run on November 13, 2026. `bash scripts/local-pve.sh` exits **0**, using
+console-api `05840905e958f6ad5e57e200931d542798b22d73` and IAM
+`d01a814a91afba7d884d9f5b0bf4ad7a23110a91`, unchanged from CI.
+The additional EC2 instances invocation runs all 14 cases: 1 passes and 13
+have linked known failures, with no skips, harness errors or untracked failures.
+
+This first independently mergeable part restores 11 cases:
+`EC2-RUN-001/101/110/201/202`, `EC2-DI-001/201`, `EC2-DIA-001`,
+`EC2-STOP-001`, `EC2-START-001`, and `EC2-TERM-001`.
+The existing `engine.Groups()` registration and `conf-select` instances
+prefix already select them. Key pairs, `EC2-STOP/START/TERM-101`, and
+`EC2-GAP-001/002` remain for the next part of #139. AC2 is not claimed.
+
+The pinned Proxmox `internal/backend/proxmox/connection.go` forces
+`cfg.ReadOnly = true`; its mutation methods return Unsupported regardless of
+the YAML flag. Keeping the audit-only token and read-only region is therefore
+required for this pin. The creating group still executes. Ten restored cases
+stop at subnet discovery because the SigV4 region is lost, tracked by
+https://github.com/popododo0720/vws-console-api/issues/792 with `local-pve`
+entries. Termination does not reach Proxmox in this run, so this evidence does
+not claim to have exercised its missing terminated-state behavior.
+
+Both targets return `InvalidParameterValue` for a missing ImageId where
+`EC2-RUN-101` expects `MissingParameter`. Local-fake also returns a client-token
+mismatch message outside the existing message contract in `EC2-RUN-202`.
+These observed gaps are tracked by
+https://github.com/popododo0720/vws-console-api/issues/1005; the mismatch entry
+is scoped to `local-fake`, while local-pve records its earlier routing failure.
+No expectation or cleanup rule was loosened.
+
+The first concurrent run exhausted the API's default launch bucket (5 tokens,
+refill 2/s), producing 503 RequestLimitExceeded and unknown-create cleanup
+errors. The disposable local API processes use their supported
+`-ec2-launch-burst 100 -ec2-launch-rate 100` options so the suite can exercise
+parity without incidental throttling. The ownership gate still refuses to
+retry or discard an unknown create. The final run has zero such errors.
+
+| Group / invocation | Pass | Untracked fail | Known fail | Skip | Error |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| ec2/instances, read-only | 1 | 0 | 2 | 0 | 0 |
+| ec2/images | 0 | 0 | 2 | 0 | 0 |
+| ec2/keypairs | 0 | 0 | 1 | 0 | 0 |
+| ec2/addresses | 0 | 0 | 1 | 0 | 0 |
+| ec2/gaps | 1 | 0 | 2 | 0 | 0 |
+| ebs/volumes | 0 | 0 | 1 | 0 | 0 |
+| ebs/snapshots | 0 | 0 | 1 | 0 | 0 |
+| ebs/gaps | 1 | 0 | 0 | 0 | 0 |
+| vpc/vpcs | 0 | 0 | 1 | 0 | 0 |
+| vpc/subnets | 0 | 0 | 1 | 0 | 0 |
+| vpc/securitygroups | 0 | 0 | 1 | 0 | 0 |
+| vpc/gaps | 3 | 0 | 0 | 0 | 0 |
+| ec2/instances, full group | 1 | 0 | 13 | 0 | 0 |
+| iam/users | 0 | 0 | 0 | 4 | 0 |
+| iam/roles | 4 | 0 | 0 | 0 | 0 |
+| iam/policies | 7 | 0 | 0 | 0 | 0 |
+| iam/mfa | 2 | 0 | 1 | 1 | 0 |
+| iam/policytags | 8 | 0 | 2 | 1 | 0 |
+| iam/mfatags | 1 | 0 | 0 | 9 | 0 |
+| iam/mfadevices | 0 | 0 | 0 | 1 | 0 |
+| sts/caller | 1 | 0 | 0 | 1 | 0 |
+| auth/sigv4 | 6 | 0 | 1 | 3 | 0 |
+| Total invocations | 36 | 0 | 30 | 20 | 0 |
+
+The first three read-only instance cases are deliberately repeated in the
+full instances invocation; the table counts executed cases, not unique IDs.
+The full group's run ID is `conf-20261113T090915Z-f5b208`.
+Logs and reports are saved under `~/evidence/vws-conformance-139/`:
+`local-pve-final.log`, `local-fake-final.log`, and `reports/`.
+The workflow's full local-fake selection also exits **0**: 90 pass,
+9 linked known failures, 10 existing skips, and zero untracked failures or
+harness errors. Its instances group has 12 pass and 2 known failures
+(`conf-20261113T091018Z-218265`).
+
+```sh
+export RUNNER_TEMP="$PWD/.scratch"
+export TMPDIR="$RUNNER_TEMP"
+export STACK_BIN="$RUNNER_TEMP/console-api/bin"
+export CONSOLE_API_PIN=05840905e958f6ad5e57e200931d542798b22d73
+export PATH="$RUNNER_TEMP/awscli/bin:$RUNNER_TEMP/etcd/usr/bin:$PATH"
+bash scripts/local-pve.sh
+```
+
+The local stack was built in separate detached worktrees at the exact CI
+pins, with the same etcd extraction and IAM bootstrap as the workflow.
+`TestInstanceCasesRegistered` fails on the original main snapshot for all 11
+missing IDs (`main-negative.log`). The local protocol fake exercises all 14
+instance cases, cleanup after an assertion failure, repeated cleanup, and
+idempotent launch replay. Foreign ownership blocks Stop, Start and Terminate
+in `internal/harness/instance_gate_test.go`. The baseline AC1/AC3 command
+`go test -race -count=1 -p 1 ./internal/harness -run 'TestMutatingSDKMethodsStayInAct|Instance|KeyPair'`
+passed before the changes (`main-gates.log`). Removing the real RUN-202
+exception in a unit test restores a parity-gate failure.
+
+`go build ./...`, `go vet ./...`, `golangci-lint run --timeout=5m ./...`
+(`0 issues`), and `go test -race -count=1 -p 1 ./...` all passed
+(`quality.log`). `bash -n scripts/local-pve.sh` passed. Actionlint reports
+only the pre-existing local-fake readiness-loop SC2034 warning, identical on
+the main snapshot (`workflow-check.log`).
+
 ## Issue #138: passing run with approved ownership exclusions
 
 The full local-pve command now exits **0**. All six service packages pass

@@ -4,6 +4,24 @@
 # An optional target restricts the exception; omitted targets apply to every run.
 # A target-specific entry overrides an unscoped entry for the same case.
 
+# RunInstances omitting ImageId returns InvalidParameterValue instead of MissingParameter;
+# the client-token mismatch message also differs from the existing AWS message contract.
+EC2-RUN-101 https://github.com/popododo0720/vws-console-api/issues/1005
+EC2-RUN-202 https://github.com/popododo0720/vws-console-api/issues/1005 local-fake
+
+# local-pve: subnet discovery for instance setup loses the SigV4 region. The pinned
+# Proxmox connection also forces read-only mode, so a writable run needs a newer stack.
+EC2-RUN-001 https://github.com/popododo0720/vws-console-api/issues/792 local-pve
+EC2-RUN-110 https://github.com/popododo0720/vws-console-api/issues/792 local-pve
+EC2-RUN-201 https://github.com/popododo0720/vws-console-api/issues/792 local-pve
+EC2-RUN-202 https://github.com/popododo0720/vws-console-api/issues/792 local-pve
+EC2-DI-001 https://github.com/popododo0720/vws-console-api/issues/792 local-pve
+EC2-DI-201 https://github.com/popododo0720/vws-console-api/issues/792 local-pve
+EC2-DIA-001 https://github.com/popododo0720/vws-console-api/issues/792 local-pve
+EC2-STOP-001 https://github.com/popododo0720/vws-console-api/issues/792 local-pve
+EC2-START-001 https://github.com/popododo0720/vws-console-api/issues/792 local-pve
+EC2-TERM-001 https://github.com/popododo0720/vws-console-api/issues/792 local-pve
+
 # FIDO GetMFADevice success: popododo0720/vws-iam#133
 IAM-MFA-001 https://github.com/popododo0720/vws-iam/issues/133
 
