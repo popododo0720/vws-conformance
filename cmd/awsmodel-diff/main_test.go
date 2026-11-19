@@ -72,7 +72,6 @@ func TestImplementedOpsFollowTheCatalogue(t *testing.T) {
 		{"ec2", "DescribeVpcs"},
 		{"ec2", "DescribeVolumes"},
 		{"iam", "GetUser"},
-		{"s3", "ListObjectsV2"},
 		{"sts", "GetCallerIdentity"},
 	} {
 		if !slices.Contains(ops[want.svc], want.op) {

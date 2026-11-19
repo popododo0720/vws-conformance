@@ -3,11 +3,11 @@ package touch
 import "testing"
 
 func TestSelectGroup(t *testing.T) {
-	got := Select([]string{"s3/buckets.go", "README.md"})
+	got := Select([]string{"ec2/instances.go", "README.md"})
 	if got.Full {
 		t.Fatal("full")
 	}
-	if len(got.Groups) != 1 || got.Groups[0].Service != "s3" || got.Groups[0].Name != "buckets" {
+	if len(got.Groups) != 1 || got.Groups[0].Service != "ec2" || got.Groups[0].Name != "instances" {
 		t.Fatalf("%+v", got.Groups)
 	}
 }
@@ -50,7 +50,7 @@ func TestIAMGroups(t *testing.T) {
 }
 
 func TestSharedServiceFileIsFull(t *testing.T) {
-	for _, f := range []string{"ec2/client.go", "vpc/wrap.go", "ebs/client.go", "s3/wrap.go"} {
+	for _, f := range []string{"ec2/client.go", "vpc/wrap.go", "ebs/client.go"} {
 		got := Select([]string{f})
 		if !got.Full {
 			t.Fatalf("%s: want full, got %+v", f, got)

@@ -68,7 +68,7 @@ func parseKnownIssues(data string, groups []bind.Group, target string) (map[stri
 		if len(fields) == 3 {
 			scope = fields[2]
 			switch scope {
-			case "vws-test", "local-fake", "local-pve", "pve-test":
+			case "local-fake", "local-pve", "pve-test":
 			default:
 				return nil, fmt.Errorf("known issues line %d: unknown target %q", i+1, scope)
 			}

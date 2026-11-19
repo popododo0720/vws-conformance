@@ -6,7 +6,7 @@ This file lists the cases removed from the read-only branch and the pull request
 
 1. This branch holds the harness and the cases that create nothing. The lead opens the pull request.
 2. A standalone cleanup ownership-gate pull request lands next. A test that creates a resource must delete that resource even when the test fails. No creating case is merged before that gate. Manual cleanup of leftovers is not a substitute for the gate.
-3. Creating cases come back one service at a time, in small pull requests on top of the gate. The order is EC2, then EBS, then VPC, then S3, then IAM and STS. The lead files the tracking issues from this list.
+3. Creating cases come back one service at a time, in small pull requests on top of the gate. The order is EC2, then EBS, then VPC, then IAM and STS. The lead files the tracking issues from this list.
 
 `TestMutatingSDKMethodsStayInAct` fails the build when production code outside `internal/harness/act.go` selects a mutating method on `*ec2.Client`, `*s3.Client`, `*iam.Client`, or `*sts.Client`. A method value counts. A creating case calls a gate method on its case runtime, such as `rt.EC2CreateVolume`. The gate tags the resource with the run id, registers its deletion before the request is sent, and deletes only what one exact-id observation proves this run owns.
 
@@ -19,8 +19,6 @@ EC2 keeps `EC2-DI-101`, `EC2-DI-102`, `EC2-DIA-101`, `EC2-DIMG-001`, `EC2-DIMG-1
 EBS keeps `EBS-VOL-104`, `EBS-SNAP-102`, and `EBS-GAP-002`.
 
 VPC keeps `VPC-VPC-104`, `VPC-SUB-103`, `VPC-SG-104`, `VPC-GAP-004`, `VPC-GAP-005`, and `VPC-GAP-007`.
-
-S3 keeps `S3-LB-001`, `S3-LB-101`, `S3-BKT-102`, `S3-LO-101`, and `S3-LO-102`.
 
 IAM and STS keep `IAM-USR-003`, `IAM-USR-102`, `IAM-GRP-101`, `IAM-GAP-002`, `STS-GCI-001`, and `STS-GCI-101`.
 
@@ -121,46 +119,6 @@ for the next independently mergeable part of #139.
 - `VPC-GAP-003` RevokeSecurityGroupEgress
 - `VPC-GAP-006` CreateInternetGateway
 
-## S3
-
-- `S3-BKT-001` CreateBucket
-- `S3-BKT-002` HeadBucket, after CreateBucket
-- `S3-BKT-003` DeleteBucket
-- `S3-BKT-101` CreateBucket
-- `S3-BKT-103` DeleteBucket
-- `S3-BKT-104` CreateBucket
-- `S3-BKT-105` DeleteBucket
-- `S3-OBJ-001` PutObject
-- `S3-OBJ-002` GetObject, after CreateBucket
-- `S3-OBJ-003` HeadObject, after CreateBucket
-- `S3-OBJ-004` DeleteObject
-- `S3-OBJ-005` GetObject, after CreateBucket
-- `S3-OBJ-101` GetObject, after CreateBucket
-- `S3-OBJ-102` PutObject
-- `S3-OBJ-103` GetObject, after CreateBucket
-- `S3-OBJ-104` GetObject, after CreateBucket
-- `S3-OBJ-105` DeleteObject
-- `S3-OBJ-106` HeadObject, after CreateBucket
-- `S3-OBJ-107` DeleteObject
-- `S3-LO-001` ListObjects, after CreateBucket
-- `S3-LO-002` ListObjectsV2, after CreateBucket
-- `S3-LO-003` ListObjectsV2, after CreateBucket
-- `S3-GAP-001` CopyObject
-- `S3-GAP-002` DeleteObjects
-- `S3-GAP-003` PutObjectTagging
-- `S3-GAP-004` GetObjectAcl, after CreateBucket
-- `S3-GAP-005` PutBucketPolicy
-- `S3-GAP-006` CreateMultipartUpload
-- `S3-GAP-007` PutBucketVersioning
-- `S3-GAP-008` GetBucketLocation, after CreateBucket
-- `S3-GAP-009` PutBucketCors
-- `S3-GAP-010` PutBucketLifecycleConfiguration
-- `S3-GAP-011` PutBucketWebsite
-- `S3-GAP-012` ListObjectVersions, after CreateBucket
-- `S3-GAP-014` GetObject, after CreateBucket
-- `S3-GAP-015` HeadBucket, after CreateBucket
-- `S3-GAP-016` PutBucketLifecycleConfiguration
-
 ## IAM and STS
 
 - `IAM-USR-001` CreateUser
@@ -185,11 +143,8 @@ for the next independently mergeable part of #139.
 - `STS-AR-101` AssumeRole
 - `STS-GAP-001` GetSessionToken
 - `STS-GAP-002` AssumeRoleWithWebIdentity
-- `AUTH-009` GetObject, after CreateBucket
-- `AUTH-010` PutObject
 - `AUTH-012` AssumeRole
 - `AUTH-014` RunInstances
-- `AUTH-015` PutObject
 - `AUTH-016` AssumeRole
 - `AUTH-017` AssumeRole
 

@@ -526,49 +526,49 @@ func TestEgressCensusReportsBypass(t *testing.T) {
 	}
 	const awsHTTPTransport = awsSDK + "aws/transport/http"
 	tests := []bypassCase{
-		{"http.Get in a service package", "s3/plant_get.go", `package s3
+		{"http.Get in a service package", "sts/plant_get.go", `package sts
 
 import "net/http"
 
 func plantGet() { _, _ = http.Get("http://127.0.0.1:1") }
-`, []string{"s3/plant_get.go: plantGet: net/http.Get"}},
-		{"http.Client literal", "s3/plant_client.go", `package s3
+`, []string{"sts/plant_get.go: plantGet: net/http.Get"}},
+		{"http.Client literal", "sts/plant_client.go", `package sts
 
 import "net/http"
 
 func plantClient() *http.Client { return &http.Client{} }
-`, []string{"s3/plant_client.go: plantClient: net/http.Client"}},
-		{"zero-value http.Client", "s3/plant_zero.go", `package s3
+`, []string{"sts/plant_client.go: plantClient: net/http.Client"}},
+		{"zero-value http.Client", "sts/plant_zero.go", `package sts
 
 import "net/http"
 
 var plantZero http.Client
-`, []string{"s3/plant_zero.go: plantZero: net/http.Client"}},
-		{"new(http.Transport)", "s3/plant_new.go", `package s3
+`, []string{"sts/plant_zero.go: plantZero: net/http.Client"}},
+		{"new(http.Transport)", "sts/plant_new.go", `package sts
 
 import "net/http"
 
 func plantNew() *http.Transport { return new(http.Transport) }
-`, []string{"s3/plant_new.go: plantNew: net/http.Transport"}},
-		{"embedded http.Client", "s3/plant_embed.go", `package s3
+`, []string{"sts/plant_new.go: plantNew: net/http.Transport"}},
+		{"embedded http.Client", "sts/plant_embed.go", `package sts
 
 import "net/http"
 
 type plantEmbed struct{ http.Client }
-`, []string{"s3/plant_embed.go: plantEmbed: net/http.Client"}},
-		{"alias import", "s3/plant_alias.go", `package s3
+`, []string{"sts/plant_embed.go: plantEmbed: net/http.Client"}},
+		{"alias import", "sts/plant_alias.go", `package sts
 
 import h "net/http"
 
 func plantAlias() { _, _ = h.Get("http://127.0.0.1:1") }
-`, []string{"s3/plant_alias.go: plantAlias: net/http.Get"}},
-		{"dot import", "s3/plant_dot.go", `package s3
+`, []string{"sts/plant_alias.go: plantAlias: net/http.Get"}},
+		{"dot import", "sts/plant_dot.go", `package sts
 
 import . "net/http"
 
 func plantDot() { _, _ = PostForm("http://127.0.0.1:1", nil) }
-`, []string{"s3/plant_dot.go: plantDot: net/http.PostForm"}},
-		{"net.Dialer", "s3/plant_dialer.go", `package s3
+`, []string{"sts/plant_dot.go: plantDot: net/http.PostForm"}},
+		{"net.Dialer", "sts/plant_dialer.go", `package sts
 
 import (
 	"context"
@@ -579,37 +579,37 @@ func plantDialer(ctx context.Context) {
 	_, _ = (&net.Dialer{}).DialContext(ctx, "tcp", "127.0.0.1:1")
 }
 `, []string{
-			"s3/plant_dialer.go: plantDialer: net.Dialer.DialContext",
-			"s3/plant_dialer.go: plantDialer: net.Dialer",
+			"sts/plant_dialer.go: plantDialer: net.Dialer.DialContext",
+			"sts/plant_dialer.go: plantDialer: net.Dialer",
 		}},
-		{"net.LookupIP", "s3/plant_lookup.go", `package s3
+		{"net.LookupIP", "sts/plant_lookup.go", `package sts
 
 import "net"
 
 func plantLookup() { _, _ = net.LookupIP("example.invalid") }
-`, []string{"s3/plant_lookup.go: plantLookup: net.LookupIP"}},
-		{"net.ListenUDP", "s3/plant_udp.go", `package s3
+`, []string{"sts/plant_lookup.go: plantLookup: net.LookupIP"}},
+		{"net.ListenUDP", "sts/plant_udp.go", `package sts
 
 import "net"
 
 func plantUDP() { _, _ = net.ListenUDP("udp", nil) }
-`, []string{"s3/plant_udp.go: plantUDP: net.ListenUDP"}},
-		{"exec.Command", "s3/plant_exec.go", `package s3
+`, []string{"sts/plant_udp.go: plantUDP: net.ListenUDP"}},
+		{"exec.Command", "sts/plant_exec.go", `package sts
 
 import "os/exec"
 
 func plantExec() { _ = exec.Command("true") }
 `, []string{
-			"s3/plant_exec.go: plantExec: os/exec.Cmd",
-			"s3/plant_exec.go: plantExec: os/exec.Command",
+			"sts/plant_exec.go: plantExec: os/exec.Cmd",
+			"sts/plant_exec.go: plantExec: os/exec.Command",
 		}},
-		{"syscall.Socket", "s3/plant_syscall.go", `package s3
+		{"syscall.Socket", "sts/plant_syscall.go", `package sts
 
 import "syscall"
 
 func plantSyscall() { _, _ = syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0) }
-`, []string{"s3/plant_syscall.go: plantSyscall: syscall.Socket"}},
-		{"httputil reverse proxy", "s3/plant_proxy.go", `package s3
+`, []string{"sts/plant_syscall.go: plantSyscall: syscall.Socket"}},
+		{"httputil reverse proxy", "sts/plant_proxy.go", `package sts
 
 import (
 	"net/http/httputil"
@@ -618,16 +618,16 @@ import (
 
 func plantProxy(u *url.URL) { _ = httputil.NewSingleHostReverseProxy(u) }
 `, []string{
-			"s3/plant_proxy.go: plantProxy: net/http/httputil.NewSingleHostReverseProxy",
-			"s3/plant_proxy.go: plantProxy: net/http/httputil.ReverseProxy",
+			"sts/plant_proxy.go: plantProxy: net/http/httputil.NewSingleHostReverseProxy",
+			"sts/plant_proxy.go: plantProxy: net/http/httputil.ReverseProxy",
 		}},
-		{"AWS transport package", "s3/plant_awshttp.go", `package s3
+		{"AWS transport package", "sts/plant_awshttp.go", `package sts
 
 import awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 
 func plantAWSHTTP() { _ = awshttp.NewBuildableClient() }
-`, []string{"s3/plant_awshttp.go: plantAWSHTTP: " + awsHTTPTransport + ".NewBuildableClient"}},
-		{"config.LoadDefaultConfig outside client.go", "s3/plant_config.go", `package s3
+`, []string{"sts/plant_awshttp.go: plantAWSHTTP: " + awsHTTPTransport + ".NewBuildableClient"}},
+		{"config.LoadDefaultConfig outside client.go", "sts/plant_config.go", `package sts
 
 import (
 	"context"
@@ -636,8 +636,8 @@ import (
 )
 
 func plantConfig(ctx context.Context) { _, _ = config.LoadDefaultConfig(ctx) }
-`, []string{"s3/plant_config.go: plantConfig: " + awsSDK + "config.LoadDefaultConfig"}},
-		{"s3.NewFromConfig outside Load", "s3/plant_service.go", `package s3
+`, []string{"sts/plant_config.go: plantConfig: " + awsSDK + "config.LoadDefaultConfig"}},
+		{"s3.NewFromConfig outside Load", "sts/plant_service.go", `package sts
 
 import (
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -645,25 +645,25 @@ import (
 )
 
 func plantService(cfg aws.Config) { _ = awss3.NewFromConfig(cfg) }
-`, []string{"s3/plant_service.go: plantService: " + awsSDK + "service/s3.NewFromConfig"}},
-		{"sso service constructor", "s3/plant_sso.go", `package s3
+`, []string{"sts/plant_service.go: plantService: " + awsSDK + "service/s3.NewFromConfig"}},
+		{"sso service constructor", "sts/plant_sso.go", `package sts
 
 import "github.com/aws/aws-sdk-go-v2/service/sso"
 
 func plantSSO() { _ = sso.New(sso.Options{}) }
-`, []string{"s3/plant_sso.go: plantSSO: " + awsSDK + "service/sso.New"}},
-		{"ssocreds package", "s3/plant_ssocreds.go", `package s3
+`, []string{"sts/plant_sso.go: plantSSO: " + awsSDK + "service/sso.New"}},
+		{"ssocreds package", "sts/plant_ssocreds.go", `package sts
 
 import "github.com/aws/aws-sdk-go-v2/credentials/ssocreds"
 
 func plantSSOCreds() { _ = ssocreds.New }
-`, []string{"s3/plant_ssocreds.go: plantSSOCreds: " + awsSDK + "credentials/ssocreds.New"}},
-		{"imds.New", "s3/plant_imds.go", `package s3
+`, []string{"sts/plant_ssocreds.go: plantSSOCreds: " + awsSDK + "credentials/ssocreds.New"}},
+		{"imds.New", "sts/plant_imds.go", `package sts
 
 import "github.com/aws/aws-sdk-go-v2/feature/ec2/imds"
 
 func plantIMDS() { _ = imds.New(imds.Options{}) }
-`, []string{"s3/plant_imds.go: plantIMDS: " + awsSDK + "feature/ec2/imds.New"}},
+`, []string{"sts/plant_imds.go: plantIMDS: " + awsSDK + "feature/ec2/imds.New"}},
 		{"new file beside dial.go", "internal/harness/dial_extra.go", `package harness
 
 import "net/http"
@@ -684,14 +684,14 @@ import (
 
 func TestPlantConfig(t *testing.T) { _, _ = config.LoadDefaultConfig(context.Background()) }
 `, []string{"internal/harness/plant_config_test.go: TestPlantConfig: " + awsSDK + "config.LoadDefaultConfig"}},
-		{"file behind a build tag", "s3/plant_tagged.go", `//go:build census
+		{"file behind a build tag", "sts/plant_tagged.go", `//go:build census
 
-package s3
+package sts
 
 import "net/http"
 
 func plantTagged() { _, _ = http.Get("http://127.0.0.1:1") }
-`, []string{"s3/plant_tagged.go: not compiled under the default build"}},
+`, []string{"sts/plant_tagged.go: not compiled under the default build"}},
 		{"default client in a test file", "internal/harness/plant_default_test.go", `package harness
 
 import (
@@ -724,7 +724,7 @@ func TestPlantHTTPTest(t *testing.T) {
 	_ = exec.Command("true")
 }
 `, nil},
-		{"legal net/http use", "s3/plant_legal.go", `package s3
+		{"legal net/http use", "sts/plant_legal.go", `package sts
 
 import (
 	"context"
@@ -751,7 +751,7 @@ func plantLegal(ctx context.Context, c *harness.GuardedClient, rt http.RoundTrip
 	return resp.Header, http.StatusOK, nil
 }
 `, nil},
-		{"json.Unmarshal into a nil *http.Client and *exec.Cmd", "s3/plant_unmarshal.go", `package s3
+		{"json.Unmarshal into a nil *http.Client and *exec.Cmd", "sts/plant_unmarshal.go", `package sts
 
 import (
 	"encoding/json"
@@ -768,12 +768,12 @@ func plantUnmarshal() {
 	_ = cmd.Run()
 }
 `, []string{
-			"s3/plant_unmarshal.go: plantUnmarshal: net/http.Client.Get",
-			"s3/plant_unmarshal.go: plantUnmarshal: net/http.Client",
-			"s3/plant_unmarshal.go: plantUnmarshal: os/exec.Cmd.Run",
-			"s3/plant_unmarshal.go: plantUnmarshal: os/exec.Cmd",
+			"sts/plant_unmarshal.go: plantUnmarshal: net/http.Client.Get",
+			"sts/plant_unmarshal.go: plantUnmarshal: net/http.Client",
+			"sts/plant_unmarshal.go: plantUnmarshal: os/exec.Cmd.Run",
+			"sts/plant_unmarshal.go: plantUnmarshal: os/exec.Cmd",
 		}},
-		{"generic allocator", "s3/plant_generic.go", `package s3
+		{"generic allocator", "sts/plant_generic.go", `package sts
 
 import "net/http"
 
@@ -781,10 +781,10 @@ func alloc[P interface{ *E }, E any]() P { return new(E) }
 
 func plantGeneric() { _, _ = alloc[*http.Client]().Get("http://127.0.0.1:1") }
 `, []string{
-			"s3/plant_generic.go: plantGeneric: net/http.Client.Get",
-			"s3/plant_generic.go: plantGeneric: net/http.Client",
+			"sts/plant_generic.go: plantGeneric: net/http.Client.Get",
+			"sts/plant_generic.go: plantGeneric: net/http.Client",
 		}},
-		{"reflect.New of a guarded type", "s3/plant_reflect.go", `package s3
+		{"reflect.New of a guarded type", "sts/plant_reflect.go", `package sts
 
 import (
 	"net/http"
@@ -796,12 +796,12 @@ func plantReflect() {
 	_, _ = c.Get("http://127.0.0.1:1")
 }
 `, []string{
-			"s3/plant_reflect.go: plantReflect: net/http.Client.Get",
-			"s3/plant_reflect.go: plantReflect: net/http.Client",
-			"s3/plant_reflect.go: plantReflect: reflect.New",
-			"s3/plant_reflect.go: plantReflect: reflect.TypeFor",
+			"sts/plant_reflect.go: plantReflect: net/http.Client.Get",
+			"sts/plant_reflect.go: plantReflect: net/http.Client",
+			"sts/plant_reflect.go: plantReflect: reflect.New",
+			"sts/plant_reflect.go: plantReflect: reflect.TypeFor",
 		}},
-		{"nil *net.Resolver", "s3/plant_resolver.go", `package s3
+		{"nil *net.Resolver", "sts/plant_resolver.go", `package sts
 
 import (
 	"context"
@@ -813,8 +813,8 @@ func plantResolver(ctx context.Context) {
 	_, _ = r.LookupHost(ctx, "example.invalid")
 }
 `, []string{
-			"s3/plant_resolver.go: plantResolver: net.Resolver.LookupHost",
-			"s3/plant_resolver.go: plantResolver: net.Resolver",
+			"sts/plant_resolver.go: plantResolver: net.Resolver.LookupHost",
+			"sts/plant_resolver.go: plantResolver: net.Resolver",
 		}},
 		{"guard stripped from a GuardedClient", "internal/harness/plant_strip.go", `package harness
 
@@ -835,7 +835,7 @@ func plantStrip(g *GuardedClient, req *http.Request) {
 			"internal/harness/plant_strip.go: plantStrip: net/http.Transport.DialContext",
 			"internal/harness/plant_strip.go: plantStrip: net/http.Transport",
 		}},
-		{"httptest client in production", "s3/plant_httptest.go", `package s3
+		{"httptest client in production", "sts/plant_httptest.go", `package sts
 
 import (
 	"net/http"
@@ -844,13 +844,13 @@ import (
 
 func plantHTTPTest(h http.Handler) { _, _ = httptest.NewServer(h).Client().Get("http://127.0.0.1:1") }
 `, []string{
-			"s3/plant_httptest.go: plantHTTPTest: net/http.Client.Get",
-			"s3/plant_httptest.go: plantHTTPTest: net/http.Client",
-			"s3/plant_httptest.go: plantHTTPTest: net/http/httptest.NewServer",
-			"s3/plant_httptest.go: plantHTTPTest: net/http/httptest.Server.Client",
-			"s3/plant_httptest.go: plantHTTPTest: net/http/httptest.Server",
+			"sts/plant_httptest.go: plantHTTPTest: net/http.Client.Get",
+			"sts/plant_httptest.go: plantHTTPTest: net/http.Client",
+			"sts/plant_httptest.go: plantHTTPTest: net/http/httptest.NewServer",
+			"sts/plant_httptest.go: plantHTTPTest: net/http/httptest.Server.Client",
+			"sts/plant_httptest.go: plantHTTPTest: net/http/httptest.Server",
 		}},
-		{"syslog, jsonrpc, cgi, fcgi and plugin", "s3/plant_entry.go", `package s3
+		{"syslog, jsonrpc, cgi, fcgi and plugin", "sts/plant_entry.go", `package sts
 
 import (
 	"log/syslog"
@@ -869,12 +869,12 @@ func plantEntry(l net.Listener) {
 	_, _ = plugin.Open("plant.so")
 }
 `, []string{
-			"s3/plant_entry.go: plantEntry: log/syslog.Dial",
-			"s3/plant_entry.go: plantEntry: log/syslog.LOG_INFO",
-			"s3/plant_entry.go: plantEntry: net/http/cgi.Handler",
-			"s3/plant_entry.go: plantEntry: net/http/fcgi.Serve",
-			"s3/plant_entry.go: plantEntry: net/rpc/jsonrpc.Dial",
-			"s3/plant_entry.go: plantEntry: plugin.Open",
+			"sts/plant_entry.go: plantEntry: log/syslog.Dial",
+			"sts/plant_entry.go: plantEntry: log/syslog.LOG_INFO",
+			"sts/plant_entry.go: plantEntry: net/http/cgi.Handler",
+			"sts/plant_entry.go: plantEntry: net/http/fcgi.Serve",
+			"sts/plant_entry.go: plantEntry: net/rpc/jsonrpc.Dial",
+			"sts/plant_entry.go: plantEntry: plugin.Open",
 		}},
 		{"proxy, rpc, syslog, cgi and StartProcess in a test file", "internal/harness/plant_entry_test.go", `package harness
 
@@ -908,41 +908,42 @@ func TestPlantEntry(t *testing.T) {
 			"internal/harness/plant_entry_test.go: TestPlantEntry: net/rpc/jsonrpc.Dial",
 			"internal/harness/plant_entry_test.go: TestPlantEntry: os.StartProcess",
 		}},
-		{"import of a testdata package", "s3/plant_testdata.go", `package s3
+		{"import of a testdata package", "sts/plant_testdata.go", `package sts
 
-import "github.com/popododo0720/vws-conformance/s3/testdata/leak"
+import "github.com/popododo0720/vws-conformance/sts/testdata/leak"
 
 func plantTestdata() { leak.Get() }
 `, []string{
-			"s3/plant_testdata.go: imports github.com/popododo0720/vws-conformance/s3/testdata/leak, which ./... does not load",
+			"sts/plant_testdata.go: imports github.com/popododo0720/vws-conformance/sts/testdata/leak, " +
+				"which ./... does not load",
 		}},
-		{"go:linkname through unsafe", "s3/plant_linkname.go", `package s3
+		{"go:linkname through unsafe", "sts/plant_linkname.go", `package sts
 
 import _ "unsafe"
 
 //go:linkname plantNanotime runtime.nanotime
 func plantNanotime() int64
-`, []string{"s3/plant_linkname.go: import: unsafe"}},
-		{"assembly file", "s3/plant_asm.s", "", []string{"s3/plant_asm.s: not Go source"}},
-		{"unadmitted dependency that starts go list", "s3/plant_packages.go", `package s3
+`, []string{"sts/plant_linkname.go: import: unsafe"}},
+		{"assembly file", "sts/plant_asm.s", "", []string{"sts/plant_asm.s: not Go source"}},
+		{"unadmitted dependency that starts go list", "sts/plant_packages.go", `package sts
 
 import "golang.org/x/tools/go/packages"
 
 func plantPackages() { _, _ = packages.Load(&packages.Config{Mode: packages.NeedName}, "std") }
 `, []string{
-			"s3/plant_packages.go: imports golang.org/x/tools/go/packages, which is not an admitted dependency",
+			"sts/plant_packages.go: imports golang.org/x/tools/go/packages, which is not an admitted dependency",
 		}},
 	}
 	// support files back a case. They report nothing themselves.
 	support := map[string]string{
-		"s3/testdata/leak/leak.go": `package leak
+		"sts/testdata/leak/leak.go": `package leak
 
 import "net/http"
 
 func Get() { _, _ = http.Get("http://127.0.0.1:1") }
 `,
-		// An in-package test gives s3 a second package variant that lists the same .s file.
-		"s3/plant_inpkg_test.go": `package s3
+		// An in-package test gives sts a second package variant that lists the same .s file.
+		"sts/plant_inpkg_test.go": `package sts
 `,
 	}
 	overlay := map[string][]byte{}

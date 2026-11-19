@@ -26,7 +26,7 @@ func TestMutatingSDKMethodsStayInAct(t *testing.T) {
 
 func TestCensusReportsMutationOutsideAct(t *testing.T) {
 	root := moduleRoot(t)
-	buckets := filepath.Join(root, "s3", "buckets.go")
+	buckets := filepath.Join(root, "ec2", "keypairs.go")
 	body, err := os.ReadFile(buckets)
 	if err != nil {
 		t.Fatal(err)
@@ -43,10 +43,10 @@ func TestCensusReportsMutationOutsideAct(t *testing.T) {
 		report string
 	}{
 		{"service package", buckets, string(body) + `
-func dropBucket(ctx context.Context, api *s3.Client) {
-	_, _ = api.DeleteBucket(ctx, nil)
+func dropVolume(ctx context.Context, api *awsec2.Client) {
+	_, _ = api.DeleteVolume(ctx, nil)
 }
-`, "s3/buckets.go: DeleteBucket"},
+`, "ec2/keypairs.go: DeleteVolume"},
 		{"new file beside act.go", filepath.Join(root, "internal", "harness", "act_extra.go"), `package harness
 
 import "github.com/aws/aws-sdk-go-v2/service/ec2"
