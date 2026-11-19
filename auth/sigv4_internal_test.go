@@ -148,3 +148,19 @@ func TestSignatureMismatchRawHidesCredentials(t *testing.T) {
 		}
 	}
 }
+
+// TestAuth001Expectation pins AUTH-001: every target this suite reaches has no
+// object storage, so a correctly signed request must pass SigV4 verification and
+// then get S3 NotImplemented. A 200 would need an AWS-forwarding target.
+func TestAuth001Expectation(t *testing.T) {
+	for _, c := range SigV4().Cases {
+		if c.ID != "AUTH-001" {
+			continue
+		}
+		if c.Expect.HTTP != http.StatusNotImplemented || c.Expect.Code != "NotImplemented" {
+			t.Fatalf("AUTH-001 expects %d %q, want 501 NotImplemented", c.Expect.HTTP, c.Expect.Code)
+		}
+		return
+	}
+	t.Fatal("AUTH-001 is missing from the cases table")
+}

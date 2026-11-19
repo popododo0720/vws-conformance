@@ -26,7 +26,10 @@ func SigV4() bind.Group {
 		}
 	}
 	return bind.Group{Service: "auth", Name: "sigv4", Run: run, Cases: []cases.Case{
-		a("AUTH-001", "ListBuckets", cases.Expect{HTTP: 200}, cases.DocSigV4, ""),
+		// Every target this suite can reach (local-fake, local-pve, pve-test) has no object storage, so a
+		// correctly signed request passes SigV4 verification and then gets S3 NotImplemented. A 200 belongs
+		// only to a registered AWS-forwarding target, which the suite does not have.
+		a("AUTH-001", "ListBuckets", cases.Expect{HTTP: 501, Code: "NotImplemented"}, cases.DocSigV4, ""),
 		a("AUTH-002", "ListBuckets", cases.Expect{HTTP: 403, Code: "SignatureDoesNotMatch"}, cases.DocSigV4, ""),
 		a("AUTH-003", "ListBuckets", cases.Expect{HTTP: 403, Code: "RequestTimeTooSkewed"}, cases.DocSigV4, ""),
 		a("AUTH-004", "ListBuckets", cases.Expect{HTTP: 400, Code: "AuthorizationHeaderMalformed"}, cases.DocSigV4, ""),

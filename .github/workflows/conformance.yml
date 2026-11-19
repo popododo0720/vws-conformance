@@ -30,7 +30,8 @@ jobs:
         run: go test -race -count=1 -p 1 ./internal/... ./cmd/...
       - name: fake backend
         run: |
-          pin=007e4d2f14dca8380468c5db52efb642e02bdac7
+          # console-api pin: PR #1051 head. Move it to the merge commit on main after #1051 merges.
+          pin=065559e43d3149c029a85e03247321a7e6b64849
           git init /tmp/src/vws-console-api
           git -C /tmp/src/vws-console-api remote add origin https://github.com/popododo0720/vws-console-api.git
           git -C /tmp/src/vws-console-api fetch --depth 1 origin "$pin"
@@ -103,7 +104,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      CONSOLE_API_PIN: 05840905e958f6ad5e57e200931d542798b22d73
+      # console-api pin: PR #1051 head. Move it to the merge commit on main after #1051 merges.
+      CONSOLE_API_PIN: 065559e43d3149c029a85e03247321a7e6b64849
       IAM_PIN: d01a814a91afba7d884d9f5b0bf4ad7a23110a91
     steps:
       - uses: actions/checkout@v4

@@ -42,7 +42,7 @@ func TestCIRunsLocalPVE(t *testing.T) {
 		}
 	}
 	for _, required := range []string{
-		"05840905e958f6ad5e57e200931d542798b22d73",
+		"065559e43d3149c029a85e03247321a7e6b64849",
 		"./cmd/pvefake", "./cmd/vws-region", "./cmd/vws-console-api",
 		"IAM_PIN: d01a814a91afba7d884d9f5b0bf4ad7a23110a91",
 		"\"$(git -C \"$src\" rev-parse HEAD)\" = \"$IAM_PIN\"",
