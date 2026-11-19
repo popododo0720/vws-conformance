@@ -84,11 +84,14 @@ func TestKnownIssuesStayInTheirTarget(t *testing.T) {
 					"EC2-DI-101", "EC2-DIA-101", "EC2-DIMG-001", "EC2-DIMG-101",
 					"EC2-KP-103", "EC2-EIP-103", "EC2-GAP-003", "EC2-GAP-008",
 					"EBS-VOL-104", "EBS-SNAP-102", "VPC-VPC-104", "VPC-SUB-103",
-					"VPC-SG-104", "AUTH-001",
+					"VPC-SG-104",
 				} {
 					if (known[id] != "") != (target == "local-pve") {
 						t.Fatalf("%s exception on %s: %q", id, target, known[id])
 					}
+				}
+				if known["AUTH-001"] != "" {
+					t.Fatalf("AUTH-001 exception on %s: %q", target, known["AUTH-001"])
 				}
 				if known["IAM-MFA-001"] == "" {
 					t.Fatal("unscoped exception was lost")
