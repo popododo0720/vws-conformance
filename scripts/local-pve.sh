@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 work=$(mktemp -d "$RUNNER_TEMP/local-pve.XXXXXX")
 probe="$work/conf-probe"
 go build -o "$probe" ./cmd/conf-probe
-mkdir -p "$work"/{public,private,locks}
+mkdir -p "$work/etc/pve/vws" "$work/etc/pve/priv/vws" "$work/etc/pve/priv/lock/vws-region" "$work/etc/vws/credentials"
 umask 077
 pids=()
 cleanup() {
@@ -50,7 +50,7 @@ cp "$work/client-key.pem" "$work/etcd-client-key.pem"
 printf 'k1\n' >"$work/kek_active"
 openssl rand -base64 32 >"$work/kek_k1"
 openssl rand -base64 32 >"$work/kek"
-openssl rand 32 >"$work/region-kek"
+openssl rand 32 >"$work/etc/vws/credentials/region-kek"
 cat >"$work/global.yaml" <<EOF
 iam:
   etcd_endpoints: [https://127.0.0.1:2379]
@@ -60,8 +60,12 @@ credentials:
   mtls: {ca_file: $work/etcd-ca.pem, cert_file: $work/client.pem, key_file: $work/client-key.pem}
 default_project: "123456789012"
 EOF
-printf 'read_only: true\n' >"$work/region.yaml"
+# pools lists the managed Proxmox pool for project 123456789012; scope checks refuse any other pool.
+printf "read_only: true\\npools: {project: '123456789012'}\\n" >"$work/region.yaml"
 # The upstream test helper runs the real encrypted-file implementation under this sandbox root.
+# Its paths (etc/pve/..., etc/vws/credentials/region-kek) are relative to -helper-root. vws-iam still
+# needs CREDENTIALS_DIRECTORY; vws-region runs without it so that it reads its KEK from the helper root
+# as the non-root test user (a credentials directory must be root-owned).
 export VWS_HELPER_TEST_ROOT="$work" CREDENTIALS_DIRECTORY="$work"
 etcd --name local-pve --data-dir "$work/etcd" \
   --listen-client-urls https://127.0.0.1:2379 --advertise-client-urls https://127.0.0.1:2379 \
@@ -95,8 +99,8 @@ wait_ready http://127.0.0.1:9096/readyz
 pids+=("$!")
 SSL_CERT_FILE="$work/pve-ca.pem" wait_ready https://127.0.0.1:8006/api2/json/version \
   -authorization 'PVEAPIToken=vws@pve!inventory=fake-secret'
-"$STACK_BIN/vws-region" -backend proxmox -config "$work/region.yaml" \
-  -registration-file "$work/public/registration.json" -helper-path "$STACK_BIN/region-helper" \
+env -u CREDENTIALS_DIRECTORY "$STACK_BIN/vws-region" -backend proxmox -config "$work/region.yaml" \
+  -registration-file "$work/etc/pve/vws/registration.json" -helper-path "$STACK_BIN/region-helper" -helper-root "$work" \
   -pve-endpoint https://127.0.0.1:8006 -pve-ca-file "$work/pve-ca.pem" \
   -tls-cert-file "$work/server.pem" -tls-key-file "$work/server-key.pem" -tls-ca-file "$work/etcd-ca.pem" \
   -region-addr 127.0.0.1:8443 -ops-addr 127.0.0.1:8085 >"$work/region.log" 2>&1 &

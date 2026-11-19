@@ -28,3 +28,8 @@ vms:
       smbios1: uuid=5f0c3e9a-8b5d-4b8e-9a51-0c2d6c1f7a10
       cores: "2"
       memory: "2048"
+networks:
+  - node: pve1
+    iface: vmbr0
+    type: bridge
+    cidr: 10.0.0.1/24
