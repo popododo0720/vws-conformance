@@ -63,7 +63,8 @@ func TestCIRunsLocalPVE(t *testing.T) {
 		t.Fatal("local-pve requests bypass the guarded probe")
 	}
 	for _, required := range []string{
-		"-backend proxmox", "-region pve-test-1 -state-dir", "pveApiUrls", "caPem", "-backend regions -iam grpc", "/api/v1/admin/regions",
+		"-backend proxmox", "-region pve-test-1 -state-dir", "pveApiUrls", "caPem",
+		"-backend regions -iam grpc", "/api/v1/admin/regions",
 		"bootstrap -store etcd", "\"$STACK_BIN/vws-iam\" -store etcd",
 		"-iam-endpoint 127.0.0.1:9095", "-listen 127.0.0.1:9095 -health-listen 127.0.0.1:9096",
 		"-iam-tls-ca-file", "-iam-tls-cert-file", "-iam-tls-key-file",
