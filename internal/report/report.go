@@ -217,7 +217,7 @@ func IssueText(r *Report, res Result) string {
 	fmt.Fprintf(&b, "Actual (VWS): %s\n\n", cell(res.Actual))
 	fmt.Fprintf(&b, "Redacted request/response: %s\n", res.RawRef)
 	fmt.Fprintf(&b, "Reproduce: go test ./%s -args -service %s\n\n", res.Service, res.Service)
-	fmt.Fprintf(&b, "Acceptance: case %s passes on vws-test; no other case regresses.\n", res.ID)
+	fmt.Fprintf(&b, "Acceptance: case %s passes on pve-test; no other case regresses.\n", res.ID)
 	b.WriteString("Part of #1\n")
 	return b.String()
 }

@@ -9,6 +9,7 @@ import (
 
 func TestReportSchemaTargetNames(t *testing.T) {
 	schema := filepath.Join(repoRoot(t), "schema", "report.schema.json")
+	// vws-test is accepted only so reports written before the rename still validate.
 	for name, ok := range map[string]bool{
 		"vws-test": true, "local-fake": true, "local-pve": true, "pve-test": true, "local-grpc": false,
 	} {

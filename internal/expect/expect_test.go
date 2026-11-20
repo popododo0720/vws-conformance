@@ -104,3 +104,20 @@ func TestJudgePass(t *testing.T) {
 		t.Fatalf("status %s reason %q", status, reason)
 	}
 }
+
+func TestJudgeNotImplementedMessages(t *testing.T) {
+	exp := cases.Expect{HTTP: 501, Code: "NotImplemented"}
+	for _, msg := range []string{
+		"A header you provided implies functionality that is not implemented.",
+		"S3 is served only for AWS regions; this region has no object storage.",
+	} {
+		got := cases.Outcome{HTTP: 501, Code: "NotImplemented", Message: msg}
+		if status, reason := Judge(exp, got); status != "pass" {
+			t.Fatalf("%q: status %s reason %q", msg, status, reason)
+		}
+	}
+	got := cases.Outcome{HTTP: 501, Code: "NotImplemented", Message: "oops"}
+	if status, _ := Judge(exp, got); status == "pass" {
+		t.Fatal("undocumented NotImplemented message passed")
+	}
+}

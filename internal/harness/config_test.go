@@ -23,7 +23,7 @@ func TestFromEnvRegion(t *testing.T) {
 
 func TestFromEnvTarget(t *testing.T) {
 	for target, ok := range map[string]bool{
-		"vws-test": true, "local-fake": true, "local-pve": true, "pve-test": true,
+		"vws-test": false, "local-fake": true, "local-pve": true, "pve-test": true,
 		"local-grpc": false, "": true, "aws": false,
 	} {
 		t.Setenv("VWS_CONF_TARGET", target)

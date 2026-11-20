@@ -15,7 +15,7 @@ Run the job locally after building the four binaries listed in
 ```sh
 RUNNER_TEMP=/absolute/path/outside/module \
 STACK_BIN=/absolute/path/to/console-api/bin \
-CONSOLE_API_PIN=05840905e958f6ad5e57e200931d542798b22d73 \
+CONSOLE_API_PIN=065559e43d3149c029a85e03247321a7e6b64849 \
 bash scripts/local-pve.sh
 ```
 

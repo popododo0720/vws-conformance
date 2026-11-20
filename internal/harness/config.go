@@ -57,7 +57,7 @@ func FromEnv() (Config, error) {
 	}
 	c.Parallel = n
 	switch c.Target {
-	case "vws-test", "local-fake", "local-pve", "pve-test":
+	case "local-fake", "local-pve", "pve-test":
 	default:
 		return Config{}, fmt.Errorf("VWS_CONF_TARGET %q is not a known target", c.Target)
 	}

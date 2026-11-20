@@ -21,7 +21,6 @@ import (
 	"github.com/popododo0720/vws-conformance/internal/expect"
 	"github.com/popododo0720/vws-conformance/internal/harness"
 	"github.com/popododo0720/vws-conformance/internal/report"
-	"github.com/popododo0720/vws-conformance/s3"
 	"github.com/popododo0720/vws-conformance/sts"
 	"github.com/popododo0720/vws-conformance/vpc"
 )
@@ -35,7 +34,6 @@ var (
 
 func Groups() []bind.Group {
 	return []bind.Group{
-		s3.Buckets(), s3.Listings(),
 		ec2.Instances(), ec2.Images(), ec2.KeyPairs(), ec2.Addresses(), ec2.Gaps(), ec2.Tags(),
 		vpc.Vpcs(), vpc.Subnets(), vpc.SecurityGroups(), vpc.Gaps(),
 		ebs.Volumes(), ebs.Snapshots(), ebs.Gaps(),

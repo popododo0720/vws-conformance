@@ -70,7 +70,7 @@ func TestKnownIssuesTracksCrossAccountUntagPolicy(t *testing.T) {
 }
 
 func TestKnownIssuesStayInTheirTarget(t *testing.T) {
-	for _, target := range []string{"local-pve", "local-fake", "vws-test", "pve-test"} {
+	for _, target := range []string{"local-pve", "local-fake", "pve-test"} {
 		t.Run(target, func(t *testing.T) {
 			for range 2 {
 				known, err := parseKnownIssues(knownIssuesFile, Groups(), target)
@@ -84,11 +84,14 @@ func TestKnownIssuesStayInTheirTarget(t *testing.T) {
 					"EC2-DI-101", "EC2-DIA-101", "EC2-DIMG-001", "EC2-DIMG-101",
 					"EC2-KP-103", "EC2-EIP-103", "EC2-GAP-003", "EC2-GAP-008",
 					"EBS-VOL-104", "EBS-SNAP-102", "VPC-VPC-104", "VPC-SUB-103",
-					"VPC-SG-104", "AUTH-001",
+					"VPC-SG-104",
 				} {
 					if (known[id] != "") != (target == "local-pve") {
 						t.Fatalf("%s exception on %s: %q", id, target, known[id])
 					}
+				}
+				if known["AUTH-001"] != "" {
+					t.Fatalf("AUTH-001 exception on %s: %q", target, known["AUTH-001"])
 				}
 				if known["IAM-MFA-001"] == "" {
 					t.Fatal("unscoped exception was lost")
@@ -100,7 +103,7 @@ func TestKnownIssuesStayInTheirTarget(t *testing.T) {
 
 func TestInstanceKnownFailuresRequireTheirTargetAndIssue(t *testing.T) {
 	const issue = "https://github.com/popododo0720/" + "vws-console-api/issues/1005"
-	for _, target := range []string{"local-pve", "local-fake", "vws-test", "pve-test"} {
+	for _, target := range []string{"local-pve", "local-fake", "pve-test"} {
 		known, err := parseKnownIssues(knownIssuesFile, Groups(), target)
 		if err != nil {
 			t.Fatal(err)
@@ -155,7 +158,7 @@ func TestKnownIssuesTargetOverridesUnscoped(t *testing.T) {
 	global := "IAM-X-001 " + fallback
 	local := "IAM-X-001 " + specific + " local-pve"
 	for _, data := range []string{global + "\n" + local, local + "\n" + global} {
-		for _, target := range []string{"local-pve", "local-fake", "pve-test", "vws-test"} {
+		for _, target := range []string{"local-pve", "local-fake", "pve-test"} {
 			known, err := parseKnownIssues(data, groups, target)
 			if err != nil {
 				t.Fatal(err)
@@ -177,7 +180,7 @@ func TestKnownIssuesTargetOverridesUnscoped(t *testing.T) {
 }
 
 func TestMFATagsKeepExistingKnownIssuesWithoutRedundantOverrides(t *testing.T) {
-	for _, target := range []string{"local-pve", "local-fake", "vws-test", "pve-test"} {
+	for _, target := range []string{"local-pve", "local-fake", "pve-test"} {
 		known, err := parseKnownIssues(knownIssuesFile, Groups(), target)
 		if err != nil {
 			t.Fatal(err)
@@ -215,7 +218,7 @@ func TestLocalPVESkipsExactlyTenOwnershipCases(t *testing.T) {
 			original[c.ID] = c
 		}
 	}
-	for _, target := range []string{"local-pve", "local-fake", "vws-test", "pve-test", "local-pve"} {
+	for _, target := range []string{"local-pve", "local-fake", "pve-test", "local-pve"} {
 		got := selectGroups(harness.Config{Full: true, Target: target}, "", "")
 		count := 0
 		for _, g := range got {
