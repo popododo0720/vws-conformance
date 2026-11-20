@@ -42,7 +42,7 @@ func TestCIRunsLocalPVE(t *testing.T) {
 		}
 	}
 	for _, required := range []string{
-		"065559e43d3149c029a85e03247321a7e6b64849",
+		"16c0135c7f4af3c318f893501146eca1fe533404",
 		"./cmd/pvefake", "./cmd/vws-region", "./cmd/vws-console-api",
 		"IAM_PIN: d01a814a91afba7d884d9f5b0bf4ad7a23110a91",
 		"\"$(git -C \"$src\" rev-parse HEAD)\" = \"$IAM_PIN\"",
@@ -63,7 +63,8 @@ func TestCIRunsLocalPVE(t *testing.T) {
 		t.Fatal("local-pve requests bypass the guarded probe")
 	}
 	for _, required := range []string{
-		"-backend proxmox", "-backend regions -iam grpc", "/api/v1/admin/regions",
+		"-backend proxmox", "-region pve-test-1 -state-dir", "pveApiUrls", "caPem",
+		"-backend regions -iam grpc", "/api/v1/admin/regions",
 		"bootstrap -store etcd", "\"$STACK_BIN/vws-iam\" -store etcd",
 		"-iam-endpoint 127.0.0.1:9095", "-listen 127.0.0.1:9095 -health-listen 127.0.0.1:9096",
 		"-iam-tls-ca-file", "-iam-tls-cert-file", "-iam-tls-key-file",
@@ -79,6 +80,17 @@ func TestCIRunsLocalPVE(t *testing.T) {
 		if !strings.Contains(string(script), required) {
 			t.Fatalf("local-pve script is missing %q", required)
 		}
+	}
+	for _, forbidden := range []string{
+		"etc/pve", "-helper-path", "-helper-root", "-registration-file", "-pve-endpoint", "-pve-ca-file",
+		"region-kek", "VWS_HELPER_TEST_ROOT", "\"pveApiUrl\"",
+	} {
+		if strings.Contains(string(script), forbidden) {
+			t.Fatalf("local-pve script still uses removed %q", forbidden)
+		}
+	}
+	if strings.Contains(job, "regionhelper") || strings.Contains(job, "region-helper") {
+		t.Fatal("local-pve job still builds the region helper")
 	}
 }
 

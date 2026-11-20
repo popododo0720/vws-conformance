@@ -6,8 +6,12 @@ cd "$(dirname "$0")/.."
 work=$(mktemp -d "$RUNNER_TEMP/local-pve.XXXXXX")
 probe="$work/conf-probe"
 go build -o "$probe" ./cmd/conf-probe
-mkdir -p "$work/etc/pve/vws" "$work/etc/pve/priv/vws" "$work/etc/pve/priv/lock/vws-region" "$work/etc/vws/credentials"
 umask 077
+# vws-region refuses a state directory whose ancestors are group or world writable unless
+# sticky. RUNNER_TEMP can be 0775 under a CI umask of 002, so the state lives in a fresh
+# 0700 directory under the sticky system temp directory instead.
+state=$(mktemp -d "${LOCAL_PVE_STATE_ROOT:-/tmp}/local-pve-state.XXXXXX")
+chmod 0700 "$state"
 pids=()
 cleanup() {
   status=$?
@@ -16,6 +20,7 @@ cleanup() {
     kill "${pids[@]}" 2>/dev/null || true
     for pid in "${pids[@]}"; do wait "$pid" || true; done
   fi
+  rm -rf "$state"
   if [ "$status" -ne 0 ]; then
     cat "$work"/*.log
   fi
@@ -50,7 +55,6 @@ cp "$work/client-key.pem" "$work/etcd-client-key.pem"
 printf 'k1\n' >"$work/kek_active"
 openssl rand -base64 32 >"$work/kek_k1"
 openssl rand -base64 32 >"$work/kek"
-openssl rand 32 >"$work/etc/vws/credentials/region-kek"
 cat >"$work/global.yaml" <<EOF
 iam:
   etcd_endpoints: [https://127.0.0.1:2379]
@@ -62,11 +66,8 @@ default_project: "123456789012"
 EOF
 # pools lists the managed Proxmox pool for project 123456789012; scope checks refuse any other pool.
 printf "read_only: true\\npools: {project: '123456789012'}\\n" >"$work/region.yaml"
-# The upstream test helper runs the real encrypted-file implementation under this sandbox root.
-# Its paths (etc/pve/..., etc/vws/credentials/region-kek) are relative to -helper-root. vws-iam still
-# needs CREDENTIALS_DIRECTORY; vws-region runs without it so that it reads its KEK from the helper root
-# as the non-root test user (a credentials directory must be root-owned).
-export VWS_HELPER_TEST_ROOT="$work" CREDENTIALS_DIRECTORY="$work"
+# vws-iam still needs CREDENTIALS_DIRECTORY.
+export CREDENTIALS_DIRECTORY="$work"
 etcd --name local-pve --data-dir "$work/etcd" \
   --listen-client-urls https://127.0.0.1:2379 --advertise-client-urls https://127.0.0.1:2379 \
   --listen-peer-urls http://127.0.0.1:2380 --initial-advertise-peer-urls http://127.0.0.1:2380 \
@@ -99,9 +100,8 @@ wait_ready http://127.0.0.1:9096/readyz
 pids+=("$!")
 SSL_CERT_FILE="$work/pve-ca.pem" wait_ready https://127.0.0.1:8006/api2/json/version \
   -authorization 'PVEAPIToken=vws@pve!inventory=fake-secret'
-env -u CREDENTIALS_DIRECTORY "$STACK_BIN/vws-region" -backend proxmox -config "$work/region.yaml" \
-  -registration-file "$work/etc/pve/vws/registration.json" -helper-path "$STACK_BIN/region-helper" -helper-root "$work" \
-  -pve-endpoint https://127.0.0.1:8006 -pve-ca-file "$work/pve-ca.pem" \
+"$STACK_BIN/vws-region" -backend proxmox -config "$work/region.yaml" \
+  -region pve-test-1 -state-dir "$state/pve-test-1" \
   -tls-cert-file "$work/server.pem" -tls-key-file "$work/server-key.pem" -tls-ca-file "$work/etcd-ca.pem" \
   -region-addr 127.0.0.1:8443 -ops-addr 127.0.0.1:8085 >"$work/region.log" 2>&1 &
 pids+=("$!")
@@ -115,10 +115,10 @@ wait_ready http://127.0.0.1:8085/healthz
   -iam-addr 127.0.0.1:8084 -ops-addr 127.0.0.1:8083 >"$work/console-api.log" 2>&1 &
 pids+=("$!")
 wait_ready http://127.0.0.1:8083/healthz
+jq -n --rawfile ca "$work/pve-ca.pem" '{name:"pve-test-1",clusterName:"test",pveApiUrls:["https://127.0.0.1:8006"],caPem:$ca,tokenId:"vws@pve!inventory",tokenSecret:"fake-secret",regionEndpoint:"https://127.0.0.1:8443",zones:[{letter:"a",nodes:["pve1"]}]}' >"$work/registration-request.json"
 "$probe" -method POST -authorization 'Bearer dev-token' \
-  http://127.0.0.1:8080/api/v1/admin/regions >"$work/registration.log" <<'JSON'
-{"name":"pve-test-1","clusterName":"test","pveApiUrl":"https://127.0.0.1:8006","tokenId":"vws@pve!inventory","tokenSecret":"fake-secret","regionEndpoint":"https://127.0.0.1:8443","zones":[{"letter":"a","nodes":["pve1"]}]}
-JSON
+  http://127.0.0.1:8080/api/v1/admin/regions >"$work/registration.log" <"$work/registration-request.json"
+test -s "$state/pve-test-1/registration.json"
 wait_ready http://127.0.0.1:8085/readyz
 "$probe" -authorization 'Bearer dev-token' -region pve-test-1 \
   http://127.0.0.1:8080/api/v1/instances >"$work/inventory.log"
