@@ -4,18 +4,19 @@ Unmodified AWS SDK/CLI conformance suite for VWS
 The `local-pve` conformance job builds console-api at the workflow's pinned
 commit, starts a YAML-backed HTTPS `pvefake`, a Proxmox region daemon and the
 global regions backend, and registers `pve-test-1` through the admin API.
-The registry uses a disposable loopback etcd with TLS. Region credentials use
-the upstream helper test binary, which runs the real encrypted-file operations
-under a temporary sandbox root without requiring a Proxmox host.
+The registry uses a disposable loopback etcd with TLS. The region daemon keeps
+its registration in a private `-state-dir` (mode 0700, under the system temp
+directory so every ancestor is safe) and needs no `/etc/pve`, helper or KEK.
+The registration carries `pveApiUrls` and `caPem`.
 
-Run the job locally after building the four binaries listed in
+Run the job locally after building the three binaries listed in
 `.github/workflows/conformance.yml` and placing `etcd`, `openssl` and
 `jq` on PATH:
 
 ```sh
 RUNNER_TEMP=/absolute/path/outside/module \
 STACK_BIN=/absolute/path/to/console-api/bin \
-CONSOLE_API_PIN=065559e43d3149c029a85e03247321a7e6b64849 \
+CONSOLE_API_PIN=16c0135c7f4af3c318f893501146eca1fe533404 \
 bash scripts/local-pve.sh
 ```
 

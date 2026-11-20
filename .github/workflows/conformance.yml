@@ -30,8 +30,8 @@ jobs:
         run: go test -race -count=1 -p 1 ./internal/... ./cmd/...
       - name: fake backend
         run: |
-          # console-api pin: PR #1051 head. Move it to the merge commit on main after #1051 merges.
-          pin=065559e43d3149c029a85e03247321a7e6b64849
+          # console-api pin: main after #1064. Keep it equal to CONSOLE_API_PIN in the local-pve job.
+          pin=16c0135c7f4af3c318f893501146eca1fe533404
           git init /tmp/src/vws-console-api
           git -C /tmp/src/vws-console-api remote add origin https://github.com/popododo0720/vws-console-api.git
           git -C /tmp/src/vws-console-api fetch --depth 1 origin "$pin"
@@ -104,8 +104,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      # console-api pin: PR #1051 head. Move it to the merge commit on main after #1051 merges.
-      CONSOLE_API_PIN: 065559e43d3149c029a85e03247321a7e6b64849
+      # console-api pin: main after #1064 (PVE endpoints and CA come from the registration).
+      CONSOLE_API_PIN: 16c0135c7f4af3c318f893501146eca1fe533404
       IAM_PIN: d01a814a91afba7d884d9f5b0bf4ad7a23110a91
     steps:
       - uses: actions/checkout@v4
@@ -136,7 +136,6 @@ jobs:
           go build -o bin/pvefake ./cmd/pvefake
           go build -o bin/vws-region ./cmd/vws-region
           go build -o bin/vws-console-api ./cmd/vws-console-api
-          go test -c -o bin/region-helper ./internal/regionhelper
       - name: build pinned IAM
         run: |
           src="$RUNNER_TEMP/iam"
