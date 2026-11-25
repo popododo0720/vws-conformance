@@ -1,10 +1,12 @@
 package engine
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	goruntime "runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -113,16 +115,15 @@ func TestCIJobsShareOneConsoleAPIPin(t *testing.T) {
 	}
 	for _, name := range []string{"local-fake", "local-pve"} {
 		job := workflowJob(t, jobs, name)
-		for _, required := range []string{
-			`fetch --depth 1 origin "$CONSOLE_API_PIN"`, `rev-parse HEAD`, `"$CONSOLE_API_PIN"`,
-		} {
-			if !strings.Contains(job, required) {
-				t.Fatalf("%s does not check out console-api at the workflow pin: missing %q", name, required)
-			}
+		if err := pinnedCheckout(shellLines(job), "CONSOLE_API_PIN", workflowCheckout, ""); err != nil {
+			t.Fatalf("%s: %v", name, err)
 		}
 		if regexp.MustCompile(`vws-console-api[^\n]*fetch[^\n]*origin "?[0-9a-f]{40}`).MatchString(job) {
 			t.Fatalf("%s fetches console-api at a literal commit", name)
 		}
+	}
+	if err := pinnedCheckout(shellLines(workflowJob(t, jobs, "local-pve")), "IAM_PIN", workflowCheckout, ""); err != nil {
+		t.Fatalf("local-pve: %v", err)
 	}
 }
 
@@ -143,13 +144,89 @@ func TestREADMEBuildsLocalPVEAtWorkflowPins(t *testing.T) {
 			t.Fatalf("README does not build at %s=%s", name, pin[1])
 		}
 	}
-	for _, required := range []string{
-		"for cmd in pvefake vws-region vws-console-api", `"$STACK_BIN/vws-iam" ./cmd/vws-iam`,
-	} {
-		if !strings.Contains(string(readme), required) {
-			t.Fatalf("README does not build %q", required)
+	_, block, ok := strings.Cut(string(readme), "```sh\n(\n")
+	block, _, closed := strings.Cut(block, "\n)\n```")
+	if !ok || !closed {
+		t.Fatal("README has no subshell build block")
+	}
+	lines := shellLines(block)
+	// Fail fast in fresh directories: a failed clone or checkout never builds an older tree.
+	if len(lines) == 0 || lines[0] != "set -eu" || !slices.Contains(lines, "src=$(mktemp -d)") {
+		t.Fatal("README build block does not start with set -eu and clone into a fresh mktemp -d directory")
+	}
+	for _, name := range []string{"CONSOLE_API_PIN", "IAM_PIN"} {
+		if err := pinnedCheckout(lines, name, readmeCheckout, `^git clone https://\S+ %s$`); err != nil {
+			t.Fatalf("README: %v", err)
 		}
 	}
+	for _, required := range []string{
+		"for cmd in pvefake vws-region vws-console-api; do",
+		`go -C "$src/console-api" build -o "$STACK_BIN/$cmd" "./cmd/$cmd"`,
+		`go -C "$src/iam" build -o "$STACK_BIN/vws-iam" ./cmd/vws-iam`,
+	} {
+		if !slices.Contains(lines, required) {
+			t.Fatalf("README does not build with %q", required)
+		}
+	}
+}
+
+// shellLines returns the trimmed lines of a script that run: no blank or comment line.
+func shellLines(script string) []string {
+	var lines []string
+	for line := range strings.Lines(script) {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+// A checkout is a sequence of commands that must run in order. The first one names the pin and captures the
+// directory; the others must use that directory. %[1]s is the directory and %[2]s the pin variable.
+var (
+	workflowCheckout = []string{
+		`^git -C (\S+) fetch --depth 1 origin "\$%[2]s"$`,
+		`^git -C %[1]s checkout --detach FETCH_HEAD$`,
+		`^(test "\$\(git -C %[1]s rev-parse HEAD\)" = "\$%[2]s"|got=\$\(git -C %[1]s rev-parse HEAD\))$`,
+		`^(\(?cd %[1]s( |$)|if \[ "\$got" != "\$%[2]s" \]; then$)`,
+	}
+	readmeCheckout = []string{
+		`^git -C (\S+) checkout --detach "\$%[2]s"$`,
+		`^test "\$\(git -C %[1]s rev-parse HEAD\)" = "\$%[2]s"$`,
+		`^go -C %[1]s build `,
+	}
+)
+
+// pinnedCheckout returns an error unless lines run steps for pin in order, all in one directory. With a
+// clone pattern, the directory must also be cloned fresh before the first step.
+func pinnedCheckout(lines []string, pin string, steps []string, clone string) error {
+	dir, at, first := "", -1, -1
+	for i, step := range steps {
+		pattern := regexp.MustCompile(fmt.Sprintf(step, regexp.QuoteMeta(dir), pin))
+		found := -1
+		for j := at + 1; j < len(lines); j++ {
+			if m := pattern.FindStringSubmatch(lines[j]); m != nil {
+				if i == 0 {
+					dir, first = m[1], j
+				}
+				found = j
+				break
+			}
+		}
+		if found < 0 {
+			return fmt.Errorf("no command matches %q for %s after line %d", pattern, pin, at+1)
+		}
+		at = found
+	}
+	if clone == "" {
+		return nil
+	}
+	pattern := regexp.MustCompile(fmt.Sprintf(clone, regexp.QuoteMeta(dir)))
+	if !slices.ContainsFunc(lines[:first], pattern.MatchString) {
+		return fmt.Errorf("%s is checked out in %s, which no command clones before it", pin, dir)
+	}
+	return nil
 }
 
 // workflowJob returns the body of one job under jobs:, up to the next job.
