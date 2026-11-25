@@ -3,6 +3,7 @@ package engine
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	goruntime "runtime"
 	"strings"
 	"testing"
@@ -42,7 +43,6 @@ func TestCIRunsLocalPVE(t *testing.T) {
 		}
 	}
 	for _, required := range []string{
-		"16c0135c7f4af3c318f893501146eca1fe533404",
 		"./cmd/pvefake", "./cmd/vws-region", "./cmd/vws-console-api",
 		"IAM_PIN: d01a814a91afba7d884d9f5b0bf4ad7a23110a91",
 		"\"$(git -C \"$src\" rev-parse HEAD)\" = \"$IAM_PIN\"",
@@ -92,6 +92,77 @@ func TestCIRunsLocalPVE(t *testing.T) {
 	if strings.Contains(job, "regionhelper") || strings.Contains(job, "region-helper") {
 		t.Fatal("local-pve job still builds the region helper")
 	}
+}
+
+// Both jobs build console-api, so they must read one pin; a second definition lets them drift apart.
+func TestCIJobsShareOneConsoleAPIPin(t *testing.T) {
+	body := workflow(t)
+	head, jobs, ok := strings.Cut(body, "\njobs:\n")
+	if !ok {
+		t.Fatal("workflow has no jobs")
+	}
+	_, env, ok := strings.Cut(head, "\nenv:\n")
+	if !ok {
+		t.Fatal("workflow has no workflow-scope env")
+	}
+	if !regexp.MustCompile(`(?m)^  CONSOLE_API_PIN: [0-9a-f]{40}$`).MatchString(env) {
+		t.Fatal("workflow env does not pin CONSOLE_API_PIN to a full commit")
+	}
+	if strings.Contains(jobs, "CONSOLE_API_PIN:") || strings.Contains(jobs, "CONSOLE_API_PIN=") {
+		t.Fatal("a job redefines CONSOLE_API_PIN instead of reading the workflow pin")
+	}
+	for _, name := range []string{"local-fake", "local-pve"} {
+		job := workflowJob(t, jobs, name)
+		for _, required := range []string{
+			`fetch --depth 1 origin "$CONSOLE_API_PIN"`, `rev-parse HEAD`, `"$CONSOLE_API_PIN"`,
+		} {
+			if !strings.Contains(job, required) {
+				t.Fatalf("%s does not check out console-api at the workflow pin: missing %q", name, required)
+			}
+		}
+		if regexp.MustCompile(`vws-console-api[^\n]*fetch[^\n]*origin "?[0-9a-f]{40}`).MatchString(job) {
+			t.Fatalf("%s fetches console-api at a literal commit", name)
+		}
+	}
+}
+
+// The README builds the local-pve stack by hand, so its pins must be the ones CI tests.
+func TestREADMEBuildsLocalPVEAtWorkflowPins(t *testing.T) {
+	body := workflow(t)
+	_, file, _, _ := goruntime.Caller(0)
+	readme, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "..", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"CONSOLE_API_PIN", "IAM_PIN"} {
+		pin := regexp.MustCompile(`(?m)^ +` + name + `: ([0-9a-f]{40})$`).FindStringSubmatch(body)
+		if pin == nil {
+			t.Fatalf("workflow does not pin %s", name)
+		}
+		if !strings.Contains(string(readme), name+"="+pin[1]+"\n") {
+			t.Fatalf("README does not build at %s=%s", name, pin[1])
+		}
+	}
+	for _, required := range []string{
+		"for cmd in pvefake vws-region vws-console-api", `"$STACK_BIN/vws-iam" ./cmd/vws-iam`,
+	} {
+		if !strings.Contains(string(readme), required) {
+			t.Fatalf("README does not build %q", required)
+		}
+	}
+}
+
+// workflowJob returns the body of one job under jobs:, up to the next job.
+func workflowJob(t *testing.T, jobs, name string) string {
+	t.Helper()
+	_, rest, ok := strings.Cut("\n"+jobs, "\n  "+name+":\n")
+	if !ok {
+		t.Fatalf("workflow has no %s job", name)
+	}
+	if loc := regexp.MustCompile(`\n  [A-Za-z0-9_-]+:\n`).FindStringIndex(rest); loc != nil {
+		rest = rest[:loc[0]]
+	}
+	return rest
 }
 
 func workflow(t *testing.T) string {
