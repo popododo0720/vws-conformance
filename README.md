@@ -9,15 +9,28 @@ its registration in a private `-state-dir` (mode 0700, under the system temp
 directory so every ancestor is safe) and needs no `/etc/pve`, helper or KEK.
 The registration carries `pveApiUrls` and `caPem`.
 
-Run the job locally after building the three binaries listed in
-`.github/workflows/conformance.yml` and placing `etcd`, `openssl` and
-`jq` on PATH:
+Run the job locally with `etcd`, `openssl` and `jq` on PATH and these four
+executables in `STACK_BIN`, built at the pins in
+`.github/workflows/conformance.yml` (`CONSOLE_API_PIN` in the workflow `env`,
+`IAM_PIN` in the `local-pve` job):
+
+- `pvefake`, `vws-region` and `vws-console-api` from vws-console-api at `CONSOLE_API_PIN`
+- `vws-iam` from vws-iam at `IAM_PIN`
 
 ```sh
-RUNNER_TEMP=/absolute/path/outside/module \
-STACK_BIN=/absolute/path/to/console-api/bin \
-CONSOLE_API_PIN=16c0135c7f4af3c318f893501146eca1fe533404 \
-bash scripts/local-pve.sh
+CONSOLE_API_PIN=16c0135c7f4af3c318f893501146eca1fe533404
+IAM_PIN=d01a814a91afba7d884d9f5b0bf4ad7a23110a91
+STACK_BIN=/absolute/path/to/stack/bin
+git clone https://github.com/popododo0720/vws-console-api.git /tmp/console-api
+git -C /tmp/console-api checkout --detach "$CONSOLE_API_PIN"
+(cd /tmp/console-api && for cmd in pvefake vws-region vws-console-api; do
+  go build -o "$STACK_BIN/$cmd" "./cmd/$cmd"
+done)
+git clone https://github.com/popododo0720/vws-iam.git /tmp/iam
+git -C /tmp/iam checkout --detach "$IAM_PIN"
+(cd /tmp/iam && go build -o "$STACK_BIN/vws-iam" ./cmd/vws-iam)
+RUNNER_TEMP=/absolute/path/outside/module STACK_BIN="$STACK_BIN" \
+CONSOLE_API_PIN="$CONSOLE_API_PIN" bash scripts/local-pve.sh
 ```
 
 `-full -read-only` selects the 29 EC2, EBS, VPC and AUTH cases documented in
