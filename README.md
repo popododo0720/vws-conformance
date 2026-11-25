@@ -9,7 +9,7 @@ its registration in a private `-state-dir` (mode 0700, under the system temp
 directory so every ancestor is safe) and needs no `/etc/pve`, helper or KEK.
 The registration carries `pveApiUrls` and `caPem`.
 
-Run the job locally with `etcd`, `openssl` and `jq` on PATH and these four
+Run the job locally with `etcd`, `openssl`, `jq` and `ss` (iproute2) on PATH and these four
 executables in `STACK_BIN`, built at the pins in
 `.github/workflows/conformance.yml` (`CONSOLE_API_PIN` in the workflow `env`,
 `IAM_PIN` in the `local-pve` job):
@@ -17,20 +17,30 @@ executables in `STACK_BIN`, built at the pins in
 - `pvefake`, `vws-region` and `vws-console-api` from vws-console-api at `CONSOLE_API_PIN`
 - `vws-iam` from vws-iam at `IAM_PIN`
 
+The block runs in a subshell with `set -eu` and clones into a fresh `mktemp -d`
+directory, so a failed clone, checkout or build stops it before the next step,
+and no older checkout is ever built.
+
 ```sh
+(
+set -eu
 CONSOLE_API_PIN=16c0135c7f4af3c318f893501146eca1fe533404
 IAM_PIN=d01a814a91afba7d884d9f5b0bf4ad7a23110a91
 STACK_BIN=/absolute/path/to/stack/bin
-git clone https://github.com/popododo0720/vws-console-api.git /tmp/console-api
-git -C /tmp/console-api checkout --detach "$CONSOLE_API_PIN"
-(cd /tmp/console-api && for cmd in pvefake vws-region vws-console-api; do
-  go build -o "$STACK_BIN/$cmd" "./cmd/$cmd"
-done)
-git clone https://github.com/popododo0720/vws-iam.git /tmp/iam
-git -C /tmp/iam checkout --detach "$IAM_PIN"
-(cd /tmp/iam && go build -o "$STACK_BIN/vws-iam" ./cmd/vws-iam)
+src=$(mktemp -d)
+git clone https://github.com/popododo0720/vws-console-api.git "$src/console-api"
+git -C "$src/console-api" checkout --detach "$CONSOLE_API_PIN"
+test "$(git -C "$src/console-api" rev-parse HEAD)" = "$CONSOLE_API_PIN"
+for cmd in pvefake vws-region vws-console-api; do
+  go -C "$src/console-api" build -o "$STACK_BIN/$cmd" "./cmd/$cmd"
+done
+git clone https://github.com/popododo0720/vws-iam.git "$src/iam"
+git -C "$src/iam" checkout --detach "$IAM_PIN"
+test "$(git -C "$src/iam" rev-parse HEAD)" = "$IAM_PIN"
+go -C "$src/iam" build -o "$STACK_BIN/vws-iam" ./cmd/vws-iam
 RUNNER_TEMP=/absolute/path/outside/module STACK_BIN="$STACK_BIN" \
 CONSOLE_API_PIN="$CONSOLE_API_PIN" bash scripts/local-pve.sh
+)
 ```
 
 `-full -read-only` selects the 29 EC2, EBS, VPC and AUTH cases documented in
