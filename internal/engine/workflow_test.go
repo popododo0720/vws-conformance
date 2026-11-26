@@ -115,14 +115,15 @@ func TestCIJobsShareOneConsoleAPIPin(t *testing.T) {
 	}
 	for _, name := range []string{"local-fake", "local-pve"} {
 		job := workflowJob(t, jobs, name)
-		if err := pinnedCheckout(shellLines(job), "CONSOLE_API_PIN", workflowCheckout, ""); err != nil {
+		if err := pinnedCheckout(pinStep(job, "CONSOLE_API_PIN"), "CONSOLE_API_PIN", workflowCheckout, ""); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
 		if regexp.MustCompile(`vws-console-api[^\n]*fetch[^\n]*origin "?[0-9a-f]{40}`).MatchString(job) {
 			t.Fatalf("%s fetches console-api at a literal commit", name)
 		}
 	}
-	if err := pinnedCheckout(shellLines(workflowJob(t, jobs, "local-pve")), "IAM_PIN", workflowCheckout, ""); err != nil {
+	iam := pinStep(workflowJob(t, jobs, "local-pve"), "IAM_PIN")
+	if err := pinnedCheckout(iam, "IAM_PIN", workflowCheckout, ""); err != nil {
 		t.Fatalf("local-pve: %v", err)
 	}
 }
@@ -135,14 +136,13 @@ func TestREADMEBuildsLocalPVEAtWorkflowPins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	pins := map[string]string{}
 	for _, name := range []string{"CONSOLE_API_PIN", "IAM_PIN"} {
 		pin := regexp.MustCompile(`(?m)^ +` + name + `: ([0-9a-f]{40})$`).FindStringSubmatch(body)
 		if pin == nil {
 			t.Fatalf("workflow does not pin %s", name)
 		}
-		if !strings.Contains(string(readme), name+"="+pin[1]+"\n") {
-			t.Fatalf("README does not build at %s=%s", name, pin[1])
-		}
+		pins[name] = pin[1]
 	}
 	_, block, ok := strings.Cut(string(readme), "```sh\n(\n")
 	block, _, closed := strings.Cut(block, "\n)\n```")
@@ -158,6 +158,9 @@ func TestREADMEBuildsLocalPVEAtWorkflowPins(t *testing.T) {
 		if err := pinnedCheckout(lines, name, readmeCheckout, `^git clone https://\S+ %s$`); err != nil {
 			t.Fatalf("README: %v", err)
 		}
+		if err := oneAssignment(lines, name, pins[name]); err != nil {
+			t.Fatalf("README: %v", err)
+		}
 	}
 	for _, required := range []string{
 		"for cmd in pvefake vws-region vws-console-api; do",
@@ -168,6 +171,42 @@ func TestREADMEBuildsLocalPVEAtWorkflowPins(t *testing.T) {
 			t.Fatalf("README does not build with %q", required)
 		}
 	}
+}
+
+// oneAssignment returns an error unless the lines that run up to the build of the checkout at pin assign
+// name exactly once, to the workflow's commit, before the checkout.
+func oneAssignment(lines []string, name, pin string) error {
+	checkout := slices.IndexFunc(lines,
+		regexp.MustCompile(`^git -C \S+ checkout --detach "\$`+name+`"$`).MatchString)
+	if checkout < 0 {
+		return fmt.Errorf("no checkout at %s", name)
+	}
+	build := checkout + slices.IndexFunc(lines[checkout:], func(l string) bool { return strings.HasPrefix(l, "go -C ") })
+	assign := regexp.MustCompile(`(^|[\s;(&|])(export\s+|readonly\s+|declare\s+\S*\s*)?` + name + `=`)
+	var at []int
+	for i, line := range lines[:build+1] {
+		if assign.MatchString(line) {
+			at = append(at, i)
+		}
+	}
+	if len(at) != 1 || lines[at[0]] != name+"="+pin || at[0] > checkout {
+		return fmt.Errorf("%s must be assigned once, as %s=%s, before its checkout and build", name, name, pin)
+	}
+	return nil
+}
+
+// pinStep returns the lines that run in the one step of job that fetches pin, so a checkout and its build
+// are matched within one step and a later step's build cannot stand in for a missing one.
+func pinStep(job, pin string) []string {
+	for _, step := range strings.Split(job, "\n      - ") {
+		lines := shellLines(step)
+		if slices.ContainsFunc(lines, func(l string) bool {
+			return strings.HasSuffix(l, ` fetch --depth 1 origin "$`+pin+`"`)
+		}) {
+			return lines
+		}
+	}
+	return nil
 }
 
 // shellLines returns the trimmed lines of a script that run: no blank or comment line.
@@ -188,8 +227,8 @@ var (
 	workflowCheckout = []string{
 		`^git -C (\S+) fetch --depth 1 origin "\$%[2]s"$`,
 		`^git -C %[1]s checkout --detach FETCH_HEAD$`,
-		`^(test "\$\(git -C %[1]s rev-parse HEAD\)" = "\$%[2]s"|got=\$\(git -C %[1]s rev-parse HEAD\))$`,
-		`^(\(?cd %[1]s( |$)|if \[ "\$got" != "\$%[2]s" \]; then$)`,
+		`^test "\$\(git -C %[1]s rev-parse HEAD\)" = "\$%[2]s"$`,
+		`^go -C %[1]s build `,
 	}
 	readmeCheckout = []string{
 		`^git -C (\S+) checkout --detach "\$%[2]s"$`,
